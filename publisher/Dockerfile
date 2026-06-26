@@ -1,10 +1,12 @@
-FROM spotdl/spotify-downloader:latest
+FROM spotdl/spotify-downloader:latest AS spotdl
 
-RUN wget -qO /tmp/bun.zip https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip \
-    && unzip -q /tmp/bun.zip -d /tmp/bun \
-    && mv /tmp/bun/bun-linux-x64/bun /usr/local/bin/bun \
-    && rm -rf /tmp/bun.zip /tmp/bun \
-    && chmod +x /usr/local/bin/bun
+FROM oven/bun:1.2-alpine
+
+RUN apk add --no-cache python3 py3-pip ffmpeg
+
+COPY --from=spotdl /app/.venv /opt/venv
+COPY --from=spotdl /app/spotdl /opt/venv/spotdl
+ENV PATH="/opt/venv/bin:${PATH}"
 
 WORKDIR /app
 

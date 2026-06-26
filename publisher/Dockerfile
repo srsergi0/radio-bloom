@@ -1,6 +1,6 @@
 FROM spotdl/spotify-downloader:latest
 
-RUN wget -qO- https://bun.sh/install | bash
+RUN wget -qO- https://bun.sh/install | sh
 ENV PATH="/root/.bun/bin:${PATH}"
 
 WORKDIR /app

@@ -18,7 +18,7 @@ services:
     depends_on:
       - liquidsoap
     ports:
-      - "3000:3000"
+      - "9876:3000"
     environment:
       - LIQUIDSOAP_HOST=liquidsoap
       - LIQUIDSOAP_TELNET_PORT=1234

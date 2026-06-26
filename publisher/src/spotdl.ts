@@ -5,7 +5,6 @@ import { createDownload, updateDownload, getDownload, getAllDownloads as dbGetAl
 
 const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
 const SONGS_DIR = join(MUSIC_DIR, "songs");
-const SPOTDL_HOST = process.env.SPOTDL_HOST;
 
 const activeProcesses = new Map<string, any>();
 const onCompleteCallbacks = new Map<string, (track: Track) => void>();
@@ -17,11 +16,9 @@ export async function downloadFromSpotify(url: string, onComplete?: (track: Trac
   if (onComplete) onCompleteCallbacks.set(job.id, onComplete);
   console.log(`[spotdl] Starting download: ${url}`);
 
-  const args = ["download", url, "--output", SONGS_DIR];
-  const cmd = SPOTDL_HOST ? "python3" : "spotdl";
-  const cmdArgs = SPOTDL_HOST ? ["-m", "spotdl", ...args] : args;
+  const cmdArgs = ["download", url, "--output", SONGS_DIR];
 
-  const proc = Bun.spawn([cmd, ...cmdArgs], {
+  const proc = Bun.spawn(["spotdl", ...cmdArgs], {
     stdio: ["ignore", "pipe", "pipe"],
   });
 

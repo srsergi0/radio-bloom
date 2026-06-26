@@ -1,9 +1,8 @@
-FROM oven/bun:1.2-alpine
+FROM spotdl/spotify-downloader:latest
 
-RUN apk add --no-cache curl python3 py3-pip ffmpeg
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-RUN pip install spotdl
+RUN apt-get update -qq && apt-get install -y -qq curl && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
 
 WORKDIR /app
 

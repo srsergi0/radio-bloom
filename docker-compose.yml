@@ -11,22 +11,12 @@ services:
     networks:
       - radio-net
 
-  spotdl:
-    image: spotdl/spotify-downloader:latest
-    container_name: radio-spotdl
-    volumes:
-      - ./music/songs:/music
-    entrypoint: ["tail", "-f", "/dev/null"]
-    networks:
-      - radio-net
-
   publisher:
     build: ./publisher
     container_name: radio-publisher
     restart: unless-stopped
     depends_on:
       - liquidsoap
-      - spotdl
     ports:
       - "3000:3000"
     environment:
@@ -34,7 +24,6 @@ services:
       - LIQUIDSOAP_TELNET_PORT=1234
       - LIQUIDSOAP_HARBOUR_PORT=8000
       - PORT=3000
-      - SPOTDL_HOST=spotdl
     volumes:
       - ./music:/app/music
       - ./publisher/data:/app/data

@@ -1,6 +1,7 @@
 FROM spotdl/spotify-downloader:latest
 
-RUN wget -qO- https://bun.sh/install | sh
+RUN apt-get update -qq && apt-get install -y -qq curl bash && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
 
 WORKDIR /app

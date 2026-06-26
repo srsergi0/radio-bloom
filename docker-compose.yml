@@ -1,0 +1,80 @@
+services:
+  liquidsoap:
+    image: savonet/liquidsoap:v2.2.5
+    container_name: radio-liquidsoap
+    restart: unless-stopped
+    volumes:
+      - ./liquidsoap/radio.liq:/etc/liquidsoap/radio.liq
+      - ./music/songs:/music/songs
+    # No host ports exposed — all internal via radio-net
+    command: /etc/liquidsoap/radio.liq
+    networks:
+      - radio-net
+
+  spotdl:
+    image: spotdl/spotify-downloader:latest
+    container_name: radio-spotdl
+    volumes:
+      - ./music/songs:/music
+    entrypoint: ["tail", "-f", "/dev/null"]
+    networks:
+      - radio-net
+
+  publisher:
+    build: ./publisher
+    container_name: radio-publisher
+    restart: unless-stopped
+    depends_on:
+      - liquidsoap
+      - spotdl
+    ports:
+      - "3000:3000"
+    environment:
+      - LIQUIDSOAP_HOST=liquidsoap
+      - LIQUIDSOAP_TELNET_PORT=1234
+      - LIQUIDSOAP_HARBOUR_PORT=8000
+      - PORT=3000
+      - SPOTDL_HOST=spotdl
+    volumes:
+      - ./music:/app/music
+      - ./publisher/data:/app/data
+      - ./publisher/src:/app/src
+    networks:
+      - radio-net
+
+  watchdog:
+    build: ./watchdog
+    container_name: radio-watchdog
+    restart: unless-stopped
+    depends_on:
+      - publisher
+      - liquidsoap
+    volumes:
+      - ./watchdog/src:/app/src
+    environment:
+      - PUBLISHER_URL=http://publisher:3000
+      - HEALTH_CHECK_INTERVAL=30000
+    networks:
+      - radio-net
+
+  ftp:
+    image: stilliard/pure-ftpd:hardened
+    container_name: radio-ftp
+    restart: unless-stopped
+    ports:
+      - "21:21"
+      - "30000-30009:30000-30009"
+    volumes:
+      - ./music/songs:/home/radio/music/songs
+      - ./music/interludios:/home/radio/music/interludios
+    environment:
+      - PUBLICHOST=localhost
+      - FTP_USER_NAME=radio
+      - FTP_USER_PASS=radiobloom
+      - FTP_USER_HOME=/home/radio
+    networks:
+      - radio-net
+
+networks:
+  radio-net:
+    driver: bridge

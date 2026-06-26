@@ -1,0 +1,44 @@
+# Music files (copyright)
+music/
+*.mp3
+*.wav
+*.ogg
+*.flac
+*.m4a
+
+# Obsolete
+icecast/
+web/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Dependencies
+node_modules/
+bun.lock*
+
+# Build
+dist/
+.turbo/
+*.tsbuildinfo
+
+# Runtime data
+publisher/data/
+music/interludios/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo

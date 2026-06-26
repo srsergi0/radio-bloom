@@ -1,8 +1,10 @@
 FROM spotdl/spotify-downloader:latest
 
-RUN apk add --no-cache curl bash
-RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:${PATH}"
+RUN wget -qO /tmp/bun.zip https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip \
+    && unzip -q /tmp/bun.zip -d /tmp/bun \
+    && mv /tmp/bun/bun-linux-x64/bun /usr/local/bin/bun \
+    && rm -rf /tmp/bun.zip /tmp/bun \
+    && chmod +x /usr/local/bin/bun
 
 WORKDIR /app
 

@@ -54,10 +54,12 @@ services:
       - ./music/songs:/home/radio/music/songs
       - ./music/interludios:/home/radio/music/interludios
     environment:
-      - PUBLICHOST=localhost
+      - PUBLICHOST=185.139.1.222
       - FTP_USER_NAME=radio
       - FTP_USER_PASS=radiobloom
       - FTP_USER_HOME=/home/radio
+      - UMASK=133
+      - TLS_CN=185.139.1.222
     networks:
       - radio-net
 

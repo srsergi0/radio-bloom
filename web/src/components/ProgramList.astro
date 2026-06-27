@@ -31,33 +31,32 @@ const shows = [
 ];
 ---
 
-<section class="programs-section" id="programs-section">
-  <div class="section-container">
-    <div class="programs-header">
-      <div class="header-left">
-        <span class="mono-tag text-orange">[ {isEn ? "WEEKLY SCHEDULE" : "PROGRAMACIÓN SEMANAL"} ]</span>
-        <h2 class="section-title">{isEn ? "Always something for you" : "Siempre hay algo para ti"}</h2>
+<section class="px-4 sm:px-6 md:px-12 py-10 md:py-20 bg-ice-blue text-text-dark border-b-2 border-text-dark max-w-full" id="programs-section">
+  <div class="max-w-[1200px] mx-auto">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 md:gap-0 mb-8 md:mb-16">
+      <div>
+        <span class="font-mono text-xs sm:text-sm font-bold text-orange block mb-2">[ {isEn ? "WEEKLY SCHEDULE" : "PROGRAMACIÓN SEMANAL"} ]</span>
+        <h2 class="text-3xl md:text-5xl font-black tracking-tighter leading-none uppercase">{isEn ? "Always something for you" : "Siempre hay algo para ti"}</h2>
       </div>
-      <a href="#programs-section" class="view-all-link">
+      <a href="#programs-section" class="font-mono text-xs sm:text-sm font-bold text-text-dark no-underline flex items-center gap-1.5 border-b-2 border-text-dark pb-1 hover:translate-x-0.5 hover:-translate-y-0.5 transition-all">
         {isEn ? "VIEW ALL SHOWS" : "VER TODOS LOS PROGRAMAS"}
-        <span class="arrow">↗</span>
+        <span class="text-base">↗</span>
       </a>
     </div>
 
-    <div class="programs-grid">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       {shows.map((show) => (
-        <Card theme="light" shadow={true} class="show-item-card">
-          <div class="show-inner">
+        <Card theme="light" shadow={true} class="p-4! overflow-hidden">
+          <div class="flex items-center gap-4 sm:gap-6 w-full">
             <!-- Brutalist Numbered Cover -->
-            <div class="show-cover-art">
-              <span class="show-index">{show.idx}</span>
+            <div class="w-16 h-16 sm:w-[90px] sm:h-[90px] bg-black text-white flex justify-center items-center border-2 border-black flex-shrink-0">
+              <span class="font-mono text-sm sm:text-lg font-bold">{show.idx}</span>
             </div>
             
-            <div class="show-details">
-              <h4 class="show-title">{show.title}</h4>
-              <p class="show-time">{show.time}</p>
+            <div class="flex-grow min-w-0">
+              <h4 class="text-lg sm:text-xl font-black tracking-tight text-text-dark mb-1 truncate uppercase">{show.title}</h4>
+              <p class="text-[11px] sm:text-xs text-neutral-600 font-mono">{show.time}</p>
             </div>
-            
           </div>
         </Card>
       ))}
@@ -65,162 +64,3 @@ const shows = [
   </div>
 </section>
 
-<style>
-  .programs-section {
-    padding: 6rem 3rem;
-    max-width: 100%;
-    background-color: var(--color-ice-blue);
-    color: var(--color-text-dark);
-    border-bottom: 2px solid var(--color-text-dark);
-  }
-
-  .section-container {
-    max-width: 1200px;
-    margin: 0 auto;
-  }
-
-  .programs-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    margin-bottom: 4rem;
-    color: var(--color-text-dark);
-  }
-
-  .text-orange {
-    color: var(--color-orange);
-    font-weight: 700;
-    display: block;
-    margin-bottom: 0.75rem;
-  }
-
-  .section-title {
-    font-size: 3rem;
-    font-weight: 900;
-    line-height: 1;
-    letter-spacing: -0.04em;
-  }
-
-  .view-all-link {
-    font-family: var(--font-mono);
-    color: var(--color-text-dark);
-    text-decoration: none;
-    font-size: 0.85rem;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    border-bottom: 2px solid var(--color-text-dark);
-    padding-bottom: 0.25rem;
-    transition: transform 0.2s ease;
-  }
-
-  .view-all-link:hover {
-    transform: translate(2px, -2px);
-  }
-
-  .arrow {
-    font-size: 1rem;
-  }
-
-  /* Grid layout */
-  .programs-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 2rem;
-  }
-
-  .show-item-card {
-    padding: 1rem !important;
-  }
-
-  .show-inner {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    gap: 1.5rem;
-  }
-
-  /* Brutalist index block cover art */
-  .show-cover-art {
-    width: 90px;
-    height: 90px;
-    background-color: #000000;
-    color: #ffffff;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    border: 2px solid #000000;
-    flex-shrink: 0;
-  }
-
-  .show-index {
-    font-family: var(--font-mono);
-    font-size: 1.15rem;
-    font-weight: 700;
-  }
-
-  .show-details {
-    flex-grow: 1;
-  }
-
-  .show-title {
-    font-size: 1.4rem;
-    font-weight: 900;
-    color: var(--color-text-dark);
-    margin-bottom: 0.35rem;
-    letter-spacing: -0.02em;
-    font-family: var(--font-sans);
-  }
-
-  .show-time {
-    font-size: 0.85rem;
-    color: #4a4a4a;
-    font-family: var(--font-mono);
-  }
-
-  /* Round play button with black border */
-  .show-play-btn {
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    border: 2px solid #000000;
-    background-color: transparent;
-    color: #000000;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    cursor: pointer;
-    transition: background-color 0.15s, color 0.15s, transform 0.15s;
-    margin-right: 0.5rem;
-    flex-shrink: 0;
-  }
-
-  .show-play-btn:hover {
-    background-color: #000000;
-    color: #ffffff;
-    transform: scale(1.05);
-  }
-
-  .play-arrow {
-    font-size: 0.85rem;
-    margin-left: 0.15rem;
-  }
-
-  @media (max-width: 992px) {
-    .programs-grid {
-      grid-template-columns: 1fr;
-    }
-    .programs-header {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 1.5rem;
-    }
-    .section-title {
-      font-size: 2.25rem;
-    }
-    .programs-section {
-      padding: 4rem 1.5rem;
-    }
-  }
-</style>

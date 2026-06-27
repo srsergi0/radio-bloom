@@ -27,103 +27,27 @@ const features = [
     desc: isEn ? "Join our active community and be a part of the sound." : "Únete a nuestra comunidad activa y sé parte del movimiento sonoro.",
   }
 ];
+
+// Tailwind classes to handle borders beautifully at all responsive breakpoints
+const borderClasses = [
+  "border-b-2 sm:border-b-2 sm:border-r-2 lg:border-b-0 lg:border-r-2 border-text-dark", // A
+  "border-b-2 sm:border-b-2 border-r-0 lg:border-b-0 lg:border-r-2 border-text-dark",    // B
+  "border-b-2 sm:border-b-0 sm:border-r-2 lg:border-b-0 lg:border-r-2 border-text-dark", // C
+  "border-b-0 border-text-dark"                                                         // D
+];
 ---
 
-<section class="features-row-section">
-  <div class="features-row-grid">
-    {features.map((feat) => (
-      <div class="feature-row-item">
-        <span class="feature-tag">{feat.tag}</span>
-        <div class="feature-text-box">
-          <h4 class="feature-row-title">{feat.title}</h4>
-          <p class="feature-row-desc">{feat.desc}</p>
+<section class="max-w-full bg-ice-blue text-text-dark border-b-2 border-text-dark">
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+    {features.map((feat, idx) => (
+      <div class={`flex flex-col items-start gap-4 p-6 sm:p-8 lg:p-12 ${borderClasses[idx]}`}>
+        <span class="font-mono text-sm font-bold text-orange">{feat.tag}</span>
+        <div class="flex flex-col gap-2">
+          <h4 class="text-base sm:text-lg font-black tracking-tight uppercase text-text-dark">{feat.title}</h4>
+          <p class="text-[13px] sm:text-sm text-neutral-600 leading-relaxed text-justify">{feat.desc}</p>
         </div>
       </div>
     ))}
   </div>
 </section>
 
-<style>
-  .features-row-section {
-    max-width: 100%;
-    background-color: var(--color-ice-blue);
-    color: var(--color-text-dark);
-    border-bottom: 2px solid var(--color-text-dark);
-  }
-
-  .features-row-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-  }
-
-  .feature-row-item {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1rem;
-    padding: 3rem;
-    border-right: 2px solid var(--color-text-dark);
-  }
-
-  .feature-row-item:last-child {
-    border-right: none;
-  }
-
-  .feature-tag {
-    font-family: var(--font-mono);
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: var(--color-orange);
-  }
-
-  .feature-text-box {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .feature-row-title {
-    font-size: 1.2rem;
-    font-weight: 900;
-    color: var(--color-text-dark);
-    font-family: var(--font-sans);
-    letter-spacing: -0.02em;
-  }
-
-  .feature-row-desc {
-    font-size: 0.85rem;
-    color: #4a4a4a;
-    line-height: 1.45;
-  }
-
-  @media (max-width: 992px) {
-    .features-row-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-    .feature-row-item {
-      border-right: none;
-      border-bottom: 2px solid var(--color-text-dark);
-      padding: 2rem;
-    }
-    .feature-row-item:nth-child(2) {
-      border-right: none;
-    }
-    .feature-row-item:nth-child(even) {
-      border-left: 2px solid var(--color-text-dark);
-    }
-  }
-
-  @media (max-width: 576px) {
-    .features-row-grid {
-      grid-template-columns: 1fr;
-    }
-    .feature-row-item {
-      border-left: none !important;
-      border-right: none !important;
-      border-bottom: 2px solid var(--color-text-dark);
-    }
-    .feature-row-item:last-child {
-      border-bottom: none;
-    }
-  }
-</style>

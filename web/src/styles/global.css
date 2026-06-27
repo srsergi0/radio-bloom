@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+@theme {
+  --color-orange: #ff3b00;
+  --color-ice-blue: #e6f4fe;
+  --color-text-dark: #000000;
+  --color-text-light: #ffffff;
+  --border-color-light: #ffffff;
+  --border-color-dark: #000000;
+
+  --font-sans: "Archivo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Space Mono", monospace;
+  --font-body: "Inter", sans-serif;
+}
+
+:root {
+  --bg-color: #000000;
+  --color-orange: #ff3b00;
+  --color-ice-blue: #e6f4fe;
+  --color-text-dark: #000000;
+  --color-text-light: #ffffff;
+  --border-color-light: #ffffff;
+  --border-color-dark: #000000;
+
+  --font-sans: "Archivo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Space Mono", monospace;
+  --font-body: "Inter", sans-serif;
+  
+  --text-muted: #888888;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--font-body);
+  background-color: var(--bg-color);
+  color: var(--color-text-light);
+  scroll-behavior: smooth;
+}
+
+h1,
+h2,
+h3,
+h4,
+.logo {
+  font-family: var(--font-sans);
+  text-transform: uppercase;
+  font-weight: 900;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  background-color: var(--bg-color);
+}
+
+/* Custom Scrollbar in Brutalist Style */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #000000;
+  border-left: 1px solid #1a1a1a;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-orange);
+  border: 2px solid #000000;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #e63500;
+}
+
+/* Universal custom layout helpers */
+.mono-tag {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}

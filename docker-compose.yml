@@ -27,7 +27,6 @@ services:
     volumes:
       - ./music:/app/music
       - ./publisher/data:/app/data
-      - ./publisher/src:/app/src
     networks:
       - radio-net
 
@@ -38,8 +37,6 @@ services:
     depends_on:
       - publisher
       - liquidsoap
-    volumes:
-      - ./watchdog/src:/app/src
     environment:
       - PUBLISHER_URL=http://publisher:3000
       - HEALTH_CHECK_INTERVAL=30000

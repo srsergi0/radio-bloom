@@ -1,7 +1,10 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync, existsSync } from "fs";
-import { dirname } from "path";
-import type { Track, DownloadJob, SystemConfig, Playlist, PlaylistTrack } from "./types";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { and, desc, eq, like, or, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import * as schema from "./schema";
+import type { DownloadJob, Playlist, PlaylistTrack, SystemConfig, Track } from "./types";
 
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
 const DB_PATH = `${DATA_DIR}/radio.db`;
@@ -12,6 +15,7 @@ function ensureDir() {
 }
 
 let db: Database;
+let drizzleDb: ReturnType<typeof drizzle<typeof schema>>;
 
 export function initDB(): Database {
   ensureDir();
@@ -19,6 +23,7 @@ export function initDB(): Database {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   createTables();
+  drizzleDb = drizzle({ client: db, schema });
   return db;
 }
 
@@ -44,7 +49,9 @@ function createTables() {
     )
   `);
   // Add columns that might not exist in older DBs
-  try { db.exec("ALTER TABLE library_tracks ADD COLUMN spotify_url TEXT DEFAULT ''"); } catch {}
+  try {
+    db.exec("ALTER TABLE library_tracks ADD COLUMN spotify_url TEXT DEFAULT ''");
+  } catch {}
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS downloads (
@@ -92,6 +99,11 @@ export function getDB(): Database {
   return db;
 }
 
+export function getDrizzle() {
+  if (!drizzleDb) initDB();
+  return drizzleDb;
+}
+
 // ============================================================
 // CONFIG
 // ============================================================
@@ -104,25 +116,26 @@ const DEFAULT_CONFIG: SystemConfig = {
 };
 
 export function loadConfig(): SystemConfig {
-  const d = getDB();
+  const d = getDrizzle();
   const config = { ...DEFAULT_CONFIG };
-  const rows = d.query("SELECT key, value FROM config").all() as { key: string; value: string }[];
+  const rows = d.select().from(schema.config).all();
   for (const row of rows) {
     const num = Number(row.value);
-    (config as any)[row.key] = isNaN(num) ? row.value : num;
+    (config as any)[row.key] = Number.isNaN(num) ? row.value : num;
   }
   return config;
 }
 
 export function saveConfig(config: SystemConfig) {
-  const d = getDB();
-  const upsert = d.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)");
-  const tx = d.transaction(() => {
+  const d = getDrizzle();
+  d.transaction((tx) => {
     for (const [key, value] of Object.entries(config)) {
-      upsert.run(key, String(value));
+      tx.insert(schema.config)
+        .values({ key, value: String(value) })
+        .onConflictDoUpdate({ target: schema.config.key, set: { value: String(value) } })
+        .run();
     }
   });
-  tx();
 }
 
 export function updateConfig(updates: Partial<SystemConfig>): SystemConfig {
@@ -137,77 +150,77 @@ export function updateConfig(updates: Partial<SystemConfig>): SystemConfig {
 // ============================================================
 
 export function createDownload(url: string): DownloadJob {
-  const d = getDB();
+  const d = getDrizzle();
   const id = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const now = new Date().toISOString();
-  d.run("INSERT INTO downloads (id, url, status, started_at) VALUES (?, ?, 'downloading', ?)", id, url, now);
+  d.insert(schema.downloads).values({ id, url, status: "downloading", startedAt: now }).run();
   return { id, url, status: "downloading", startedAt: now };
 }
 
 export function updateDownload(id: string, updates: Partial<DownloadJob>) {
-  const d = getDB();
-  const fields: string[] = [];
-  const vals: any[] = [];
-  if (updates.status) fields.push("status = ?"); vals.push(updates.status);
-  if (updates.error) fields.push("error = ?"); vals.push(updates.error);
-  if (updates.completedAt) fields.push("completed_at = ?"); vals.push(updates.completedAt);
-  if (updates.result) {
-    fields.push("result_file = ?"); vals.push(updates.result.file);
-    fields.push("result_title = ?"); vals.push(updates.result.title);
-    fields.push("result_duration = ?"); vals.push(updates.result.duration);
-    fields.push("result_spotify_url = ?"); vals.push(updates.result.spotifyUrl || "");
+  const d = getDrizzle();
+  const setClause: any = {};
+  if (updates.status !== undefined) setClause.status = updates.status;
+  if (updates.error !== undefined) setClause.error = updates.error;
+  if (updates.completedAt !== undefined) setClause.completedAt = updates.completedAt;
+  if (updates.result !== undefined) {
+    setClause.resultFile = updates.result.file;
+    setClause.resultTitle = updates.result.title;
+    setClause.resultDuration = updates.result.duration;
+    setClause.resultSpotifyUrl = updates.result.spotifyUrl || "";
   }
-  if (fields.length > 0) {
-    vals.push(id);
-    d.run(`UPDATE downloads SET ${fields.join(", ")} WHERE id = ?`, ...vals);
+  if (Object.keys(setClause).length > 0) {
+    d.update(schema.downloads).set(setClause).where(eq(schema.downloads.id, id)).run();
   }
 }
 
 export function getDownload(id: string): DownloadJob | null {
-  const row = getDB().query("SELECT * FROM downloads WHERE id = ?").get(id) as any;
+  const d = getDrizzle();
+  const row = d.select().from(schema.downloads).where(eq(schema.downloads.id, id)).get();
   if (!row) return null;
   const job: DownloadJob = {
     id: row.id,
     url: row.url,
-    status: row.status,
-    startedAt: row.started_at,
+    status: row.status as "queued" | "downloading" | "done" | "error",
+    startedAt: row.startedAt,
     error: row.error || undefined,
-    completedAt: row.completed_at || undefined,
+    completedAt: row.completedAt || undefined,
   };
-  if (row.result_file) {
+  if (row.resultFile) {
     job.result = {
       id: `lib_${Date.now()}`,
       type: "song",
-      file: `songs/${row.result_file}`,
-      title: row.result_title,
-      duration: row.result_duration,
-      spotifyUrl: row.result_spotify_url || undefined,
-      addedAt: row.completed_at || row.started_at,
+      file: `songs/${row.resultFile}`,
+      title: row.resultTitle || "",
+      duration: row.resultDuration || 0,
+      spotifyUrl: row.resultSpotifyUrl || undefined,
+      addedAt: row.completedAt || row.startedAt,
     };
   }
   return job;
 }
 
 export function getAllDownloads(): DownloadJob[] {
-  const rows = getDB().query("SELECT * FROM downloads ORDER BY started_at DESC").all() as any[];
-  return rows.map((r: any) => {
+  const d = getDrizzle();
+  const rows = d.select().from(schema.downloads).orderBy(desc(schema.downloads.startedAt)).all();
+  return rows.map((r) => {
     const job: DownloadJob = {
       id: r.id,
       url: r.url,
-      status: r.status,
-      startedAt: r.started_at,
+      status: r.status as "queued" | "downloading" | "done" | "error",
+      startedAt: r.startedAt,
       error: r.error || undefined,
-      completedAt: r.completed_at || undefined,
+      completedAt: r.completedAt || undefined,
     };
-    if (r.result_file) {
+    if (r.resultFile) {
       job.result = {
         id: `lib_${Date.now()}`,
         type: "song",
-        file: `songs/${r.result_file}`,
-        title: r.result_title,
-        duration: r.result_duration,
-        spotifyUrl: r.result_spotify_url || undefined,
-        addedAt: r.completed_at || r.started_at,
+        file: `songs/${r.resultFile}`,
+        title: r.resultTitle || "",
+        duration: r.resultDuration || 0,
+        spotifyUrl: r.resultSpotifyUrl || undefined,
+        addedAt: r.completedAt || r.startedAt,
       };
     }
     return job;
@@ -215,7 +228,7 @@ export function getAllDownloads(): DownloadJob[] {
 }
 
 export function clearDownloads() {
-  getDB().run("DELETE FROM downloads");
+  getDrizzle().delete(schema.downloads).run();
 }
 
 // ============================================================
@@ -225,84 +238,105 @@ export function clearDownloads() {
 function fileToId(file: string): string {
   let hash = 0;
   for (let i = 0; i < file.length; i++) {
-    hash = ((hash << 5) - hash) + file.charCodeAt(i);
+    hash = (hash << 5) - hash + file.charCodeAt(i);
     hash |= 0;
   }
   return `lib_${Math.abs(hash).toString(36)}`;
 }
 
 export function getLibraryTrackByUrl(spotifyUrl: string): Track | null {
-  const row = getDB().query("SELECT * FROM library_tracks WHERE spotify_url = ?").get(spotifyUrl) as any;
+  const d = getDrizzle();
+  const row = d
+    .select()
+    .from(schema.libraryTracks)
+    .where(eq(schema.libraryTracks.spotifyUrl, spotifyUrl))
+    .get();
   if (!row) return null;
   return {
     id: fileToId(row.file),
-    type: row.type,
+    type: row.type as "song" | "interludio",
     file: row.file,
     title: row.title,
     artist: row.artist || undefined,
     album: row.album || undefined,
     duration: row.duration,
-    spotifyUrl: row.spotify_url || undefined,
-    addedAt: row.added_at,
+    spotifyUrl: row.spotifyUrl || undefined,
+    addedAt: row.addedAt,
   };
 }
 
 export function getLibraryTrack(file: string): Track | null {
-  const row = getDB().query("SELECT * FROM library_tracks WHERE file = ?").get(file) as any;
+  const d = getDrizzle();
+  const row = d
+    .select()
+    .from(schema.libraryTracks)
+    .where(eq(schema.libraryTracks.file, file))
+    .get();
   if (!row) return null;
   return {
     id: fileToId(row.file),
-    type: row.type,
+    type: row.type as "song" | "interludio",
     file: row.file,
     title: row.title,
     artist: row.artist || undefined,
     album: row.album || undefined,
     duration: row.duration,
-    spotifyUrl: row.spotify_url || undefined,
-    addedAt: row.added_at,
+    spotifyUrl: row.spotifyUrl || undefined,
+    addedAt: row.addedAt,
   };
 }
 
 export function getAllLibraryTracks(type?: string): Track[] {
-  let rows: any[];
+  const d = getDrizzle();
+  let query = d.select().from(schema.libraryTracks).$dynamic();
   if (type) {
-    rows = getDB().query("SELECT * FROM library_tracks WHERE type = ? ORDER BY file").all(type) as any[];
-  } else {
-    rows = getDB().query("SELECT * FROM library_tracks ORDER BY file").all() as any[];
+    query = query.where(eq(schema.libraryTracks.type, type));
   }
-  return rows.map((r: any) => ({
+  const rows = query.orderBy(schema.libraryTracks.file).all();
+  return rows.map((r) => ({
     id: fileToId(r.file),
-    type: r.type,
+    type: r.type as "song" | "interludio",
     file: r.file,
     title: r.title,
     artist: r.artist || undefined,
     album: r.album || undefined,
     duration: r.duration,
-    spotifyUrl: r.spotify_url || undefined,
-    addedAt: r.added_at,
+    spotifyUrl: r.spotifyUrl || undefined,
+    addedAt: r.addedAt,
   }));
 }
 
 export function getLibraryTracksPage(type: string, limit: number, offset: number): Track[] {
-  const rows = getDB().query(
-    "SELECT * FROM library_tracks WHERE type = ? ORDER BY file LIMIT ? OFFSET ?"
-  ).all(type, limit, offset) as any[];
-  return rows.map((r: any) => ({
+  const d = getDrizzle();
+  const rows = d
+    .select()
+    .from(schema.libraryTracks)
+    .where(eq(schema.libraryTracks.type, type))
+    .orderBy(schema.libraryTracks.file)
+    .limit(limit)
+    .offset(offset)
+    .all();
+  return rows.map((r) => ({
     id: fileToId(r.file),
-    type: r.type,
+    type: r.type as "song" | "interludio",
     file: r.file,
     title: r.title,
     artist: r.artist || undefined,
     album: r.album || undefined,
     duration: r.duration,
-    spotifyUrl: r.spotify_url || undefined,
-    addedAt: r.added_at,
+    spotifyUrl: r.spotifyUrl || undefined,
+    addedAt: r.addedAt,
   }));
 }
 
 export function countLibraryTracks(type: string): number {
-  const row = getDB().query("SELECT COUNT(*) as cnt FROM library_tracks WHERE type = ?").get(type) as any;
-  return row.cnt;
+  const d = getDrizzle();
+  const row = d
+    .select({ count: sql<number>`count(*)` })
+    .from(schema.libraryTracks)
+    .where(eq(schema.libraryTracks.type, type))
+    .get();
+  return row ? row.count : 0;
 }
 
 export function upsertLibraryTrack(track: {
@@ -316,57 +350,108 @@ export function upsertLibraryTrack(track: {
   size: number;
   mtime: string;
 }) {
-  getDB().run(
-    `INSERT OR REPLACE INTO library_tracks (file, type, title, artist, album, duration, spotify_url, added_at, size, mtime)
-     VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT added_at FROM library_tracks WHERE file = ?), datetime('now')), ?, ?)`,
-    track.file, track.type, track.title, track.artist || "", track.album || "",
-    track.duration, track.spotify_url || "", track.file, track.size, track.mtime
-  );
+  const d = getDrizzle();
+  d.insert(schema.libraryTracks)
+    .values({
+      file: track.file,
+      type: track.type,
+      title: track.title,
+      artist: track.artist || "",
+      album: track.album || "",
+      duration: track.duration,
+      spotifyUrl: track.spotify_url || "",
+      size: track.size,
+      mtime: track.mtime,
+      addedAt: sql`COALESCE((SELECT added_at FROM library_tracks WHERE file = ${track.file}), datetime('now'))`,
+    })
+    .onConflictDoUpdate({
+      target: schema.libraryTracks.file,
+      set: {
+        type: track.type,
+        title: track.title,
+        artist: track.artist || "",
+        album: track.album || "",
+        duration: track.duration,
+        spotifyUrl: track.spotify_url || "",
+        size: track.size,
+        mtime: track.mtime,
+        addedAt: sql`COALESCE((SELECT added_at FROM library_tracks WHERE file = ${track.file}), datetime('now'))`,
+      },
+    })
+    .run();
 }
 
 export function removeLibraryTrack(file: string) {
-  getDB().run("DELETE FROM library_tracks WHERE file = ?", file);
+  getDrizzle().delete(schema.libraryTracks).where(eq(schema.libraryTracks.file, file)).run();
 }
 
-export function searchLibrary(query: string, limit = 50, offset = 0): { items: Track[]; total: number } {
+export function searchLibrary(
+  query: string,
+  limit = 50,
+  offset = 0
+): { items: Track[]; total: number } {
+  const d = getDrizzle();
   const q = `%${query}%`;
-  const totalRow = getDB().query(
-    "SELECT COUNT(*) as cnt FROM library_tracks WHERE title LIKE ? OR artist LIKE ? OR album LIKE ?"
-  ).get(q, q, q) as any;
-  const rows = getDB().query(
-    "SELECT * FROM library_tracks WHERE title LIKE ? OR artist LIKE ? OR album LIKE ? ORDER BY file LIMIT ? OFFSET ?"
-  ).all(q, q, q, limit, offset) as any[];
+  const totalRow = d
+    .select({ count: sql<number>`count(*)` })
+    .from(schema.libraryTracks)
+    .where(
+      or(
+        like(schema.libraryTracks.title, q),
+        like(schema.libraryTracks.artist, q),
+        like(schema.libraryTracks.album, q)
+      )
+    )
+    .get();
+
+  const rows = d
+    .select()
+    .from(schema.libraryTracks)
+    .where(
+      or(
+        like(schema.libraryTracks.title, q),
+        like(schema.libraryTracks.artist, q),
+        like(schema.libraryTracks.album, q)
+      )
+    )
+    .orderBy(schema.libraryTracks.file)
+    .limit(limit)
+    .offset(offset)
+    .all();
+
   return {
-    total: totalRow.cnt,
-    items: rows.map((r: any) => ({
+    total: totalRow ? totalRow.count : 0,
+    items: rows.map((r) => ({
       id: fileToId(r.file),
-      type: r.type,
+      type: r.type as "song" | "interludio",
       file: r.file,
       title: r.title,
       artist: r.artist || undefined,
       album: r.album || undefined,
       duration: r.duration,
-      spotifyUrl: r.spotify_url || undefined,
-      addedAt: r.added_at,
+      spotifyUrl: r.spotifyUrl || undefined,
+      addedAt: r.addedAt,
     })),
   };
 }
 
 export function getLibraryStats() {
-  const d = getDB();
-  const stats = d.query(`
-    SELECT
-      COUNT(*) FILTER (WHERE type = 'song') as total_songs,
-      COUNT(*) FILTER (WHERE type = 'interludio') as total_interludios,
-      COALESCE(SUM(size), 0) as total_size,
-      COALESCE(SUM(duration), 0) as total_duration
-    FROM library_tracks
-  `).get() as any;
+  const d = getDrizzle();
+  const stats = d
+    .select({
+      totalSongs: sql<number>`COUNT(*) FILTER (WHERE type = 'song')`,
+      totalInterludios: sql<number>`COUNT(*) FILTER (WHERE type = 'interludio')`,
+      totalSize: sql<number>`COALESCE(SUM(size), 0)`,
+      totalDuration: sql<number>`COALESCE(SUM(duration), 0)`,
+    })
+    .from(schema.libraryTracks)
+    .get();
+
   return {
-    totalSongs: stats.total_songs,
-    totalInterludios: stats.total_interludios,
-    totalSizeBytes: stats.total_size,
-    totalDurationSeconds: stats.total_duration,
+    totalSongs: stats?.totalSongs || 0,
+    totalInterludios: stats?.totalInterludios || 0,
+    totalSizeBytes: stats?.totalSize || 0,
+    totalDurationSeconds: stats?.totalDuration || 0,
   };
 }
 
@@ -375,98 +460,175 @@ export function getLibraryStats() {
 // ============================================================
 
 export function createPlaylist(name: string): Playlist {
-  const d = getDB();
+  const d = getDrizzle();
   const id = `pl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  d.run("INSERT INTO playlists (id, name) VALUES (?, ?)", id, name);
-  return { id, name, tracks: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const now = new Date().toISOString();
+  d.insert(schema.playlists).values({ id, name, createdAt: now, updatedAt: now }).run();
+  return { id, name, tracks: [], createdAt: now, updatedAt: now };
 }
 
 export function listPlaylists(): Playlist[] {
-  const rows = getDB().query("SELECT * FROM playlists ORDER BY updated_at DESC").all() as any[];
-  return rows.map((r: any) => ({
+  const d = getDrizzle();
+  const rows = d.select().from(schema.playlists).orderBy(desc(schema.playlists.updatedAt)).all();
+  return rows.map((r) => ({
     id: r.id,
     name: r.name,
     tracks: [],
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
   }));
 }
 
 export function getPlaylist(id: string): Playlist | null {
-  const d = getDB();
-  const row = d.query("SELECT * FROM playlists WHERE id = ?").get(id) as any;
+  const d = getDrizzle();
+  const row = d.select().from(schema.playlists).where(eq(schema.playlists.id, id)).get();
   if (!row) return null;
-  const tracks = d.query("SELECT * FROM playlist_tracks WHERE playlist_id = ? ORDER BY pos").all(id) as any[];
+  const tracks = d
+    .select()
+    .from(schema.playlistTracks)
+    .where(eq(schema.playlistTracks.playlistId, id))
+    .orderBy(schema.playlistTracks.pos)
+    .all();
   return {
     id: row.id,
     name: row.name,
-    tracks: tracks.map((t: any) => ({
+    tracks: tracks.map((t) => ({
       id: t.id,
-      playlistId: t.playlist_id,
+      playlistId: t.playlistId,
       pos: t.pos,
-      type: t.type,
+      type: t.type as "song" | "interludio",
       file: t.file || undefined,
       title: t.title,
       artist: t.artist || undefined,
       duration: t.duration,
-      spotifyUrl: t.spotify_url || undefined,
-      addedAt: t.added_at,
+      spotifyUrl: t.spotifyUrl || undefined,
+      addedAt: t.addedAt,
     })),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
 export function updatePlaylistName(id: string, name: string): boolean {
-  const d = getDB();
-  const result = d.run("UPDATE playlists SET name = ?, updated_at = datetime('now') WHERE id = ?", name, id);
+  const d = getDrizzle();
+  const result = d
+    .update(schema.playlists)
+    .set({ name, updatedAt: sql`datetime('now')` })
+    .where(eq(schema.playlists.id, id))
+    .run();
   return result.changes > 0;
 }
 
 export function deletePlaylist(id: string): boolean {
-  const d = getDB();
-  d.run("DELETE FROM playlist_tracks WHERE playlist_id = ?", id);
-  const result = d.run("DELETE FROM playlists WHERE id = ?", id);
-  return result.changes > 0;
+  const d = getDrizzle();
+  d.transaction((tx) => {
+    tx.delete(schema.playlistTracks).where(eq(schema.playlistTracks.playlistId, id)).run();
+    tx.delete(schema.playlists).where(eq(schema.playlists.id, id)).run();
+  });
+  return true;
 }
 
-export function addPlaylistTrack(playlistId: string, track: { type: string; file?: string; title: string; artist?: string; duration: number; spotifyUrl?: string }): PlaylistTrack | null {
-  const d = getDB();
-  const exists = d.query("SELECT id FROM playlists WHERE id = ?").get(playlistId);
+export function addPlaylistTrack(
+  playlistId: string,
+  track: {
+    type: string;
+    file?: string;
+    title: string;
+    artist?: string;
+    duration: number;
+    spotifyUrl?: string;
+  }
+): PlaylistTrack | null {
+  const d = getDrizzle();
+  const exists = d
+    .select({ id: schema.playlists.id })
+    .from(schema.playlists)
+    .where(eq(schema.playlists.id, playlistId))
+    .get();
   if (!exists) return null;
   const id = `pt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const maxPos = (d.query("SELECT COALESCE(MAX(pos), -1) + 1 as next FROM playlist_tracks WHERE playlist_id = ?").get(playlistId) as any).next;
-  d.run(
-    "INSERT INTO playlist_tracks (id, playlist_id, pos, type, file, title, artist, duration, spotify_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    id, playlistId, maxPos, track.type, track.file || null, track.title, track.artist || "", track.duration, track.spotifyUrl || ""
-  );
-  d.run("UPDATE playlists SET updated_at = datetime('now') WHERE id = ?", playlistId);
+  const maxPosRow = d
+    .select({ next: sql<number>`COALESCE(MAX(pos), -1) + 1` })
+    .from(schema.playlistTracks)
+    .where(eq(schema.playlistTracks.playlistId, playlistId))
+    .get();
+  const nextPos = maxPosRow ? maxPosRow.next : 0;
+  const now = new Date().toISOString();
+
+  d.transaction((tx) => {
+    tx.insert(schema.playlistTracks)
+      .values({
+        id,
+        playlistId,
+        pos: nextPos,
+        type: track.type,
+        file: track.file || null,
+        title: track.title,
+        artist: track.artist || "",
+        duration: track.duration,
+        spotifyUrl: track.spotifyUrl || "",
+        addedAt: now,
+      })
+      .run();
+    tx.update(schema.playlists)
+      .set({ updatedAt: sql`datetime('now')` })
+      .where(eq(schema.playlists.id, playlistId))
+      .run();
+  });
+
   return {
-    id, playlistId, pos: maxPos, type: track.type as "song" | "interludio",
-    file: track.file, title: track.title, artist: track.artist,
-    duration: track.duration, spotifyUrl: track.spotifyUrl, addedAt: new Date().toISOString(),
+    id,
+    playlistId,
+    pos: nextPos,
+    type: track.type as "song" | "interludio",
+    file: track.file,
+    title: track.title,
+    artist: track.artist,
+    duration: track.duration,
+    spotifyUrl: track.spotifyUrl,
+    addedAt: now,
   };
 }
 
 export function removePlaylistTrack(playlistId: string, trackId: string): boolean {
-  const d = getDB();
-  const result = d.run("DELETE FROM playlist_tracks WHERE id = ? AND playlist_id = ?", trackId, playlistId);
-  if (result.changes > 0) {
-    d.run("UPDATE playlists SET updated_at = datetime('now') WHERE id = ?", playlistId);
-    return true;
-  }
-  return false;
+  const d = getDrizzle();
+  let changes = 0;
+  d.transaction((tx) => {
+    const res = tx
+      .delete(schema.playlistTracks)
+      .where(
+        and(eq(schema.playlistTracks.id, trackId), eq(schema.playlistTracks.playlistId, playlistId))
+      )
+      .run();
+    changes = res.changes;
+    if (changes > 0) {
+      tx.update(schema.playlists)
+        .set({ updatedAt: sql`datetime('now')` })
+        .where(eq(schema.playlists.id, playlistId))
+        .run();
+    }
+  });
+  return changes > 0;
 }
 
 export function reorderPlaylistTracks(playlistId: string, trackIds: string[]): boolean {
-  const d = getDB();
-  const tx = d.transaction(() => {
+  const d = getDrizzle();
+  d.transaction((tx) => {
     for (let i = 0; i < trackIds.length; i++) {
-      d.run("UPDATE playlist_tracks SET pos = ? WHERE id = ? AND playlist_id = ?", i, trackIds[i], playlistId);
+      tx.update(schema.playlistTracks)
+        .set({ pos: i })
+        .where(
+          and(
+            eq(schema.playlistTracks.id, trackIds[i]),
+            eq(schema.playlistTracks.playlistId, playlistId)
+          )
+        )
+        .run();
     }
-    d.run("UPDATE playlists SET updated_at = datetime('now') WHERE id = ?", playlistId);
+    tx.update(schema.playlists)
+      .set({ updatedAt: sql`datetime('now')` })
+      .where(eq(schema.playlists.id, playlistId))
+      .run();
   });
-  tx();
   return true;
 }
-

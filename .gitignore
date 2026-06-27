@@ -19,6 +19,13 @@ web/
 node_modules/
 bun.lock*
 
+# SQLite Database files
+*.db
+*.db-shm
+*.db-wal
+drizzle.db
+
+
 # Build
 dist/
 .turbo/

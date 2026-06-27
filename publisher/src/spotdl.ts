@@ -1,7 +1,14 @@
-import { readdirSync, statSync } from "fs";
-import { join, basename, extname } from "path";
-import type { Track, DownloadJob } from "./types";
-import { createDownload, updateDownload, getDownload, getAllDownloads as dbGetAll, clearDownloads as dbClear, upsertLibraryTrack } from "./db";
+import { readdirSync, statSync } from "node:fs";
+import { basename, extname, join } from "node:path";
+import {
+  createDownload,
+  clearDownloads as dbClear,
+  getAllDownloads as dbGetAll,
+  getDownload,
+  updateDownload,
+  upsertLibraryTrack,
+} from "./db";
+import type { DownloadJob, Track } from "./types";
 
 const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
 const SONGS_DIR = join(MUSIC_DIR, "songs");
@@ -9,9 +16,12 @@ const SONGS_DIR = join(MUSIC_DIR, "songs");
 const activeProcesses = new Map<string, any>();
 const onCompleteCallbacks = new Map<string, (track: Track) => void>();
 
-let procIdCounter = 0;
+const _procIdCounter = 0;
 
-export async function downloadFromSpotify(url: string, onComplete?: (track: Track) => void): Promise<DownloadJob> {
+export async function downloadFromSpotify(
+  url: string,
+  onComplete?: (track: Track) => void
+): Promise<DownloadJob> {
   const job = createDownload(url);
   if (onComplete) onCompleteCallbacks.set(job.id, onComplete);
   console.log(`[spotdl] Starting download: ${url}`);
@@ -52,6 +62,7 @@ export async function downloadFromSpotify(url: string, onComplete?: (track: Trac
 
   const exitCode = await proc.exited;
   activeProcesses.delete(job.id);
+  console.log(`[spotdl] Exit code: ${exitCode}`);
 
   if (exitCode === 0) {
     const files = readdirSync(SONGS_DIR)
@@ -74,22 +85,31 @@ export async function downloadFromSpotify(url: string, onComplete?: (track: Trac
         type: "song",
         file: `songs/${latestFile}`,
         title: name,
-        duration: Math.floor(statSync(filePath).size / (192 * 1000 / 8)),
+        duration: Math.floor(statSync(filePath).size / ((192 * 1000) / 8)),
         spotifyUrl: url,
         addedAt: new Date().toISOString(),
       };
 
-      upsertLibraryTrack({
-        file: track.file,
-        type: "song",
-        title: track.title,
-        duration: track.duration,
-        spotify_url: url,
-        size: statSync(filePath).size,
-        mtime: statSync(filePath).mtime.toISOString(),
-      });
+      try {
+        upsertLibraryTrack({
+          file: track.file,
+          type: "song",
+          title: track.title,
+          duration: track.duration,
+          spotify_url: url,
+          size: statSync(filePath).size,
+          mtime: statSync(filePath).mtime.toISOString(),
+        });
+      } catch (e: any) {
+        console.error(`[spotdl] Upsert error: ${e.message}`);
+        throw e;
+      }
 
-      updateDownload(job.id, { status: "done", result: track, completedAt: new Date().toISOString() });
+      updateDownload(job.id, {
+        status: "done",
+        result: track,
+        completedAt: new Date().toISOString(),
+      });
       job.status = "done";
       job.result = track;
       job.completedAt = new Date().toISOString();
@@ -101,12 +121,20 @@ export async function downloadFromSpotify(url: string, onComplete?: (track: Trac
         cb(track);
       }
     } else {
-      updateDownload(job.id, { status: "error", error: "No file found after download", completedAt: new Date().toISOString() });
+      updateDownload(job.id, {
+        status: "error",
+        error: "No file found after download",
+        completedAt: new Date().toISOString(),
+      });
       job.status = "error";
       job.error = "No file found after download";
     }
   } else {
-    updateDownload(job.id, { status: "error", error: stderr || `Exit code ${exitCode}`, completedAt: new Date().toISOString() });
+    updateDownload(job.id, {
+      status: "error",
+      error: stderr || `Exit code ${exitCode}`,
+      completedAt: new Date().toISOString(),
+    });
     job.status = "error";
     job.error = stderr || `Exit code ${exitCode}`;
     job.completedAt = new Date().toISOString();
@@ -117,7 +145,15 @@ export async function downloadFromSpotify(url: string, onComplete?: (track: Trac
 }
 
 function loadJob(id: string): DownloadJob {
-  return getDownload(id) || { id, url: "", status: "error", error: "Not found", startedAt: new Date().toISOString() };
+  return (
+    getDownload(id) || {
+      id,
+      url: "",
+      status: "error",
+      error: "Not found",
+      startedAt: new Date().toISOString(),
+    }
+  );
 }
 
 export function getDownloadJob(id: string): DownloadJob | null {
@@ -131,10 +167,16 @@ export function getAllDownloads(): DownloadJob[] {
 export function cancelDownload(id: string): boolean {
   const proc = activeProcesses.get(id);
   if (proc) {
-    try { proc.kill(9); } catch {}
+    try {
+      proc.kill(9);
+    } catch {}
     activeProcesses.delete(id);
     onCompleteCallbacks.delete(id);
-    updateDownload(id, { status: "error", error: "Cancelled by user", completedAt: new Date().toISOString() });
+    updateDownload(id, {
+      status: "error",
+      error: "Cancelled by user",
+      completedAt: new Date().toISOString(),
+    });
     return true;
   }
   return false;

@@ -1,15 +1,15 @@
 import api from "./api";
-import { initLiquidsoap } from "./liquidsoap";
-import { initLibrary } from "./library";
 import { initDB } from "./db";
+import { initLibrary } from "./library";
+import { initLiquidsoap } from "./liquidsoap";
 import { createHttpTransport } from "./mcp";
 
-const PORT = parseInt(process.env.PORT || "3000");
+const PORT = parseInt(process.env.PORT || "3000", 10);
 const LIQUIDSOAP_HOST = process.env.LIQUIDSOAP_HOST || "liquidsoap";
 const LIQUIDSOAP_HARBOUR_PORT = process.env.LIQUIDSOAP_HARBOUR_PORT || "8000";
 const STREAM_URL = `http://${LIQUIDSOAP_HOST}:${LIQUIDSOAP_HARBOUR_PORT}/radiobloom.mp3`;
 
-const server = Bun.serve({
+const _server = Bun.serve({
   port: PORT,
   async fetch(req) {
     const url = new URL(req.url);
@@ -29,12 +29,12 @@ const server = Bun.serve({
             "Content-Type": "audio/mpeg",
             "Transfer-Encoding": "chunked",
             "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0",
+            Pragma: "no-cache",
+            Expires: "0",
             "Access-Control-Allow-Origin": "*",
           },
         });
-      } catch (err: any) {
+      } catch (_err: any) {
         return new Response("Stream connection failed", { status: 502 });
       }
     }
@@ -73,8 +73,8 @@ console.log(`  DEL  /api/stream/queue`);
 console.log(`  DEL  /api/stream/queue/:rid`);
 console.log(`  POST /api/stream/queue/insert  (body: {"index", "url"})`);
 console.log(`  POST /api/stream/play/url  (body: {"url":"..."})`);
-  console.log(`  POST /api/library/:id/play`);
-  console.log(`  ALL  /mcp                     ← MCP protocol (Streamable HTTP)`);
+console.log(`  POST /api/library/:id/play`);
+console.log(`  ALL  /mcp                     ← MCP protocol (Streamable HTTP)`);
 
 initDB();
 initLibrary();

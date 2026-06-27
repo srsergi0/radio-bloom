@@ -1,12 +1,12 @@
-import { spawnSync } from "child_process";
-import { createConnection, type Socket } from "net";
+import { spawnSync } from "node:child_process";
+import { createConnection } from "node:net";
 
 const LIQUIDSOAP_HOST = process.env.LIQUIDSOAP_HOST || "localhost";
-const LIQUIDSOAP_TELNET_PORT = parseInt(process.env.LIQUIDSOAP_TELNET_PORT || "1234");
+const LIQUIDSOAP_TELNET_PORT = parseInt(process.env.LIQUIDSOAP_TELNET_PORT || "1234", 10);
 
 let connected = false;
-let reconnectTimer: Timer | null = null;
-let durationCache = new Map<string, { duration: number; cachedAt: number }>();
+const _reconnectTimer: Timer | null = null;
+const durationCache = new Map<string, { duration: number; cachedAt: number }>();
 const DURATION_CACHE_TTL = 3600000;
 let lastQueuedRid: string | null = null;
 
@@ -36,7 +36,7 @@ export function sendCommand(cmd: string, timeoutMs = 10000): Promise<string[]> {
 
     s.on("connect", () => {
       connected = true;
-      s.write(cmd + "\n");
+      s.write(`${cmd}\n`);
     });
 
     s.on("data", (data) => {
@@ -80,7 +80,7 @@ export function sendCommand(cmd: string, timeoutMs = 10000): Promise<string[]> {
   });
 }
 
-function ensureConnected() {
+function _ensureConnected() {
   if (!connected) {
     keepAlive();
   }
@@ -124,7 +124,7 @@ export async function getCurrentRequestId(): Promise<string | null> {
       }
     }
     if (allRids.length === 0) return null;
-    const sorted = allRids.sort((a, b) => parseInt(b) - parseInt(a));
+    const sorted = allRids.sort((a, b) => parseInt(b, 10) - parseInt(a, 10));
     const rid = sorted[0];
     if (lastQueuedRid && rid !== lastQueuedRid) lastQueuedRid = null;
     return rid;
@@ -164,16 +164,23 @@ function getFileDuration(filepath: string): number {
   const localPath = filepath.replace(/^\/music\//, `${MUSIC_MOUNT}/`);
 
   try {
-    const result = spawnSync("ffprobe", [
-      "-v", "quiet",
-      "-show_entries", "format=duration",
-      "-of", "default=noprint_wrappers=1:nokey=1",
-      localPath,
-    ], { timeout: 5000 });
+    const result = spawnSync(
+      "ffprobe",
+      [
+        "-v",
+        "quiet",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        localPath,
+      ],
+      { timeout: 5000 }
+    );
 
     if (result.status === 0) {
       const dur = parseFloat(result.stdout.toString().trim());
-      if (!isNaN(dur) && dur > 0) {
+      if (!Number.isNaN(dur) && dur > 0) {
         durationCache.set(filepath, { duration: dur, cachedAt: Date.now() });
         return dur;
       }
@@ -208,8 +215,8 @@ export async function getStreamStatus() {
     let elapsed = 0;
     if (meta.on_air_timestamp) {
       const startTime = parseFloat(meta.on_air_timestamp);
-      if (!isNaN(startTime)) {
-        elapsed = Math.floor((Date.now() / 1000) - startTime);
+      if (!Number.isNaN(startTime)) {
+        elapsed = Math.floor(Date.now() / 1000 - startTime);
       }
     }
 

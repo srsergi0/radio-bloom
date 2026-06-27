@@ -1,14 +1,45 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { existsSync } from "fs";
-import { join } from "path";
-import { listSongs, listInterludios, deleteTrack, getLibraryStats, scanLibrary, getTrackByUrl, getTrackByFile } from "./library";
-import { skipTrack, pausePlayback, startPlayback, getStreamStatus, reloadPlaylist, isLiquidsoapConnected, queuePush, queueList, queueClear, queueRemove, queueInsert, playFileNow, queueLength, sendCommand } from "./liquidsoap";
-import { searchLibrary, createPlaylist, listPlaylists, getPlaylist, updatePlaylistName, deletePlaylist, addPlaylistTrack, removePlaylistTrack, reorderPlaylistTracks, getLibraryTrack } from "./db";
 import { loadConfig, updateConfig } from "./config";
+import {
+  addPlaylistTrack,
+  createPlaylist,
+  deletePlaylist,
+  getPlaylist,
+  listPlaylists,
+  removePlaylistTrack,
+  reorderPlaylistTracks,
+  searchLibrary,
+  updatePlaylistName,
+} from "./db";
+import {
+  deleteTrack,
+  getLibraryStats,
+  getTrackByFile,
+  getTrackByUrl,
+  listInterludios,
+  listSongs,
+  scanLibrary,
+} from "./library";
+import {
+  getStreamStatus,
+  isLiquidsoapConnected,
+  pausePlayback,
+  playFileNow,
+  queueClear,
+  queueInsert,
+  queueList,
+  queuePush,
+  queueRemove,
+  reloadPlaylist,
+  sendCommand,
+  skipTrack,
+  startPlayback,
+} from "./liquidsoap";
 import { getHttpTransport } from "./mcp";
 import { downloadFromSpotify } from "./spotdl";
-import type { Track } from "./types";
 
 const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
 
@@ -28,8 +59,8 @@ app.get("/api/system/status", async (c) => {
     data: {
       liquidsoap: {
         connected: liquidsoapConnected,
-        telnetPort: parseInt(process.env.LIQUIDSOAP_TELNET_PORT || "1234"),
-        harbourPort: parseInt(process.env.LIQUIDSOAP_HARBOUR_PORT || "8000"),
+        telnetPort: parseInt(process.env.LIQUIDSOAP_TELNET_PORT || "1234", 10),
+        harbourPort: parseInt(process.env.LIQUIDSOAP_HARBOUR_PORT || "8000", 10),
         streamUrl: `http://localhost:${process.env.LIQUIDSOAP_HARBOUR_PORT || "8000"}/radiobloom.mp3`,
       },
       config,
@@ -181,7 +212,10 @@ app.post("/api/stream/queue", async (c) => {
     const list = await queueList();
     return c.json({ ok: true, data: { source: "library", rid, track: existing, queue: list } });
   } catch (err: any) {
-    return c.json({ ok: false, error: err.message }, 500);
+    return c.json(
+      { ok: false, error: err.message, stack: err.stack?.split("\n").slice(0, 5).join("\\n") },
+      500
+    );
   }
 });
 
@@ -207,7 +241,11 @@ app.delete("/api/stream/queue/:rid", async (c) => {
   try {
     const rid = c.req.param("rid");
     const ok = await queueRemove(rid);
-    if (!ok) return c.json({ ok: false, error: "RID not found in queue (ya pasó a reproducción o no existe)" }, 404);
+    if (!ok)
+      return c.json(
+        { ok: false, error: "RID not found in queue (ya pasó a reproducción o no existe)" },
+        404
+      );
     const list = await queueList();
     return c.json({ ok: true, data: { removed: rid, queue: list } });
   } catch (err: any) {
@@ -256,7 +294,10 @@ app.post("/api/stream/play/url", async (c) => {
       if (!rid) return c.json({ ok: false, error: "Failed to queue" }, 500);
       const st = await getStreamStatus();
       const list = await queueList();
-      return c.json({ ok: true, data: { source: "library", track: existing, nowPlaying: st, queue: list } });
+      return c.json({
+        ok: true,
+        data: { source: "library", track: existing, nowPlaying: st, queue: list },
+      });
     }
 
     const { downloadFromSpotify } = await import("./spotdl");
@@ -342,7 +383,7 @@ app.post("/api/playlists/:id/load", async (c) => {
   if (!playlist) return c.json({ ok: false, error: "Playlist not found" }, 404);
 
   const results: { title: string; status: string; error?: string }[] = [];
-  const pending: { track: typeof playlist.tracks[0]; filepath: string }[] = [];
+  const pending: { track: (typeof playlist.tracks)[0]; filepath: string }[] = [];
 
   for (const track of playlist.tracks) {
     const filepath = track.file ? join(MUSIC_DIR, track.file) : "";

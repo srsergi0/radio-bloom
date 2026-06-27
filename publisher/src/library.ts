@@ -1,9 +1,18 @@
-import { readdirSync, statSync, unlinkSync, existsSync, mkdirSync } from "fs";
-import { join, extname, basename } from "path";
-import { spawnSync } from "child_process";
-import type { Track, LibraryStats } from "./types";
-import { getAllLibraryTracks as dbGetAll, getLibraryTrack, getLibraryTrackByUrl, upsertLibraryTrack, removeLibraryTrack as dbRemove, getLibraryStats as dbStats, getDB, getLibraryTracksPage, countLibraryTracks } from "./db";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { basename, extname, join } from "node:path";
+import {
+  countLibraryTracks,
+  getAllLibraryTracks as dbGetAll,
+  removeLibraryTrack as dbRemove,
+  getLibraryStats as dbStats,
+  getLibraryTrack,
+  getLibraryTrackByUrl,
+  getLibraryTracksPage,
+  upsertLibraryTrack,
+} from "./db";
 import { queueClear } from "./liquidsoap";
+import type { LibraryStats, Track } from "./types";
 
 const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
 const SONGS_DIR = join(MUSIC_DIR, "songs");
@@ -15,15 +24,28 @@ function ensureDirs() {
   if (!existsSync(INTERLUDIOS_DIR)) mkdirSync(INTERLUDIOS_DIR, { recursive: true });
 }
 
-function getAudioMetadata(filePath: string): { duration: number; artist: string; album: string; title: string; spotifyUrl: string } {
+function getAudioMetadata(filePath: string): {
+  duration: number;
+  artist: string;
+  album: string;
+  title: string;
+  spotifyUrl: string;
+} {
   const result = { duration: 0, artist: "", album: "", title: "", spotifyUrl: "" };
   try {
-    const meta = spawnSync("ffprobe", [
-      "-v", "quiet",
-      "-show_entries", "format=duration:format_tags=artist,album,title",
-      "-of", "default=noprint_wrappers=1",
-      filePath,
-    ], { timeout: 8000 });
+    const meta = spawnSync(
+      "ffprobe",
+      [
+        "-v",
+        "quiet",
+        "-show_entries",
+        "format=duration:format_tags=artist,album,title",
+        "-of",
+        "default=noprint_wrappers=1",
+        filePath,
+      ],
+      { timeout: 8000 }
+    );
     if (meta.status === 0) {
       for (const line of meta.stdout.toString().trim().split("\n")) {
         const eq = line.indexOf("=");
@@ -59,7 +81,7 @@ function scanAndUpsert(dir: string, type: "song" | "interludio") {
       title: meta.title || name,
       artist: meta.artist,
       album: meta.album,
-      duration: meta.duration || Math.floor(stat.size / (192 * 1000 / 8)),
+      duration: meta.duration || Math.floor(stat.size / ((192 * 1000) / 8)),
       spotify_url: meta.spotifyUrl,
       size: stat.size,
       mtime: stat.mtime.toISOString(),
@@ -69,8 +91,8 @@ function scanAndUpsert(dir: string, type: "song" | "interludio") {
 
 function watchDir(dir: string, type: "song" | "interludio") {
   try {
-    const fs = require("fs");
-    fs.watch(dir, (event: string, filename: string | null) => {
+    const fs = require("node:fs");
+    fs.watch(dir, (_event: string, filename: string | null) => {
       if (!filename || !AUDIO_EXTENSIONS.test(filename)) return;
       setTimeout(() => {
         const filePath = join(dir, filename);
@@ -94,7 +116,9 @@ export function initLibrary() {
   scanAndUpsert(INTERLUDIOS_DIR, "interludio");
   watchDir(SONGS_DIR, "song");
   watchDir(INTERLUDIOS_DIR, "interludio");
-  console.log(`[library] Initialized: ${dbStats().totalSongs} songs, ${dbStats().totalInterludios} interludios`);
+  console.log(
+    `[library] Initialized: ${dbStats().totalSongs} songs, ${dbStats().totalInterludios} interludios`
+  );
 }
 
 export function listSongs(): Track[] {
@@ -109,8 +133,14 @@ export function listInterludios(): Track[] {
   return dbGetAll("interludio");
 }
 
-export function listInterludiosPage(limit: number, offset: number): { items: Track[]; total: number } {
-  return { items: getLibraryTracksPage("interludio", limit, offset), total: countLibraryTracks("interludio") };
+export function listInterludiosPage(
+  limit: number,
+  offset: number
+): { items: Track[]; total: number } {
+  return {
+    items: getLibraryTracksPage("interludio", limit, offset),
+    total: countLibraryTracks("interludio"),
+  };
 }
 
 export function getAllTracks(): Track[] {

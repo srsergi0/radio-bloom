@@ -1,4 +1,8 @@
-import { loadConfig as dbLoadConfig, saveConfig as dbSaveConfig, updateConfig as dbUpdateConfig } from "./db";
+import {
+  loadConfig as dbLoadConfig,
+  saveConfig as dbSaveConfig,
+  updateConfig as dbUpdateConfig,
+} from "./db";
 import type { SystemConfig } from "./types";
 
 export function loadConfig(): SystemConfig {

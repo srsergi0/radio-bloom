@@ -5,18 +5,25 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
-    "mcp": "bun src/mcp-entry.ts"
+    "mcp": "bun src/mcp-entry.ts",
+    "test": "bun test",
+    "lint": "biome lint src/",
+    "format": "biome format --write src/",
+    "check": "biome check --write src/"
   },
   "bin": {
     "radio-bloom-mcp": "./src/mcp-entry.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.7.0",
     "zod": "3"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.1",
     "@types/bun": "^1.2.0",
+    "drizzle-kit": "^0.31.10",
     "typescript": "^5.7.0"
   }
 }

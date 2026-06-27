@@ -511,12 +511,17 @@ export function getPlaylist(id: string): Playlist | null {
 
 export function updatePlaylistName(id: string, name: string): boolean {
   const d = getDrizzle();
-  const result = d
-    .update(schema.playlists)
+  const exists = d
+    .select({ id: schema.playlists.id })
+    .from(schema.playlists)
+    .where(eq(schema.playlists.id, id))
+    .get();
+  if (!exists) return false;
+  d.update(schema.playlists)
     .set({ name, updatedAt: sql`datetime('now')` })
     .where(eq(schema.playlists.id, id))
     .run();
-  return result.changes > 0;
+  return true;
 }
 
 export function deletePlaylist(id: string): boolean {
@@ -592,23 +597,27 @@ export function addPlaylistTrack(
 
 export function removePlaylistTrack(playlistId: string, trackId: string): boolean {
   const d = getDrizzle();
-  let changes = 0;
+  const exists = d
+    .select({ id: schema.playlistTracks.id })
+    .from(schema.playlistTracks)
+    .where(
+      and(eq(schema.playlistTracks.id, trackId), eq(schema.playlistTracks.playlistId, playlistId))
+    )
+    .get();
+  if (!exists) return false;
+
   d.transaction((tx) => {
-    const res = tx
-      .delete(schema.playlistTracks)
+    tx.delete(schema.playlistTracks)
       .where(
         and(eq(schema.playlistTracks.id, trackId), eq(schema.playlistTracks.playlistId, playlistId))
       )
       .run();
-    changes = res.changes;
-    if (changes > 0) {
-      tx.update(schema.playlists)
-        .set({ updatedAt: sql`datetime('now')` })
-        .where(eq(schema.playlists.id, playlistId))
-        .run();
-    }
+    tx.update(schema.playlists)
+      .set({ updatedAt: sql`datetime('now')` })
+      .where(eq(schema.playlists.id, playlistId))
+      .run();
   });
-  return changes > 0;
+  return true;
 }
 
 export function reorderPlaylistTracks(playlistId: string, trackIds: string[]): boolean {

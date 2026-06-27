@@ -1,0 +1,25 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Hero from '../components/Hero.astro';
+import LiveShow from '../components/LiveShow.astro';
+import ProgramList from '../components/ProgramList.astro';
+import EventBanner from '../components/EventBanner.astro';
+import Features from '../components/Features.astro';
+---
+
+<Layout title="Bloom Radio - Música que conecta, voces que inspiran." lang="es">
+  <!-- Hero Section -->
+  <Hero isEn={false} />
+
+  <!-- Live Now and Schedule Section -->
+  <LiveShow isEn={false} />
+
+  <!-- Our Programs Section -->
+  <ProgramList isEn={false} />
+
+  <!-- Events Section -->
+  <EventBanner isEn={false} />
+
+  <!-- Bottom Features Row -->
+  <Features isEn={false} />
+</Layout>

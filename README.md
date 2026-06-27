@@ -130,3 +130,62 @@ radio/
 4. **Icecast sirve el stream** → vía HTTP en `:8000`
 5. **Tunnel expone HTTPS** → `radio.tudominio.com`
 6. **Radio Garden recibe** → `https://radio.tudominio.com/radiobloom.mp3`
+
+## MCP (Model Context Protocol)
+
+Este proyecto incluye un servidor MCP para que agentes de IA (como Claude Desktop, Cursor o VS Code) puedan controlar la radio directamente.
+
+### Herramientas disponibles
+* `radio_status`: Obtiene el estado actual del stream (reproducción, cola, stats).
+* `radio_search`: Busca canciones o interludios en la biblioteca por título/artista/álbum.
+* `radio_queue_list`: Lista los elementos actualmente en la cola de reproducción.
+* `radio_queue_add`: Añade un archivo al final de la cola.
+* `radio_queue_insert`: Inserta un archivo en una posición específica de la cola.
+* `radio_queue_remove`: Elimina un elemento de la cola por su posición.
+* `radio_queue_clear`: Vacía la cola completa.
+* `radio_play_now`: Limpia la cola, encola el archivo y salta a él inmediatamente.
+* `radio_skip`: Salta la canción actual en reproducción.
+* `radio_library_stats`: Obtiene el número total de temas e interludios, duración y tamaño.
+* `radio_list_songs` / `radio_list_interludios`: Lista canciones o interludios paginados.
+* `radio_playlist_list` / `radio_playlist_get`: Lista y obtiene las playlists guardadas en la base de datos.
+
+### Configuración en Clientes de IA (como Claude Desktop)
+
+Puedes conectar tu agente al servidor MCP de dos formas:
+
+#### Opción 1: Conexión Remota (Producción)
+Configura tu cliente para conectarse al transporte HTTP/SSE de producción:
+
+```json
+{
+  "mcpServers": {
+    "radio-bloom-prod": {
+      "sse": {
+        "url": "http://<IP_O_DOMINIO_DE_TU_SERVIDOR>:<PUERTO>/mcp"
+      }
+    }
+  }
+}
+```
+
+#### Opción 2: Conexión Local (STDIO)
+Si estás desarrollando localmente y deseas que el cliente levante el servidor directamente como subproceso:
+
+```json
+{
+  "mcpServers": {
+    "radio-bloom-local": {
+      "command": "bun",
+      "args": ["run", "src/mcp-entry.ts"],
+      "cwd": "C:/tu/ruta/a/radio/publisher",
+      "env": {
+        "DATA_DIR": "C:/tu/ruta/a/radio/publisher/data",
+        "MUSIC_DIR": "C:/tu/ruta/a/radio/music"
+      }
+    }
+  }
+}
+```
+> [!NOTE]
+> Asegúrate de reemplazar `C:/tu/ruta/a/` por las rutas absolutas correspondientes en tu sistema.
+

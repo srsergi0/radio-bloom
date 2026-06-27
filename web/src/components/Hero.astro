@@ -1,0 +1,151 @@
+---
+import Button from "./ui/Button.astro";
+
+interface Props {
+  isEn?: boolean;
+}
+
+const { isEn = false } = Astro.props;
+---
+
+<section class="hero-block">
+  <!-- Massive Typography Block -->
+  <div class="hero-title-area">
+    <h1 class="hero-main-title">
+      <span class="brand-name">Bloom Radio</span>
+    </h1>
+  </div>
+
+  <!-- 3-Column Grid divided by solid black borders -->
+  <div class="hero-grid">
+    <!-- Column 1: Play Radio Action -->
+    <div class="grid-col col-action">
+      <Button href="#live-section" variant="text" class="play-action-btn">
+        <span class="play-arrow">▶</span>
+        {isEn ? "Play Radio" : "Escuchar Radio"}
+      </Button>
+    </div>
+
+    <!-- Column 2: Music Vibe Details -->
+    <div class="grid-col col-text">
+      <p class="brutalist-paragraph">
+        {
+          isEn
+            ? "At Bloom Radio, we transcend boundaries to bring you a sonic journey that stretches beyond the horizon. With an eclectic mix of lofi beats, ambient textures, and organic field recordings, we are your ultimate destination for soul-stirring melodies and peaceful soundscapes."
+            : "En Bloom Radio, trascendemos los límites sonoros para ofrecerte un viaje acústico único. Con una mezcla curada de beats lofi, texturas ambient y grabaciones de campo orgánicas, somos tu destino definitivo para melodías inspiradoras y paisajes sonoros pacíficos."
+        }
+      </p>
+    </div>
+
+    <!-- Column 3: Purpose Details -->
+    <div class="grid-col col-text">
+      <p class="brutalist-paragraph">
+        {
+          isEn
+            ? "Our station is more than just a platform for music - it's a gateway to exploration, focus, and deep relaxation. Whether you are seeking focus for study, stress relief, or underground gems, Bloom Radio promises to ignite your passion for sound and elevate your daily environment."
+            : "Nuestra estación es más que una simple plataforma musical: es una puerta al enfoque, la exploración y la relajación profunda. Ya sea que busques concentrarte para estudiar, aliviar el estrés o descubrir joyas sonoras independientes, Bloom Radio promete elevar tu día a día."
+        }
+      </p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .hero-block {
+    background-color: var(--color-ice-blue);
+    color: var(--color-text-dark);
+    border-bottom: 2px solid var(--color-text-dark);
+    max-width: 100%;
+  }
+
+  /* Massive typography container matching Mockup 1 */
+  .hero-title-area {
+    padding: 6rem 3rem 4rem 3rem;
+    border-bottom: 2px solid var(--color-text-dark);
+  }
+
+  .hero-main-title {
+    font-size: 8vw; /* Scale dynamically with screen width */
+    line-height: 0.85;
+    font-weight: 900;
+    letter-spacing: -0.05em;
+    display: flex;
+    flex-direction: column;
+    text-transform: uppercase;
+  }
+
+  .brand-name {
+    color: var(--color-text-dark);
+  }
+
+  /* Grid layout split with solid black borders */
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    max-width: 100%;
+  }
+
+  .grid-col {
+    padding: 2.5rem 3rem;
+    border-right: 2px solid var(--color-text-dark);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+  }
+
+  .grid-col:last-child {
+    border-right: none;
+  }
+
+  .col-action {
+    justify-content: center;
+    align-items: flex-start;
+  }
+
+  /* Play Button */
+  .play-action-btn {
+    font-family: var(--font-mono) !important;
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
+    color: var(--color-text-dark) !important;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0 !important;
+  }
+
+  .play-arrow {
+    font-size: 0.9rem;
+    margin-right: 0.25rem;
+  }
+
+  /* Paragraph block styles */
+  .brutalist-paragraph {
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    line-height: 1.45;
+    font-weight: 500;
+    color: var(--color-text-dark);
+    text-align: justify;
+  }
+
+  @media (max-width: 992px) {
+    .hero-grid {
+      grid-template-columns: 1fr;
+    }
+    .grid-col {
+      border-right: none;
+      border-bottom: 2px solid var(--color-text-dark);
+      padding: 2rem 1.5rem;
+    }
+    .grid-col:last-child {
+      border-bottom: none;
+    }
+    .hero-title-area {
+      padding: 4rem 1.5rem;
+    }
+    .hero-main-title {
+      font-size: 14vw;
+    }
+  }
+</style>

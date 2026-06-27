@@ -11,7 +11,9 @@ services:
       - radio-net
 
   publisher:
-    build: ./publisher
+    build:
+      context: .
+      dockerfile: ./publisher/Dockerfile
     container_name: radio-publisher
     restart: unless-stopped
     depends_on:

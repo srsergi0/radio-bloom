@@ -455,4 +455,23 @@ app.all("/mcp", async (c) => {
   }
 });
 
+// ============================================================
+// STATIC FILES (Astro Landing Page)
+// ============================================================
+
+import { serveStatic } from "hono/bun";
+import { resolve } from "node:path";
+
+const DIST_DIR = process.env.NODE_ENV === "production"
+  ? "/app/web/dist"
+  : resolve(import.meta.dirname || "", "../../web/dist");
+
+app.use("/*", serveStatic({
+  root: DIST_DIR,
+  rewriteRequestPath: (path) => {
+    if (path === "/en" || path === "/en/") return "/en/index.html";
+    return path;
+  }
+}));
+
 export default app;

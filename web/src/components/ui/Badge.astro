@@ -1,0 +1,59 @@
+---
+import type { HTMLAttributes } from 'astro/types';
+
+interface Props extends HTMLAttributes<'span'> {
+  variant?: 'primary' | 'secondary' | 'dark' | 'light';
+  class?: string;
+}
+
+const { 
+  variant = 'primary', 
+  class: className = '', 
+  ...rest 
+} = Astro.props;
+
+const classes = `brutalist-badge badge-${variant} ${className}`;
+---
+
+<span class={classes} {...rest}>
+  <slot />
+</span>
+
+<style>
+  .brutalist-badge {
+    font-family: var(--font-mono);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    border-radius: 0; /* Sharp corners */
+  }
+
+  .badge-primary {
+    background-color: var(--color-orange);
+    color: var(--color-text-dark);
+    border: 1px solid var(--color-text-dark);
+  }
+
+  .badge-secondary {
+    background-color: var(--color-ice-blue);
+    color: var(--color-text-dark);
+    border: 1px solid var(--color-text-dark);
+  }
+
+  .badge-dark {
+    background-color: #000000;
+    color: var(--color-text-light);
+    border: 1px solid var(--color-text-light);
+  }
+
+  .badge-light {
+    background-color: #ffffff;
+    color: var(--color-text-dark);
+    border: 1px solid var(--color-text-dark);
+  }
+</style>

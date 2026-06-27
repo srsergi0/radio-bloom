@@ -1,0 +1,305 @@
+---
+interface Props {
+  isEn?: boolean;
+}
+
+const { isEn = false } = Astro.props;
+---
+
+<footer class="footer" id="footer">
+  <div class="footer-container">
+    
+    <!-- Newsletter Form matching the inputs of Mockup 3 -->
+    <div class="footer-newsletter-row">
+      <div class="newsletter-brand-desc">
+        <span class="mono-tag text-orange">[ {isEn ? "NEWSLETTER" : "BOLETÍN"} ]</span>
+        <h3 class="newsletter-title">{isEn ? "Join the movement" : "Únete al movimiento"}</h3>
+      </div>
+      
+      <form class="newsletter-form-brutalist" onsubmit="event.preventDefault()">
+        <div class="input-group">
+          <label class="input-label" for="news-email">{isEn ? "YOUR EMAIL..." : "TU CORREO ELECTRÓNICO..."}</label>
+          <input type="email" id="news-email" class="newsletter-input" required />
+        </div>
+        <button type="submit" class="newsletter-submit-btn">
+          {isEn ? "PRE-REGISTER ↗" : "SUSCRIBIRSE ↗"}
+        </button>
+      </form>
+    </div>
+
+    <!-- Navigation grid split with white borders -->
+    <div class="footer-links-grid">
+      <!-- brand / socials -->
+      <div class="grid-col brand-col">
+        <div class="logo">bloom radio®</div>
+        <div class="social-links-row">
+          <a href="#" class="social-link">{isEn ? "INSTAGRAM" : "INSTAGRAM"}</a>
+          <a href="#" class="social-link">{isEn ? "TWITTER" : "TWITTER"}</a>
+          <a href="#" class="social-link">{isEn ? "YOUTUBE" : "YOUTUBE"}</a>
+        </div>
+      </div>
+
+      <!-- Links Col 1 -->
+      <div class="grid-col">
+        <h5 class="col-title">{isEn ? "EXPLORE" : "EXPLORAR"}</h5>
+        <ul class="links-list">
+          <li><a href="#programs-section" class="list-link">{isEn ? "Schedule" : "Programas"}</a></li>
+          <li><a href="#events-section" class="list-link">{isEn ? "Events" : "Eventos"}</a></li>
+          <li><a href="#live-section" class="list-link">{isEn ? "Listen Live" : "En Vivo"}</a></li>
+        </ul>
+      </div>
+
+      <!-- Links Col 2 -->
+      <div class="grid-col">
+        <h5 class="col-title">{isEn ? "ABOUT" : "NOSOTROS"}</h5>
+        <ul class="links-list">
+          <li><a href="#footer" class="list-link">{isEn ? "Who We Are" : "Quiénes somos"}</a></li>
+          <li><a href="#footer" class="list-link">{isEn ? "Our Team" : "Nuestro equipo"}</a></li>
+          <li><a href="#footer" class="list-link">{isEn ? "Contact" : "Contacto"}</a></li>
+        </ul>
+      </div>
+
+      <!-- Links Col 3 -->
+      <div class="grid-col">
+        <h5 class="col-title">{isEn ? "LEGAL" : "LEGAL"}</h5>
+        <ul class="links-list">
+          <li><a href="#footer" class="list-link">{isEn ? "Terms" : "Términos y condiciones"}</a></li>
+          <li><a href="#footer" class="list-link">{isEn ? "Privacy" : "Política de privacidad"}</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Massive Outlined Footprint Brand Text (Brutalist Trend) -->
+    <div class="massive-brand-text">
+      bloom radio
+    </div>
+
+    <!-- Copyright -->
+    <div class="footer-bottom">
+      <p class="copyright-text">
+        &copy; {new Date().getFullYear()} Bloom Radio. {isEn ? "All rights reserved." : "Todos los derechos reservados."}
+      </p>
+    </div>
+
+  </div>
+</footer>
+
+<style>
+  .footer {
+    background-color: #000000;
+    color: #ffffff;
+    border-top: 2px solid #ffffff;
+    padding: 6rem 3rem 3rem 3rem;
+  }
+
+  .footer-container {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  /* Newsletter Area matching Mockup 3 form layouts */
+  .footer-newsletter-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4rem;
+    padding-bottom: 5rem;
+    border-bottom: 2px solid #ffffff;
+  }
+
+  .text-orange {
+    color: var(--color-orange);
+    font-weight: 700;
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+
+  .newsletter-title {
+    font-size: 2.5rem;
+    font-weight: 900;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    font-family: var(--font-sans);
+  }
+
+  .newsletter-form-brutalist {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    justify-content: flex-end;
+  }
+
+  .input-group {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  .input-label {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+  }
+
+  .newsletter-input {
+    background-color: transparent;
+    border: none;
+    border-bottom: 2px solid #ffffff;
+    color: #ffffff;
+    padding: 0.5rem 0;
+    font-size: 1.15rem;
+    font-family: var(--font-sans);
+    outline: none;
+  }
+
+  .newsletter-input:focus {
+    border-bottom-color: var(--color-orange);
+  }
+
+  .newsletter-submit-btn {
+    align-self: flex-start;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 700;
+    background-color: #ffffff;
+    color: #000000;
+    border: 2px solid #ffffff;
+    padding: 0.75rem 1.75rem;
+    cursor: pointer;
+    border-radius: 0;
+    transition: transform 0.15s, background-color 0.15s;
+    box-shadow: 4px 4px 0px var(--color-orange);
+  }
+
+  .newsletter-submit-btn:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px var(--color-orange);
+  }
+
+  .newsletter-submit-btn:active {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0px var(--color-orange);
+  }
+
+  /* Grid split links list */
+  .footer-links-grid {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr 1fr 1fr;
+    gap: 3rem;
+    padding: 4rem 0;
+    border-bottom: 2px solid #ffffff;
+  }
+
+  .logo {
+    font-family: var(--font-sans);
+    font-size: 1.5rem;
+    font-weight: 900;
+    color: #ffffff;
+    text-transform: lowercase;
+    margin-bottom: 1.5rem;
+  }
+
+  .social-links-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+
+  .social-link {
+    color: var(--text-muted);
+    text-decoration: none;
+  }
+
+  .social-link:hover {
+    color: #ffffff;
+  }
+
+  .col-title {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--color-orange);
+    margin-bottom: 1.5rem;
+  }
+
+  .links-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .list-link {
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  .list-link:hover {
+    color: #ffffff;
+  }
+
+  /* Giant Outlined Brand Name in Background */
+  .massive-brand-text {
+    font-family: var(--font-sans);
+    font-size: 12vw;
+    font-weight: 900;
+    text-transform: uppercase;
+    text-align: center;
+    line-height: 1;
+    letter-spacing: -0.06em;
+    padding: 3rem 0;
+    color: transparent;
+    -webkit-text-stroke: 1.5px rgba(255, 255, 255, 0.12); /* Subtle outline */
+    user-select: none;
+    pointer-events: none;
+  }
+
+  /* Copyright */
+  .footer-bottom {
+    text-align: center;
+    padding-top: 2rem;
+  }
+
+  .copyright-text {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    opacity: 0.6;
+  }
+
+  @media (max-width: 992px) {
+    .footer-newsletter-row {
+      grid-template-columns: 1fr;
+      gap: 3rem;
+    }
+    .footer-links-grid {
+      grid-template-columns: 1.5fr 1fr 1fr;
+    }
+    .brand-col {
+      grid-column: span 3;
+      margin-bottom: 1rem;
+    }
+  }
+
+  @media (max-width: 576px) {
+    .footer-links-grid {
+      grid-template-columns: 1fr;
+    }
+    .brand-col {
+      grid-column: span 1;
+    }
+    .footer {
+      padding: 4rem 1.5rem 2rem 1.5rem;
+    }
+    .newsletter-title {
+      font-size: 2rem;
+    }
+  }
+</style>

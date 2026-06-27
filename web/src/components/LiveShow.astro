@@ -1,0 +1,211 @@
+---
+import Player from './Player.astro';
+import Card from './ui/Card.astro';
+
+interface Props {
+  isEn?: boolean;
+}
+
+const { isEn = false } = Astro.props;
+
+const schedule = [
+  {
+    time: "10:00",
+    title: "Morning Bloom",
+    host: "Samantha Lee",
+    active: true
+  },
+  {
+    time: "14:00",
+    title: "Top Bloom",
+    host: "Alex Martin",
+    active: false
+  },
+  {
+    time: "18:00",
+    title: "Bloom Beats",
+    host: "DJ Vibe",
+    active: false
+  },
+  {
+    time: "22:00",
+    title: "Night Bloom",
+    host: "Luna Sky",
+    active: false
+  }
+];
+---
+
+<section class="live-section" id="live-section">
+  <div class="section-container">
+    <div class="section-header">
+      <div class="section-badge-container">
+        <span class="mono-tag text-orange">[ {isEn ? "LIVE BROADCAST" : "EN VIVO AHORA"} ]</span>
+      </div>
+    </div>
+
+    <div class="live-grid">
+      <!-- Player on the Left -->
+      <div class="live-player-area">
+        <Player isEn={isEn} />
+      </div>
+
+      <!-- Schedule on the Right -->
+      <Card theme="dark" shadow={true} class="schedule-brutalist-card">
+        <div class="schedule-list">
+          {schedule.map((show) => (
+            <div class={`schedule-item ${show.active ? 'active' : ''}`}>
+              <div class="show-time">{show.time}</div>
+              <div class="show-meta">
+                <h4 class="show-title">{show.title}</h4>
+                <p class="show-host">
+                  {isEn ? "with " : "con "}
+                  <span class="host-name">{show.host}</span>
+                </p>
+              </div>
+              {show.active && (
+                <div class="live-eq-indicator">
+                  <div class="eq-dot"></div>
+                  <div class="eq-dot"></div>
+                  <div class="eq-dot"></div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  </div>
+</section>
+
+<style>
+  .live-section {
+    padding: 6rem 3rem;
+    max-width: 100%;
+    background-color: #000000;
+    border-bottom: 2px solid #ffffff;
+  }
+
+  .section-container {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .section-header {
+    margin-bottom: 3rem;
+  }
+
+  .text-orange {
+    color: var(--color-orange);
+    font-weight: 700;
+  }
+
+  .live-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 3rem;
+    align-items: stretch;
+  }
+
+  /* Schedule card styling */
+  .schedule-brutalist-card {
+    padding: 0 !important;
+    overflow: hidden;
+  }
+
+  .schedule-list {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    justify-content: stretch;
+  }
+
+  .schedule-item {
+    display: flex;
+    align-items: center;
+    padding: 1.75rem 2.25rem;
+    border-bottom: 2px solid #ffffff;
+    transition: background-color 0.15s, color 0.15s;
+    background-color: transparent;
+    color: #ffffff;
+  }
+
+  .schedule-item:last-child {
+    border-bottom: none;
+  }
+
+  .schedule-item:hover:not(.active) {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+
+  /* Active show gets solid orange background and black text (Mockup 1 theme) */
+  .schedule-item.active {
+    background-color: var(--color-orange);
+    color: #000000;
+  }
+
+  .show-time {
+    font-family: var(--font-mono);
+    font-size: 1.1rem;
+    font-weight: 700;
+    width: 80px;
+    color: currentColor;
+  }
+
+  .show-meta {
+    flex-grow: 1;
+  }
+
+  .show-title {
+    font-size: 1.25rem;
+    font-weight: 900;
+    color: currentColor;
+    margin-bottom: 0.15rem;
+    letter-spacing: -0.02em;
+    font-family: var(--font-sans);
+  }
+
+  .show-host {
+    font-size: 0.85rem;
+    color: currentColor;
+    opacity: 0.8;
+    font-family: var(--font-mono);
+  }
+
+  .host-name {
+    font-weight: 700;
+  }
+
+  /* Equalizer dots on active */
+  .live-eq-indicator {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 14px;
+  }
+
+  .eq-dot {
+    width: 3px;
+    height: 6px;
+    background-color: #000000;
+    animation: eq-bounce-black 0.6s ease-in-out infinite alternate;
+  }
+
+  .eq-dot:nth-child(2) { height: 14px; animation-duration: 0.4s; }
+  .eq-dot:nth-child(3) { height: 10px; animation-duration: 0.5s; }
+
+  @keyframes eq-bounce-black {
+    from { transform: scaleY(0.4); }
+    to { transform: scaleY(1.2); }
+  }
+
+  @media (max-width: 992px) {
+    .live-grid {
+      grid-template-columns: 1fr;
+      gap: 4rem;
+    }
+    .live-section {
+      padding: 4rem 1.5rem;
+    }
+  }
+</style>

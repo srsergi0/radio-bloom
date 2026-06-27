@@ -1,0 +1,80 @@
+---
+import type { HTMLAttributes } from 'astro/types';
+
+interface Props extends HTMLAttributes<'div'> {
+  class?: string;
+  theme?: 'dark' | 'light' | 'orange';
+  shadow?: boolean;
+}
+
+const { 
+  class: className = '', 
+  theme = 'light', 
+  shadow = true, 
+  ...rest 
+} = Astro.props;
+
+const classes = `brutalist-card card-${theme} ${shadow ? 'card-shadow' : ''} ${className}`;
+---
+
+<div class={classes} {...rest}>
+  <slot />
+</div>
+
+<style>
+  .brutalist-card {
+    border-radius: 0; /* Sharp brutalist corners */
+    padding: 1.5rem;
+    position: relative;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  /* Card Themes */
+  .card-light {
+    background-color: var(--color-ice-blue);
+    color: var(--color-text-dark);
+    border: 2px solid var(--color-text-dark);
+  }
+  
+  .card-dark {
+    background-color: #000000;
+    color: var(--color-text-light);
+    border: 2px solid var(--color-text-light);
+  }
+
+  .card-orange {
+    background-color: var(--color-orange);
+    color: var(--color-text-dark);
+    border: 2px solid var(--color-text-dark);
+  }
+
+  /* Solid Shadow */
+  .card-shadow.card-light {
+    box-shadow: 6px 6px 0px var(--color-text-dark);
+  }
+
+  .card-shadow.card-dark {
+    box-shadow: 6px 6px 0px var(--color-text-light);
+  }
+
+  .card-shadow.card-orange {
+    box-shadow: 6px 6px 0px var(--color-text-dark);
+  }
+
+  /* Optional Hover Movement */
+  .brutalist-card.card-shadow:hover {
+    transform: translate(-2px, -2px);
+  }
+
+  .card-shadow.card-light:hover {
+    box-shadow: 8px 8px 0px var(--color-text-dark);
+  }
+
+  .card-shadow.card-dark:hover {
+    box-shadow: 8px 8px 0px var(--color-text-light);
+  }
+
+  .card-shadow.card-orange:hover {
+    box-shadow: 8px 8px 0px var(--color-text-dark);
+  }
+</style>

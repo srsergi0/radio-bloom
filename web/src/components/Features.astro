@@ -1,0 +1,129 @@
+---
+interface Props {
+  isEn?: boolean;
+}
+
+const { isEn = false } = Astro.props;
+
+const features = [
+  {
+    tag: "[ A ]",
+    title: isEn ? "Limitless Music" : "Música sin límites",
+    desc: isEn ? "Continuous curated hits and new releases 24/7." : "Los mejores éxitos y nuevos lanzamientos 24/7 sin comerciales.",
+  },
+  {
+    tag: "[ B ]",
+    title: isEn ? "Exclusive Content" : "Contenido exclusivo",
+    desc: isEn ? "Original shows, artist interviews, and curated sessions." : "Programas originales, entrevistas y sesiones de curaduría exclusivas.",
+  },
+  {
+    tag: "[ C ]",
+    title: isEn ? "Wherever You Are" : "Donde quieras",
+    desc: isEn ? "Listen to us live from anywhere in the world on any device." : "Escúchanos en vivo desde cualquier lugar del mundo y en cualquier dispositivo.",
+  },
+  {
+    tag: "[ D ]",
+    title: isEn ? "Bloom Community" : "Comunidad Bloom",
+    desc: isEn ? "Join our active community and be a part of the sound." : "Únete a nuestra comunidad activa y sé parte del movimiento sonoro.",
+  }
+];
+---
+
+<section class="features-row-section">
+  <div class="features-row-grid">
+    {features.map((feat) => (
+      <div class="feature-row-item">
+        <span class="feature-tag">{feat.tag}</span>
+        <div class="feature-text-box">
+          <h4 class="feature-row-title">{feat.title}</h4>
+          <p class="feature-row-desc">{feat.desc}</p>
+        </div>
+      </div>
+    ))}
+  </div>
+</section>
+
+<style>
+  .features-row-section {
+    max-width: 100%;
+    background-color: var(--color-ice-blue);
+    color: var(--color-text-dark);
+    border-bottom: 2px solid var(--color-text-dark);
+  }
+
+  .features-row-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .feature-row-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 3rem;
+    border-right: 2px solid var(--color-text-dark);
+  }
+
+  .feature-row-item:last-child {
+    border-right: none;
+  }
+
+  .feature-tag {
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--color-orange);
+  }
+
+  .feature-text-box {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .feature-row-title {
+    font-size: 1.2rem;
+    font-weight: 900;
+    color: var(--color-text-dark);
+    font-family: var(--font-sans);
+    letter-spacing: -0.02em;
+  }
+
+  .feature-row-desc {
+    font-size: 0.85rem;
+    color: #4a4a4a;
+    line-height: 1.45;
+  }
+
+  @media (max-width: 992px) {
+    .features-row-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .feature-row-item {
+      border-right: none;
+      border-bottom: 2px solid var(--color-text-dark);
+      padding: 2rem;
+    }
+    .feature-row-item:nth-child(2) {
+      border-right: none;
+    }
+    .feature-row-item:nth-child(even) {
+      border-left: 2px solid var(--color-text-dark);
+    }
+  }
+
+  @media (max-width: 576px) {
+    .features-row-grid {
+      grid-template-columns: 1fr;
+    }
+    .feature-row-item {
+      border-left: none !important;
+      border-right: none !important;
+      border-bottom: 2px solid var(--color-text-dark);
+    }
+    .feature-row-item:last-child {
+      border-bottom: none;
+    }
+  }
+</style>

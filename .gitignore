@@ -6,9 +6,6 @@ music/
 *.flac
 *.m4a
 
-# Obsolete
-icecast/
-web/
 
 # Environment
 .env

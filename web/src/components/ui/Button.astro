@@ -1,0 +1,105 @@
+---
+import type { HTMLAttributes } from 'astro/types';
+
+interface Props extends HTMLAttributes<'button'>, HTMLAttributes<'a'> {
+  variant?: 'solid' | 'outline' | 'text';
+  size?: 'sm' | 'md' | 'lg';
+  href?: string;
+  class?: string;
+}
+
+const { 
+  variant = 'solid', 
+  size = 'md', 
+  href, 
+  class: className = '', 
+  ...rest 
+} = Astro.props;
+
+const Element = href ? 'a' : 'button';
+const classes = `brutalist-btn btn-${variant} btn-${size} ${className}`;
+---
+
+<!-- @ts-ignore -->
+<Element href={href} class={classes} {...rest}>
+  <slot />
+</Element>
+
+<style>
+  .brutalist-btn {
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s, transform 0.15s, box-shadow 0.15s;
+    text-decoration: none;
+    border-radius: 0; /* Sharp brutalist corners */
+    outline: none;
+    text-align: center;
+  }
+
+  /* Variant Solid: Orange background with black text and thick black border */
+  .btn-solid {
+    background-color: var(--color-orange);
+    color: var(--color-text-dark);
+    border: 2px solid var(--color-text-dark);
+    box-shadow: 4px 4px 0px var(--color-text-dark);
+  }
+  .btn-solid:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px var(--color-text-dark);
+  }
+  .btn-solid:active {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0px var(--color-text-dark);
+  }
+
+  /* Variant Outline: Transparent background with solid border */
+  .btn-outline {
+    background-color: transparent;
+    color: currentColor;
+    border: 2px solid currentColor;
+    box-shadow: 4px 4px 0px currentColor;
+  }
+  .btn-outline:hover {
+    background-color: currentColor;
+    /* We invert color on hover by letting text color inherit background */
+    filter: invert(1);
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px currentColor;
+  }
+  .btn-outline:active {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0px currentColor;
+  }
+
+  /* Variant Text: Clean text with arrows */
+  .btn-text {
+    background-color: transparent;
+    color: currentColor;
+    border: none;
+    padding: 0.25rem 0.5rem;
+    border-bottom: 2px solid transparent;
+  }
+  .btn-text:hover {
+    border-bottom-color: currentColor;
+  }
+
+  /* Sizes */
+  .btn-sm {
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+  }
+  .btn-md {
+    padding: 0.75rem 1.5rem;
+    font-size: 0.85rem;
+  }
+  .btn-lg {
+    padding: 1rem 2rem;
+    font-size: 0.95rem;
+  }
+</style>

@@ -123,7 +123,6 @@ export function deleteTrack(file: string): boolean {
     unlinkSync(fullPath);
     dbRemove(file);
     queueClear();
-    getDB().run("DELETE FROM timeline_tracks WHERE file = ?", file);
     console.log(`[library] Deleted: ${file}`);
     return true;
   } catch {

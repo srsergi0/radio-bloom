@@ -10,13 +10,6 @@ export interface Track {
   addedAt: string;
 }
 
-export interface Timeline {
-  tracks: Track[];
-  currentIndex: number;
-  isPlaying: boolean;
-  updatedAt: string;
-}
-
 export interface StreamStatus {
   connected: boolean;
   playing: boolean;

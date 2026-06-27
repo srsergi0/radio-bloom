@@ -120,8 +120,6 @@ radio/
 │   │   ├── player.js
 │   │   └── websocket.js
 │   └── astro.config.mjs
-└── watchdog/
-    └── src/index.ts
 ```
 
 ## How it works

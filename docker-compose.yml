@@ -29,19 +29,6 @@ services:
     networks:
       - radio-net
 
-  watchdog:
-    build: ./watchdog
-    container_name: radio-watchdog
-    restart: unless-stopped
-    depends_on:
-      - publisher
-      - liquidsoap
-    environment:
-      - PUBLISHER_URL=${PUBLISHER_URL}
-      - HEALTH_CHECK_INTERVAL=${HEALTH_CHECK_INTERVAL}
-    networks:
-      - radio-net
-
   ftp:
     image: stilliard/pure-ftpd:hardened
     container_name: radio-ftp

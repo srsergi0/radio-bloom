@@ -38,7 +38,7 @@ import {
   skipTrack,
   startPlayback,
 } from "./liquidsoap";
-import { getHttpTransport } from "./mcp";
+import { handleMcpHttpRequest } from "./mcp";
 import { downloadFromSpotify } from "./spotdl";
 
 const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
@@ -438,14 +438,16 @@ app.get("/api/health", (c) => {
 // ============================================================
 
 app.all("/mcp", async (c) => {
-  const transport = getHttpTransport();
-  if (!transport) return c.json({ error: "MCP transport not initialized" }, 503);
-  const response = await transport.handleRequest(c.req.raw);
-  return c.newResponse(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  });
+  try {
+    const response = await handleMcpHttpRequest(c.req.raw);
+    return c.newResponse(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
 });
 
 export default app;

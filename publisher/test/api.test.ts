@@ -175,6 +175,7 @@ mock.module("../src/config", () => ({
 }));
 
 mock.module("../src/mcp", () => ({
+  handleMcpHttpRequest: mock(() => new Response("MCP transport not initialized", { status: 503 })),
   getHttpTransport: mock(() => null),
   createHttpTransport: mock(() => {}),
   server: { connect: mock(() => {}) },

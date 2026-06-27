@@ -20,6 +20,7 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
+function registerAllTools(server: McpServer) {
 server.tool(
   "radio_status",
   "Estado actual del stream: qué está sonando, cola, etc.",
@@ -426,10 +427,76 @@ server.tool(
     };
   }
 );
+}
+
+// Register tools on the global server instance for Stdio / Local execution
+registerAllTools(server);
 
 export { server };
 
-let httpTransport: WebStandardStreamableHTTPServerTransport | null = null;
+// Registry of active client sessions
+const sessions = new Map<string, {
+  server: McpServer;
+  transport: WebStandardStreamableHTTPServerTransport;
+}>();
+
+export async function handleMcpHttpRequest(req: Request): Promise<Response> {
+  let isInit = false;
+  if (req.method === "POST") {
+    try {
+      const cloned = req.clone();
+      const body = await cloned.json();
+      const messages = Array.isArray(body) ? body : [body];
+      isInit = messages.some((m: any) => m.method === "initialize");
+    } catch {}
+  }
+
+  if (isInit) {
+    const sessionServer = new McpServer({
+      name: "radio-bloom",
+      version: "1.0.0",
+    });
+    registerAllTools(sessionServer);
+
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: () => crypto.randomUUID(),
+      enableJsonResponse: true,
+      onsessioninitialized: (sessionId) => {
+        sessions.set(sessionId, { server: sessionServer, transport });
+      },
+      onsessionclosed: (sessionId) => {
+        const session = sessions.get(sessionId);
+        if (session) {
+          session.transport.close().catch(() => {});
+          sessions.delete(sessionId);
+        }
+      }
+    });
+
+    await sessionServer.connect(transport);
+    return transport.handleRequest(req);
+  }
+
+  const sessionId = req.headers.get("mcp-session-id");
+  if (!sessionId) {
+    return new Response(JSON.stringify({
+      jsonrpc: "2.0",
+      error: { code: -32000, message: "Bad Request: Mcp-Session-Id header is required" },
+      id: null
+    }), { status: 400, headers: { "Content-Type": "application/json" } });
+  }
+
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return new Response(JSON.stringify({
+      jsonrpc: "2.0",
+      error: { code: -32001, message: "Session not found" },
+      id: null
+    }), { status: 404, headers: { "Content-Type": "application/json" } });
+  }
+
+  return session.transport.handleRequest(req);
+}
 
 export async function startMcpServer() {
   const transport = new StdioServerTransport();
@@ -437,16 +504,11 @@ export async function startMcpServer() {
 }
 
 export function createHttpTransport() {
-  httpTransport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: () => crypto.randomUUID(),
-    enableJsonResponse: true,
-  });
-  server.connect(httpTransport);
-  return httpTransport;
+  return null as any;
 }
 
 export function getHttpTransport() {
-  return httpTransport;
+  return null;
 }
 
 if (import.meta.main) {

@@ -6,7 +6,6 @@ services:
     volumes:
       - ./liquidsoap/radio.liq:/etc/liquidsoap/radio.liq
       - ./music/songs:/music/songs
-    # No host ports exposed — all internal via radio-net
     command: /etc/liquidsoap/radio.liq
     networks:
       - radio-net
@@ -18,12 +17,12 @@ services:
     depends_on:
       - liquidsoap
     ports:
-      - "9876:3000"
+      - "${API_PORT}:${PUBLISHER_PORT}"
     environment:
-      - LIQUIDSOAP_HOST=liquidsoap
-      - LIQUIDSOAP_TELNET_PORT=1234
-      - LIQUIDSOAP_HARBOUR_PORT=8000
-      - PORT=3000
+      - LIQUIDSOAP_HOST=${LIQUIDSOAP_HOST}
+      - LIQUIDSOAP_TELNET_PORT=${LIQUIDSOAP_TELNET_PORT}
+      - LIQUIDSOAP_HARBOUR_PORT=${LIQUIDSOAP_HARBOUR_PORT}
+      - PORT=${PUBLISHER_PORT}
     volumes:
       - ./music:/app/music
       - ./publisher/data:/app/data
@@ -38,8 +37,8 @@ services:
       - publisher
       - liquidsoap
     environment:
-      - PUBLISHER_URL=http://publisher:3000
-      - HEALTH_CHECK_INTERVAL=30000
+      - PUBLISHER_URL=${PUBLISHER_URL}
+      - HEALTH_CHECK_INTERVAL=${HEALTH_CHECK_INTERVAL}
     networks:
       - radio-net
 
@@ -48,18 +47,18 @@ services:
     container_name: radio-ftp
     restart: unless-stopped
     ports:
-      - "21:21"
-      - "30000-30009:30000-30009"
+      - "${FTP_PORT}:21"
+      - "${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}:${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}"
     volumes:
       - ./music/songs:/home/radio/music/songs
       - ./music/interludios:/home/radio/music/interludios
     environment:
-      - PUBLICHOST=185.139.1.222
-      - FTP_USER_NAME=radio
-      - FTP_USER_PASS=radiobloom
-      - FTP_USER_HOME=/home/radio
-      - UMASK=133
-      - TLS_CN=185.139.1.222
+      - PUBLICHOST=${FTP_PUBLIC_HOST}
+      - FTP_USER_NAME=${FTP_USER_NAME}
+      - FTP_USER_PASS=${FTP_USER_PASS}
+      - FTP_USER_HOME=${FTP_USER_HOME}
+      - UMASK=${FTP_UMASK}
+      - TLS_CN=${FTP_PUBLIC_HOST}
     networks:
       - radio-net
 

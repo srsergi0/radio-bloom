@@ -4,6 +4,7 @@ import { listSongs, listInterludios, deleteTrack, getLibraryStats, scanLibrary, 
 import { skipTrack, pausePlayback, startPlayback, getStreamStatus, reloadPlaylist, isLiquidsoapConnected, queuePush, queueList, queueClear, queueRemove, queueInsert, playFileNow, queueLength, sendCommand } from "./liquidsoap";
 import { searchLibrary } from "./db";
 import { loadConfig, updateConfig } from "./config";
+import { getHttpTransport } from "./mcp";
 
 const app = new Hono();
 
@@ -277,6 +278,21 @@ app.get("/api/health", (c) => {
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
     },
+  });
+});
+
+// ============================================================
+// MCP (Model Context Protocol) over HTTP
+// ============================================================
+
+app.all("/mcp", async (c) => {
+  const transport = getHttpTransport();
+  if (!transport) return c.json({ error: "MCP transport not initialized" }, 503);
+  const response = await transport.handleRequest(c.req.raw);
+  return c.newResponse(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
   });
 });
 

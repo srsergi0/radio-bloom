@@ -2,6 +2,7 @@ import api from "./api";
 import { initLiquidsoap } from "./liquidsoap";
 import { initLibrary } from "./library";
 import { initDB } from "./db";
+import { createHttpTransport } from "./mcp";
 
 const PORT = parseInt(process.env.PORT || "3000");
 const LIQUIDSOAP_HOST = process.env.LIQUIDSOAP_HOST || "liquidsoap";
@@ -72,10 +73,12 @@ console.log(`  DEL  /api/stream/queue`);
 console.log(`  DEL  /api/stream/queue/:rid`);
 console.log(`  POST /api/stream/queue/insert  (body: {"index", "url"})`);
 console.log(`  POST /api/stream/play/url  (body: {"url":"..."})`);
-console.log(`  POST /api/library/:id/play`);
+  console.log(`  POST /api/library/:id/play`);
+  console.log(`  ALL  /mcp                     ← MCP protocol (Streamable HTTP)`);
 
 initDB();
 initLibrary();
 initLiquidsoap();
+createHttpTransport();
 
 console.log(`[server] Radio Bloom ready`);

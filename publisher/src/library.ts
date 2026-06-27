@@ -2,7 +2,7 @@ import { readdirSync, statSync, unlinkSync, existsSync, mkdirSync } from "fs";
 import { join, extname, basename } from "path";
 import { spawnSync } from "child_process";
 import type { Track, LibraryStats } from "./types";
-import { getAllLibraryTracks as dbGetAll, getLibraryTrack, getLibraryTrackByUrl, upsertLibraryTrack, removeLibraryTrack as dbRemove, getLibraryStats as dbStats, getDB } from "./db";
+import { getAllLibraryTracks as dbGetAll, getLibraryTrack, getLibraryTrackByUrl, upsertLibraryTrack, removeLibraryTrack as dbRemove, getLibraryStats as dbStats, getDB, getLibraryTracksPage, countLibraryTracks } from "./db";
 import { queueClear } from "./liquidsoap";
 
 const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
@@ -101,8 +101,16 @@ export function listSongs(): Track[] {
   return dbGetAll("song");
 }
 
+export function listSongsPage(limit: number, offset: number): { items: Track[]; total: number } {
+  return { items: getLibraryTracksPage("song", limit, offset), total: countLibraryTracks("song") };
+}
+
 export function listInterludios(): Track[] {
   return dbGetAll("interludio");
+}
+
+export function listInterludiosPage(limit: number, offset: number): { items: Track[]; total: number } {
+  return { items: getLibraryTracksPage("interludio", limit, offset), total: countLibraryTracks("interludio") };
 }
 
 export function getAllTracks(): Track[] {

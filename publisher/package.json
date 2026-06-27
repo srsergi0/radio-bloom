@@ -4,10 +4,16 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
-    "start": "bun src/index.ts"
+    "start": "bun src/index.ts",
+    "mcp": "bun src/mcp-entry.ts"
+  },
+  "bin": {
+    "radio-bloom-mcp": "./src/mcp-entry.ts"
   },
   "dependencies": {
-    "hono": "^4.7.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "hono": "^4.7.0",
+    "zod": "3"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

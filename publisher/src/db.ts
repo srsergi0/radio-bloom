@@ -258,6 +258,28 @@ export function getAllLibraryTracks(type?: string): Track[] {
   }));
 }
 
+export function getLibraryTracksPage(type: string, limit: number, offset: number): Track[] {
+  const rows = getDB().query(
+    "SELECT * FROM library_tracks WHERE type = ? ORDER BY file LIMIT ? OFFSET ?"
+  ).all(type, limit, offset) as any[];
+  return rows.map((r: any) => ({
+    id: fileToId(r.file),
+    type: r.type,
+    file: r.file,
+    title: r.title,
+    artist: r.artist || undefined,
+    album: r.album || undefined,
+    duration: r.duration,
+    spotifyUrl: r.spotify_url || undefined,
+    addedAt: r.added_at,
+  }));
+}
+
+export function countLibraryTracks(type: string): number {
+  const row = getDB().query("SELECT COUNT(*) as cnt FROM library_tracks WHERE type = ?").get(type) as any;
+  return row.cnt;
+}
+
 export function upsertLibraryTrack(track: {
   file: string;
   type: string;
@@ -281,22 +303,28 @@ export function removeLibraryTrack(file: string) {
   getDB().run("DELETE FROM library_tracks WHERE file = ?", file);
 }
 
-export function searchLibrary(query: string): Track[] {
+export function searchLibrary(query: string, limit = 50, offset = 0): { items: Track[]; total: number } {
   const q = `%${query}%`;
+  const totalRow = getDB().query(
+    "SELECT COUNT(*) as cnt FROM library_tracks WHERE title LIKE ? OR artist LIKE ? OR album LIKE ?"
+  ).get(q, q, q) as any;
   const rows = getDB().query(
-    "SELECT * FROM library_tracks WHERE title LIKE ? OR artist LIKE ? OR album LIKE ? ORDER BY file"
-  ).all(q, q, q) as any[];
-  return rows.map((r: any) => ({
-    id: fileToId(r.file),
-    type: r.type,
-    file: r.file,
-    title: r.title,
-    artist: r.artist || undefined,
-    album: r.album || undefined,
-    duration: r.duration,
-    spotifyUrl: r.spotify_url || undefined,
-    addedAt: r.added_at,
-  }));
+    "SELECT * FROM library_tracks WHERE title LIKE ? OR artist LIKE ? OR album LIKE ? ORDER BY file LIMIT ? OFFSET ?"
+  ).all(q, q, q, limit, offset) as any[];
+  return {
+    total: totalRow.cnt,
+    items: rows.map((r: any) => ({
+      id: fileToId(r.file),
+      type: r.type,
+      file: r.file,
+      title: r.title,
+      artist: r.artist || undefined,
+      album: r.album || undefined,
+      duration: r.duration,
+      spotifyUrl: r.spotify_url || undefined,
+      addedAt: r.added_at,
+    })),
+  };
 }
 
 export function getLibraryStats() {

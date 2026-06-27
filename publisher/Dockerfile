@@ -1,12 +1,7 @@
-FROM spotdl/spotify-downloader:latest AS spotdl
-
 FROM oven/bun:1.2-alpine
 
-RUN apk add --no-cache python3 py3-pip ffmpeg
-
-COPY --from=spotdl /app/.venv /opt/venv
-COPY --from=spotdl /app/spotdl /opt/venv/spotdl
-ENV PATH="/opt/venv/bin:${PATH}"
+RUN apk add --no-cache python3 py3-pip py3-setuptools ffmpeg && \
+    pip3 install --break-system-packages spotdl
 
 WORKDIR /app/publisher
 

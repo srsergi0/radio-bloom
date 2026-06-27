@@ -3,17 +3,17 @@ interface Props {
   isEn?: boolean;
 }
 
-const { isEn = false } = Astro.props;
+const { isEn = true } = Astro.props;
 
 const currentPath = Astro.url.pathname;
-const esLink = isEn ? currentPath.replace(/^\/en/, "") || "/" : currentPath;
-const enLink = isEn ? currentPath : `/en${currentPath === "/" ? "" : currentPath}`;
+const esLink = isEn ? `/es${currentPath === "/" ? "" : currentPath}` : currentPath;
+const enLink = isEn ? currentPath : currentPath.replace(/^\/es/, "") || "/";
 ---
 
 <header class="header">
   <div class="header-container">
     <!-- Brand / Logo in lowercase bold -->
-    <a href={isEn ? "/en" : "/"} class="logo">
+    <a href={isEn ? "/" : "/es"} class="logo">
       bloom radio®
     </a>
 

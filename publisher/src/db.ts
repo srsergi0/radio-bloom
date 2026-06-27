@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync, existsSync } from "fs";
 import { dirname } from "path";
-import type { Track, DownloadJob, SystemConfig } from "./types";
+import type { Track, DownloadJob, SystemConfig, Playlist, PlaylistTrack } from "./types";
 
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
 const DB_PATH = `${DATA_DIR}/radio.db`;
@@ -58,6 +58,31 @@ function createTables() {
       error TEXT DEFAULT '',
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
       completed_at TEXT DEFAULT ''
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS playlists (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS playlist_tracks (
+      id TEXT PRIMARY KEY,
+      playlist_id TEXT NOT NULL,
+      pos INTEGER NOT NULL,
+      type TEXT NOT NULL DEFAULT 'song',
+      file TEXT,
+      title TEXT NOT NULL,
+      artist TEXT DEFAULT '',
+      duration REAL NOT NULL DEFAULT 0,
+      spotify_url TEXT DEFAULT '',
+      added_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
     )
   `);
 }
@@ -343,5 +368,105 @@ export function getLibraryStats() {
     totalSizeBytes: stats.total_size,
     totalDurationSeconds: stats.total_duration,
   };
+}
+
+// ============================================================
+// PLAYLISTS
+// ============================================================
+
+export function createPlaylist(name: string): Playlist {
+  const d = getDB();
+  const id = `pl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  d.run("INSERT INTO playlists (id, name) VALUES (?, ?)", id, name);
+  return { id, name, tracks: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+}
+
+export function listPlaylists(): Playlist[] {
+  const rows = getDB().query("SELECT * FROM playlists ORDER BY updated_at DESC").all() as any[];
+  return rows.map((r: any) => ({
+    id: r.id,
+    name: r.name,
+    tracks: [],
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }));
+}
+
+export function getPlaylist(id: string): Playlist | null {
+  const d = getDB();
+  const row = d.query("SELECT * FROM playlists WHERE id = ?").get(id) as any;
+  if (!row) return null;
+  const tracks = d.query("SELECT * FROM playlist_tracks WHERE playlist_id = ? ORDER BY pos").all(id) as any[];
+  return {
+    id: row.id,
+    name: row.name,
+    tracks: tracks.map((t: any) => ({
+      id: t.id,
+      playlistId: t.playlist_id,
+      pos: t.pos,
+      type: t.type,
+      file: t.file || undefined,
+      title: t.title,
+      artist: t.artist || undefined,
+      duration: t.duration,
+      spotifyUrl: t.spotify_url || undefined,
+      addedAt: t.added_at,
+    })),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function updatePlaylistName(id: string, name: string): boolean {
+  const d = getDB();
+  const result = d.run("UPDATE playlists SET name = ?, updated_at = datetime('now') WHERE id = ?", name, id);
+  return result.changes > 0;
+}
+
+export function deletePlaylist(id: string): boolean {
+  const d = getDB();
+  d.run("DELETE FROM playlist_tracks WHERE playlist_id = ?", id);
+  const result = d.run("DELETE FROM playlists WHERE id = ?", id);
+  return result.changes > 0;
+}
+
+export function addPlaylistTrack(playlistId: string, track: { type: string; file?: string; title: string; artist?: string; duration: number; spotifyUrl?: string }): PlaylistTrack | null {
+  const d = getDB();
+  const exists = d.query("SELECT id FROM playlists WHERE id = ?").get(playlistId);
+  if (!exists) return null;
+  const id = `pt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const maxPos = (d.query("SELECT COALESCE(MAX(pos), -1) + 1 as next FROM playlist_tracks WHERE playlist_id = ?").get(playlistId) as any).next;
+  d.run(
+    "INSERT INTO playlist_tracks (id, playlist_id, pos, type, file, title, artist, duration, spotify_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    id, playlistId, maxPos, track.type, track.file || null, track.title, track.artist || "", track.duration, track.spotifyUrl || ""
+  );
+  d.run("UPDATE playlists SET updated_at = datetime('now') WHERE id = ?", playlistId);
+  return {
+    id, playlistId, pos: maxPos, type: track.type as "song" | "interludio",
+    file: track.file, title: track.title, artist: track.artist,
+    duration: track.duration, spotifyUrl: track.spotifyUrl, addedAt: new Date().toISOString(),
+  };
+}
+
+export function removePlaylistTrack(playlistId: string, trackId: string): boolean {
+  const d = getDB();
+  const result = d.run("DELETE FROM playlist_tracks WHERE id = ? AND playlist_id = ?", trackId, playlistId);
+  if (result.changes > 0) {
+    d.run("UPDATE playlists SET updated_at = datetime('now') WHERE id = ?", playlistId);
+    return true;
+  }
+  return false;
+}
+
+export function reorderPlaylistTracks(playlistId: string, trackIds: string[]): boolean {
+  const d = getDB();
+  const tx = d.transaction(() => {
+    for (let i = 0; i < trackIds.length; i++) {
+      d.run("UPDATE playlist_tracks SET pos = ? WHERE id = ? AND playlist_id = ?", i, trackIds[i], playlistId);
+    }
+    d.run("UPDATE playlists SET updated_at = datetime('now') WHERE id = ?", playlistId);
+  });
+  tx();
+  return true;
 }
 

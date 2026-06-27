@@ -42,6 +42,27 @@ export interface LibraryStats {
   totalDurationSeconds: number;
 }
 
+export interface Playlist {
+  id: string;
+  name: string;
+  tracks: PlaylistTrack[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlaylistTrack {
+  id: string;
+  playlistId: string;
+  pos: number;
+  type: "song" | "interludio";
+  file?: string;
+  title: string;
+  artist?: string;
+  duration: number;
+  spotifyUrl?: string;
+  addedAt: string;
+}
+
 export interface ApiResponse<T = any> {
   ok: boolean;
   data?: T;

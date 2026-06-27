@@ -1,10 +1,16 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { existsSync } from "fs";
+import { join } from "path";
 import { listSongs, listInterludios, deleteTrack, getLibraryStats, scanLibrary, getTrackByUrl, getTrackByFile } from "./library";
 import { skipTrack, pausePlayback, startPlayback, getStreamStatus, reloadPlaylist, isLiquidsoapConnected, queuePush, queueList, queueClear, queueRemove, queueInsert, playFileNow, queueLength, sendCommand } from "./liquidsoap";
-import { searchLibrary } from "./db";
+import { searchLibrary, createPlaylist, listPlaylists, getPlaylist, updatePlaylistName, deletePlaylist, addPlaylistTrack, removePlaylistTrack, reorderPlaylistTracks, getLibraryTrack } from "./db";
 import { loadConfig, updateConfig } from "./config";
 import { getHttpTransport } from "./mcp";
+import { downloadFromSpotify } from "./spotdl";
+import type { Track } from "./types";
+
+const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
 
 const app = new Hono();
 
@@ -264,6 +270,111 @@ app.post("/api/stream/play/url", async (c) => {
   } catch (err: any) {
     return c.json({ ok: false, error: err.message }, 500);
   }
+});
+
+// ============================================================
+// PLAYLISTS
+// ============================================================
+
+app.post("/api/playlists", async (c) => {
+  const body = await c.req.json();
+  if (!body.name) return c.json({ ok: false, error: "name is required" }, 400);
+  const playlist = createPlaylist(body.name);
+  return c.json({ ok: true, data: playlist });
+});
+
+app.get("/api/playlists", (c) => {
+  return c.json({ ok: true, data: listPlaylists() });
+});
+
+app.get("/api/playlists/:id", (c) => {
+  const playlist = getPlaylist(c.req.param("id"));
+  if (!playlist) return c.json({ ok: false, error: "Playlist not found" }, 404);
+  return c.json({ ok: true, data: playlist });
+});
+
+app.put("/api/playlists/:id", async (c) => {
+  const body = await c.req.json();
+  if (!body.name) return c.json({ ok: false, error: "name is required" }, 400);
+  const ok = updatePlaylistName(c.req.param("id"), body.name);
+  if (!ok) return c.json({ ok: false, error: "Playlist not found" }, 404);
+  return c.json({ ok: true, data: getPlaylist(c.req.param("id")) });
+});
+
+app.delete("/api/playlists/:id", (c) => {
+  const ok = deletePlaylist(c.req.param("id"));
+  if (!ok) return c.json({ ok: false, error: "Playlist not found" }, 404);
+  return c.json({ ok: true, data: { deleted: c.req.param("id") } });
+});
+
+app.post("/api/playlists/:id/tracks", async (c) => {
+  const body = await c.req.json();
+  if (!body.title) return c.json({ ok: false, error: "title is required" }, 400);
+  const track = addPlaylistTrack(c.req.param("id"), {
+    type: body.type || "song",
+    file: body.file,
+    title: body.title,
+    artist: body.artist,
+    duration: body.duration || 0,
+    spotifyUrl: body.spotifyUrl,
+  });
+  if (!track) return c.json({ ok: false, error: "Playlist not found" }, 404);
+  return c.json({ ok: true, data: track });
+});
+
+app.delete("/api/playlists/:id/tracks/:trackId", (c) => {
+  const ok = removePlaylistTrack(c.req.param("id"), c.req.param("trackId"));
+  if (!ok) return c.json({ ok: false, error: "Track not found" }, 404);
+  return c.json({ ok: true, data: { removed: c.req.param("trackId") } });
+});
+
+app.put("/api/playlists/:id/tracks/reorder", async (c) => {
+  const body = await c.req.json();
+  if (!body.trackIds || !Array.isArray(body.trackIds)) {
+    return c.json({ ok: false, error: "trackIds array is required" }, 400);
+  }
+  reorderPlaylistTracks(c.req.param("id"), body.trackIds);
+  return c.json({ ok: true, data: getPlaylist(c.req.param("id")) });
+});
+
+app.post("/api/playlists/:id/load", async (c) => {
+  const playlist = getPlaylist(c.req.param("id"));
+  if (!playlist) return c.json({ ok: false, error: "Playlist not found" }, 404);
+
+  const results: { title: string; status: string; error?: string }[] = [];
+  const pending: { track: typeof playlist.tracks[0]; filepath: string }[] = [];
+
+  for (const track of playlist.tracks) {
+    const filepath = track.file ? join(MUSIC_DIR, track.file) : "";
+    if (filepath && existsSync(filepath)) {
+      const rid = await queuePush(`/music/${track.file}`);
+      results.push({ title: track.title, status: rid ? "queued" : "error" });
+      continue;
+    }
+    if (track.spotifyUrl) {
+      pending.push({ track, filepath });
+    } else if (track.file) {
+      results.push({ title: track.title, status: "error", error: "File not found" });
+    }
+  }
+
+  // Download pending tracks in batches (2 at a time), queue as they complete
+  const BATCH = 2;
+  for (let i = 0; i < pending.length; i += BATCH) {
+    const batch = pending.slice(i, i + BATCH);
+    const downloads = batch.map((p) =>
+      downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
+        const rid = await queuePush(`/music/${downloaded.file}`);
+        results.push({ title: downloaded.title, status: rid ? "queued" : "error" });
+      }).catch((err: any) => {
+        results.push({ title: p.track.title, status: "error", error: err.message });
+        return null;
+      })
+    );
+    await Promise.allSettled(downloads);
+  }
+
+  return c.json({ ok: true, data: { playlistId: playlist.id, results } });
 });
 
 // ============================================================

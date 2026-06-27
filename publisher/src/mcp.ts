@@ -4,7 +4,7 @@ import { WebStandardStreamableHTTPServerTransport } from "./webStandardStreamabl
 import { z } from "zod";
 import { getStreamStatus, queuePush, queueList, queueRemove, queueInsert, queueClear, skipTrack, playFileNow } from "./liquidsoap";
 import { listSongs, listSongsPage, listInterludios, listInterludiosPage } from "./library";
-import { searchLibrary, getLibraryStats } from "./db";
+import { searchLibrary, getLibraryStats, listPlaylists, getPlaylist } from "./db";
 
 const server = new McpServer({
   name: "radio-bloom",
@@ -239,6 +239,45 @@ server.tool(
           text: total === 0
             ? "No hay interludios"
             : JSON.stringify({ total, showing: items.length, offset, items: items.map((i) => ({ file: i.file, title: i.title, duration: i.duration })) }, null, 2),
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "radio_playlist_list",
+  "Listar todas las playlists guardadas",
+  {},
+  async () => {
+    const playlists = listPlaylists();
+    return {
+      content: [
+        {
+          type: "text",
+          text: playlists.length === 0
+            ? "No hay playlists"
+            : JSON.stringify(playlists.map((p) => ({ id: p.id, name: p.name, tracks: p.tracks.length, updatedAt: p.updatedAt })), null, 2),
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "radio_playlist_get",
+  "Obtener una playlist con todas sus canciones e interludios",
+  {
+    id: z.string().describe("ID de la playlist"),
+  },
+  async ({ id }) => {
+    const playlist = getPlaylist(id);
+    if (!playlist) return { content: [{ type: "text", text: "Playlist no encontrada" }], isError: true };
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(playlist, null, 2),
         },
       ],
     };

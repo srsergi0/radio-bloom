@@ -1,3 +1,14 @@
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const TEMP_DIR = join(__dirname, "temp_integration");
+
+process.env.DATA_DIR = process.env.DATA_DIR || join(TEMP_DIR, "data");
+process.env.MUSIC_DIR = process.env.MUSIC_DIR || join(TEMP_DIR, "music");
+process.env.MUSIC_MOUNT = process.env.MUSIC_MOUNT || join(TEMP_DIR, "music");
+
 import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
 import type { Track, SystemConfig, LibraryStats } from "../src/types";
 
@@ -20,7 +31,8 @@ const mockStreamStatus = {
   duration: 200, elapsed: 42, metadata: { artist: "Artist A", title: "Canción 1" },
 };
 
-mock.module("../src/library", () => ({
+const realLibrary = require("../src/library.ts?real");
+const mockLibraryRaw = {
   listSongs: mock(() => [...mockSongs]),
   listInterludios: mock(() => [...mockInterludios]),
   deleteTrack: mock((file: string) => file === "songs/exists.mp3"),
@@ -34,7 +46,20 @@ mock.module("../src/library", () => ({
     const all = [...mockSongs, ...mockInterludios];
     return all.find((t) => t.spotifyUrl === url) || null;
   }),
-}));
+};
+
+const mockLibrary = {};
+const allLibraryKeys = new Set([...Object.keys(mockLibraryRaw), ...Object.keys(realLibrary)]);
+for (const key of allLibraryKeys) {
+  mockLibrary[key] = mock((...args) => {
+    if (process.env.IS_INTEGRATION_TEST === "true") {
+      return realLibrary[key] ? realLibrary[key](...args) : undefined;
+    }
+    return mockLibraryRaw[key] ? mockLibraryRaw[key](...args) : undefined;
+  });
+}
+
+mock.module("../src/library", () => mockLibrary);
 
 let queueStore: { rid: string; filepath: string }[] = [];
 let ridCounter = 0;
@@ -84,7 +109,8 @@ mock.module("../src/liquidsoap", () => mockLiquidsoap);
 
 let configStore = { ...mockConfig };
 
-const mockDb = {
+const realDb = require("../src/db.ts?real");
+const mockDbRaw = {
   searchLibrary: mock((q: string) => {
     const all = [...mockSongs, ...mockInterludios];
     const items = all.filter((t) => t.title.toLowerCase().includes(q.toLowerCase()) || (t.artist?.toLowerCase() || "").includes(q.toLowerCase()));
@@ -125,6 +151,17 @@ const mockDb = {
   getDB: mock(() => ({})),
   initDB: mock(() => ({}) as any),
 };
+
+const mockDb = {};
+const allDbKeys = new Set([...Object.keys(mockDbRaw), ...Object.keys(realDb)]);
+for (const key of allDbKeys) {
+  mockDb[key] = mock((...args) => {
+    if (process.env.IS_INTEGRATION_TEST === "true") {
+      return realDb[key] ? realDb[key](...args) : undefined;
+    }
+    return mockDbRaw[key] ? mockDbRaw[key](...args) : undefined;
+  });
+}
 
 mock.module("../src/db", () => mockDb);
 

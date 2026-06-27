@@ -1,3 +1,4 @@
+import "./env";
 import api from "./api";
 import { initDB } from "./db";
 import { initLibrary } from "./library";

@@ -1,3 +1,6 @@
+console.log = console.error;
+
+import "./env";
 import { initDB } from "./db";
 import { initLibrary } from "./library";
 import { initLiquidsoap } from "./liquidsoap";

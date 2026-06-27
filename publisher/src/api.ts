@@ -45,7 +45,12 @@ const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
 
 const app = new Hono();
 
-app.use("*", cors());
+app.use(
+  "*",
+  cors({
+    exposeHeaders: ["mcp-session-id", "mcp-protocol-version"],
+  })
+);
 
 // ============================================================
 // SYSTEM

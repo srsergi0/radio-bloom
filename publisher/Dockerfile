@@ -8,7 +8,7 @@ COPY --from=spotdl /app/.venv /opt/venv
 COPY --from=spotdl /app/spotdl /opt/venv/spotdl
 ENV PATH="/opt/venv/bin:${PATH}"
 
-WORKDIR /app
+WORKDIR /app/publisher
 
 COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile 2>/dev/null || bun install

@@ -237,7 +237,28 @@ const _server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
 
-    // Audio stream route
+    // Live audio stream route (proxy desde input.harbor de Liquidsoap)
+    if (url.pathname === "/live.mp3") {
+      const liveUrl = `http://${LIQUIDSOAP_HOST}:8001/live.mp3`;
+      try {
+        const res = await fetch(liveUrl);
+        if (!res.ok || !res.body) throw new Error(`Upstream returned ${res.status}`);
+        return new Response(res.body, {
+          status: 200,
+          headers: {
+            "Content-Type": "audio/mpeg",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            Pragma: "no-cache",
+            Expires: "0",
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
+      } catch {
+        return new Response("Live stream not available", { status: 503 });
+      }
+    }
+
+    // Audio stream route (output.harbor)
     if (url.pathname === "/radiobloom.mp3") {
       let clientController: ReadableStreamDefaultController | null = null;
       const stream = new ReadableStream({

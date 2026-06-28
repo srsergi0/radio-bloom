@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from pathlib import Path
 import hashlib
 import time
+import threading
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -16,33 +17,72 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 SONGS_DIR = os.environ.get("SONGS_DIR", "/music/songs")
 VALID_AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".ogg", ".wav", ".opus"}
-SERVICE_PRIORITY = os.environ.get(
+DEFAULT_PRIORITY = os.environ.get(
     "DOWNLOAD_SERVICES",
-    "qobuz,tidal,deezer,amazon,apple,youtube"
+    "tidal,youtube,deezer,apple,amazon,qobuz"
 ).split(",")
 
+SERVICE_PRIORITY = list(DEFAULT_PRIORITY)
+_tidal_blocked_until = 0.0
+_lock = threading.Lock()
 
-def cleanup_orphan_temp_dirs():
-    """Remove leftover temp download folders from previous crashed sessions."""
-    tmp_root = Path(SONGS_DIR) / ".tmp"
-    if not tmp_root.exists():
-        return
-    for entry in tmp_root.iterdir():
-        if entry.is_dir() and entry.name.startswith("download_"):
-            try:
-                shutil.rmtree(entry, ignore_errors=True)
-                print(f"[downloader] cleaned orphan temp dir: {entry.name}", flush=True)
-            except Exception as e:
-                print(f"[downloader] failed to clean {entry.name}: {e}", flush=True)
+
+def _tidal_blocked_in_output(output: str) -> bool:
+    keywords = [
+        "TRACK_NOT_FOUND",
+        "RATE_LIMITED",
+        "429",
+        "403",
+        "401",
+        "too many requests",
+        "rate limit",
+        "quota exceeded",
+        "tidal.*not.*found",
+        "tidal.*failed",
+        "503 Service Unavailable",
+    ]
+    lower = output.lower()
+    for kw in keywords:
+        if kw in lower:
+            return True
+    return False
+
+
+def _rebalance_services(success: bool):
+    global SERVICE_PRIORITY, _tidal_blocked_until
+    now = time.time()
+    with _lock:
+        if success:
+            _tidal_blocked_until = 0.0
+            if SERVICE_PRIORITY != DEFAULT_PRIORITY:
+                SERVICE_PRIORITY = list(DEFAULT_PRIORITY)
+                print(f"[downloader] Tidal healthy again — restored default priority: {SERVICE_PRIORITY}", flush=True)
+            return
+
+        if _tidal_blocked_until > now:
+            return
+
+        if "tidal" not in SERVICE_PRIORITY:
+            return
+
+        _tidal_blocked_until = now + 10800
+        services = [s for s in SERVICE_PRIORITY if s != "tidal"]
+        if "youtube" in services:
+            services.insert(0, services.pop(services.index("youtube")))
+        services.append("tidal")
+        SERVICE_PRIORITY = services
+        print(f"[downloader] Tidal BLOCKED for 3h — new priority: {SERVICE_PRIORITY}", flush=True)
 
 
 def run_download(url: str, dest_dir: str, quality: str = "LOSSLESS") -> dict:
-    """Run the SpotiFLAC CLI in a subprocess to avoid asyncio/thread conflicts."""
     try:
+        with _lock:
+            services = list(SERVICE_PRIORITY)
         cmd = [
             "spotiflac", url, dest_dir,
-            "--service", *SERVICE_PRIORITY,
+            "--service", *services,
             "--quality", quality,
+            "--no-lyrics",
             "--retries", "2",
             "--timeout", "300",
         ]
@@ -54,13 +94,22 @@ def run_download(url: str, dest_dir: str, quality: str = "LOSSLESS") -> dict:
             env={**os.environ, "PYTHONIOENCODING": "utf-8"}
         )
 
+        output = (result.stdout + " " + result.stderr).lower()
+
         if result.returncode != 0:
+            if _tidal_blocked_in_output(output):
+                _rebalance_services(success=False)
             return {"error": result.stderr.strip() or f"Exit code {result.returncode}"}
 
         dest_path = Path(dest_dir)
         files = [f for f in dest_path.rglob("*") if f.is_file() and f.suffix.lower() in VALID_AUDIO_EXTENSIONS]
         if not files:
+            if _tidal_blocked_in_output(output):
+                _rebalance_services(success=False)
             return {"error": "No audio files downloaded"}
+
+        if "tidal" in output and "trying" in output and "✓" in output:
+            _rebalance_services(success=True)
 
         return {"filename": files[0].name}
 
@@ -125,6 +174,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
 
+        if parsed.path == "/services":
+            with _lock:
+                remaining = max(0, int(_tidal_blocked_until - time.time()))
+            return self._json(200, {
+                "current": SERVICE_PRIORITY,
+                "default": DEFAULT_PRIORITY,
+                "tidal_blocked": remaining > 0,
+                "tidal_block_remaining_s": remaining,
+            })
+
         if parsed.path == "/health":
             return self._json(200, {"status": "ok"})
 
@@ -150,4 +209,5 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 4002))
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     print(f"[downloader] ready on :{port}", flush=True)
+    print(f"[downloader] services: {SERVICE_PRIORITY}", flush=True)
     server.serve_forever()

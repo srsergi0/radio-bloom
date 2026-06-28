@@ -80,7 +80,7 @@ const mcpService = new McpService(
 );
 
 // Initialize active services
-libraryService.init();
+libraryService.init().catch((err) => console.error("[init] libraryService:", err));
 downloadService.init();
 
 // Auto re-download missing tracks on startup

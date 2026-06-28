@@ -9,17 +9,8 @@ RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lock
 COPY web/ .
 RUN bun run build
 
-# Stage 2: Extraer solo ffprobe (el publisher no necesita ffmpeg completo)
-FROM alpine:3.20 AS ffprobe
-RUN --mount=type=cache,target=/var/cache/apk apk add --no-cache ffmpeg
-RUN mkdir -p /deps && \
-    cp /usr/bin/ffprobe /deps/ && \
-    ldd /usr/bin/ffprobe | grep -oE '/usr/lib/[^ ]+' | sort -u | xargs -I{} cp {} /deps/
-
-# Stage 3: Run the publisher
+# Stage 2: Run the publisher
 FROM oven/bun:1.2-alpine
-COPY --from=ffprobe /deps/* /usr/lib/
-COPY --from=ffprobe /deps/ffprobe /usr/bin/ffprobe
 
 WORKDIR /app/publisher
 

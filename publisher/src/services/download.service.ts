@@ -80,7 +80,7 @@ export class DownloadService {
       const name = basename(latestFile, extname(latestFile));
       const fileStat = statSync(filePath);
 
-      const meta = this.ffprobeClient.extractMetadata(filePath);
+      const meta = await this.ffprobeClient.extractMetadata(filePath);
 
       const track: Track = {
         id: `lib_${Date.now()}`,

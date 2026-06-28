@@ -81,14 +81,14 @@ export class LiquidsoapService {
     }
   }
 
-  private getFileDuration(filepath: string): number {
+  private async getFileDuration(filepath: string): Promise<number> {
     const cached = this.durationCache.get(filepath);
     if (cached && Date.now() - cached.cachedAt < this.DURATION_CACHE_TTL) {
       return cached.duration;
     }
 
     const localPath = filepath.replace(/^\/music\//, `${this.musicMount}/`);
-    const meta = this.ffprobeClient.extractMetadata(localPath);
+    const meta = await this.ffprobeClient.extractMetadata(localPath);
     if (meta.duration > 0) {
       this.durationCache.set(filepath, { duration: meta.duration, cachedAt: Date.now() });
       return meta.duration;
@@ -131,7 +131,7 @@ export class LiquidsoapService {
       let duration = 0;
       const filename = meta.filename || meta.initial_uri || "";
       if (filename) {
-        duration = this.getFileDuration(filename);
+        duration = await this.getFileDuration(filename);
       }
 
       return {

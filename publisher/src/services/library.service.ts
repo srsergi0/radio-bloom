@@ -25,9 +25,9 @@ export class LibraryService {
     this.interludiosDir = join(musicDir, "interludios");
   }
 
-  public init(): void {
+  public async init(): Promise<void> {
     this.ensureDirs();
-    this.scan();
+    await this.scan();
     this.watchDirectories();
   }
 
@@ -56,15 +56,15 @@ export class LibraryService {
     return results;
   }
 
-  public scan(): void {
+  public async scan(): Promise<void> {
     this.ensureDirs();
 
     // 1. Scan and upsert physical files recursively
     const songFiles = this.getAllFiles(this.songsDir);
-    this.scanAndUpsertFiles(songFiles, this.songsDir, "song");
+    await this.scanAndUpsertFiles(songFiles, this.songsDir, "song");
 
     const interludioFiles = this.getAllFiles(this.interludiosDir);
-    this.scanAndUpsertFiles(interludioFiles, this.interludiosDir, "interludio");
+    await this.scanAndUpsertFiles(interludioFiles, this.interludiosDir, "interludio");
 
     // 2. Prune tracks that no longer exist on disk
     const dbSongs = this.libraryRepo.getAllTracks("song");
@@ -102,7 +102,11 @@ export class LibraryService {
     console.log(`[LibraryService] Catalog indexed. Pendientes de enriquecer: ${pendingSongs}`);
   }
 
-  private scanAndUpsertFiles(files: string[], baseDir: string, type: "song" | "interludio"): void {
+  private async scanAndUpsertFiles(
+    files: string[],
+    baseDir: string,
+    type: "song" | "interludio"
+  ): Promise<void> {
     const prefix = type === "song" ? "songs" : "interludios";
     const existingTracks = this.libraryRepo.getAllTracks(type);
 
@@ -125,7 +129,7 @@ export class LibraryService {
 
         const file = basename(filePath);
         const name = basename(file, extname(file));
-        const meta = this.ffprobeClient.extractMetadata(filePath);
+        const meta = await this.ffprobeClient.extractMetadata(filePath);
 
         this.libraryRepo.upsertTrack({
           file: key,
@@ -181,11 +185,9 @@ export class LibraryService {
       clearTimeout(this.scanTimeout);
     }
     this.scanTimeout = setTimeout(() => {
-      try {
-        this.scan();
-      } catch (err: any) {
+      this.scan().catch((err: any) => {
         console.error("[LibraryService] Error running debounced scan:", err.message);
-      }
+      });
     }, 2000);
   }
 

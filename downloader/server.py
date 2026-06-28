@@ -70,7 +70,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": "url required"})
 
             uid = f"{int(time.time())}_{hashlib.md5(url.encode()).hexdigest()[:6]}"
-            temp_dir = os.path.join(SONGS_DIR, f"tmp_download_{uid}")
+            temp_dir = os.path.join(SONGS_DIR, ".tmp", f"download_{uid}")
             os.makedirs(temp_dir, exist_ok=True)
 
             try:

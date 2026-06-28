@@ -93,9 +93,9 @@ Se divide en 2 stacks independientes que comparten una red Docker externa:
 | Stack | Compose | Servicios | Auto Deploy |
 |-------|---------|-----------|-------------|
 | **radio-engine** | `docker-compose.engine.yml` | liquidsoap, ftp | ❌ Manual |
-| **radio-publisher** | `docker-compose.publisher.yml` | publisher | ✅ ON |
+| **radio-publisher** | `docker-compose.publisher.yml` | publisher, downloader | ✅ ON |
 
-Los contenedores usan `container_name` fijo (`radio-liquidsoap`, `radio-publisher`, `radio-ftp`) para que Docker DNS los resuelva correctamente entre stacks mediante la red externa `radio-net`.
+Los contenedores usan `container_name` fijo (`radio-liquidsoap`, `radio-publisher`, `radio-downloader`, `radio-ftp`) para que Docker DNS los resuelva correctamente entre stacks mediante la red externa `radio-net`.
 
 ### Configuracion en Coolify
 
@@ -146,6 +146,7 @@ LIQUIDSOAP_HARBOUR_PORT=8000
 PUBLISHER_PORT=3000
 SPOTIFY_CLIENT_ID=<tu-client-id>
 SPOTIFY_CLIENT_SECRET=<tu-client-secret>
+DOWNLOADER_URL=http://radio-downloader:4002
 ```
 
 > **Importante:** `LIQUIDSOAP_HOST` debe ser `radio-liquidsoap` (el `container_name`), no `liquidsoap`. Los `SPOTIFY_CLIENT_ID` y `SPOTIFY_CLIENT_SECRET` se obtienen de [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).

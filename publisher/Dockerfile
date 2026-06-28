@@ -9,8 +9,7 @@ RUN bun run build
 # Stage 2: Run the publisher
 FROM oven/bun:1.2-alpine
 
-RUN apk add --no-cache python3 py3-pip py3-setuptools ffmpeg && \
-    pip3 install --break-system-packages SpotiFLAC
+RUN apk add --no-cache ffmpeg
 
 WORKDIR /app/publisher
 

@@ -45,3 +45,8 @@ This applies to all situations including fixes, features, experiments, and WIP. 
 
 If a commit was just made without permission, apologize and follow the rule going forward.
 
+
+# Project Map: BITACORA.md
+
+- **First Step for Agents**: When starting to work on this project to understand its structure, scope, and key files, the first file you MUST read is `BITACORA.md`.
+- **Maintenance**: Whenever you create, modify, or delete files, you MUST update `BITACORA.md` to reflect any changes to the project's structure, files, or component connections. Only log useful/relevant changes that help future agents understand the project.

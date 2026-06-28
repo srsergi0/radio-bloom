@@ -235,5 +235,5 @@ El sistema de playlists permite crear, gestionar y reproducir listas de reproduc
 - **Library lookup**: El play endpoint ahora busca tracks por `spotifyUrl` en la biblioteca local antes de descargar.
 - **Bun idleTimeout**: Aumentado a 255s para requests largos.
 - **Upgrade downloader a SpotiFLAC v1.2.7**: `server.py` ahora usa el CLI de SpotiFLAC (`spotiflac`) con los nuevos flags `--service`, `--quality`, `--retries` y `--timeout`. Se agregó Qobuz como servicio prioritario, con fallback a Tidal, Deezer, Amazon, Apple Music y YouTube. Nuevo flag `DOWNLOAD_SERVICES` para configurar orden de servicios vía entorno.
-- **Carpetas temporales ocultas**: Las descargas temporales ahora se crean en `music/songs/.tmp/` en lugar de `music/songs/tmp_download_*/`, evitando que aparezcan en el FTP y causen errores 550 al acceder después de ser eliminadas.
+- **Carpetas temporales ocultas**: Las descargas temporales ahora se crean en `music/songs/.tmp/` en lugar de `music/songs/tmp_download_*/`, evitando que aparezcan en el FTP y causen errores 550 al acceder después de ser eliminadas. Al arrancar el downloader se limpian automáticamente las subcarpetas huérfanas de sesiones anteriores.
 - **ffmpeg/ffprobe en el contenedor**: El `Dockerfile` del downloader ahora instala `ffmpeg` para que SpotiFLAC pueda validar los archivos descargados.

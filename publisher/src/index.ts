@@ -189,7 +189,75 @@ class StreamBroadcaster {
 const broadcaster = new StreamBroadcaster();
 
 // ============================================================
-// 6. HTTP Server (Bun.serve) with WebSocket for browser live
+// 6. Live Chunk Receiver (recibe chunks vía HTTP POST y los
+//    reenvía al harbor como un solo PUT persistente)
+// ============================================================
+class LiveChunkReceiver {
+  private controller: ReadableStreamDefaultController | null = null;
+  private abortController: AbortController | null = null;
+  public isConnected = false;
+
+  async start() {
+    if (this.controller) return;
+    this.abortController = new AbortController();
+
+    const body = new ReadableStream({
+      start: (c) => { this.controller = c; },
+      cancel: () => { this.stop(); },
+    });
+
+    fetch(LIVE_HARBOUR_URL, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "audio/webm;codecs=opus",
+        Authorization: LIVE_AUTH,
+      },
+      body,
+      duplex: "half",
+      signal: this.abortController.signal,
+    }).then((res) => {
+      console.log(`[live] Harbor PUT status: ${res.status}`);
+      if (!res.ok) this.stop();
+    }).catch((err) => {
+      if (err.name !== "AbortError") {
+        console.error("[live] Harbor PUT error:", err.message);
+      }
+      this.stop();
+    });
+
+    // Small delay to let the connection establish
+    await new Promise((r) => setTimeout(r, 300));
+    this.isConnected = true;
+  }
+
+  pushChunk(data: Uint8Array) {
+    if (this.controller) {
+      try {
+        this.controller.enqueue(data);
+      } catch {
+        this.stop();
+      }
+    }
+  }
+
+  stop() {
+    this.isConnected = false;
+    if (this.controller) {
+      try { this.controller.close(); } catch {}
+      this.controller = null;
+    }
+    if (this.abortController) {
+      try { this.abortController.abort(); } catch {}
+      this.abortController = null;
+    }
+    console.log("[live] Chunk receiver stopped");
+  }
+}
+
+const liveReceiver = new LiveChunkReceiver();
+
+// ============================================================
+// 7. HTTP Server (Bun.serve)
 // ============================================================
 const _server = Bun.serve({
   port: PORT,
@@ -221,6 +289,22 @@ const _server = Bun.serve({
       } catch {
         return new Response("Live upstream not available", { status: 502 });
       }
+    }
+
+    // POST /api/live/chunk: recibe chunks del navegador y los reenvía al harbor
+    if (url.pathname === "/api/live/chunk" && req.method === "POST") {
+      const buf = await req.arrayBuffer();
+      if (!liveReceiver.isConnected) {
+        await liveReceiver.start();
+      }
+      liveReceiver.pushChunk(new Uint8Array(buf));
+      return new Response("ok", { status: 200 });
+    }
+
+    // POST /api/live/stop: detiene el streaming del navegador
+    if (url.pathname === "/api/live/stop" && req.method === "POST") {
+      liveReceiver.stop();
+      return new Response("ok", { status: 200 });
     }
 
     // Audio stream route (único endpoint /radiobloom.mp3)

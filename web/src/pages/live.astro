@@ -52,8 +52,6 @@ import Layout from "../layouts/Layout.astro";
 
   let mediaRecorder = null;
   let audioStream = null;
-  let fetchController = null;
-  let fetchAbort = null;
   let startTime = null;
   let timerInterval = null;
   let isStreaming = false;
@@ -120,42 +118,6 @@ import Layout from "../layouts/Layout.astro";
       }
 
       audioFormat.textContent = mimeType;
-      setStatus("Connecting to server...", "text-yellow-400");
-
-      // Create a ReadableStream and feed it with MediaRecorder chunks
-      fetchAbort = new AbortController();
-      fetchController = null;
-
-      const body = new ReadableStream({
-        start(c) { fetchController = c; },
-        cancel() { cleanup(); },
-      });
-
-      // Start HTTP PUT request (works through Cloudflare Tunnel)
-      const putUrl = `${API_BASE}/live.mp3`;
-      fetch(putUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": mimeType,
-        },
-        body,
-        duplex: "half",
-        signal: fetchAbort.signal,
-      }).then((res) => {
-        if (!res.ok) {
-          setStatus(`Server error: ${res.status}`, "text-red-400");
-          cleanup();
-        }
-      }).catch((err) => {
-        if (err.name !== "AbortError") {
-          setStatus("Connection error: " + err.message, "text-red-400");
-          cleanup();
-        }
-      });
-
-      // Wait a tick for the fetch to establish, then start MediaRecorder
-      await new Promise((r) => setTimeout(r, 500));
-
       setStatus("Streaming live", "text-green-400");
       isStreaming = true;
       startBtn.disabled = true;
@@ -165,12 +127,14 @@ import Layout from "../layouts/Layout.astro";
 
       mediaRecorder = new MediaRecorder(audioStream, { mimeType });
       mediaRecorder.ondataavailable = async (event) => {
-        if (event.data.size > 0 && fetchController) {
+        if (event.data.size > 0) {
           try {
-            const buf = await event.data.arrayBuffer();
-            fetchController.enqueue(new Uint8Array(buf));
+            await fetch(`${API_BASE}/api/live/chunk`, {
+              method: "POST",
+              body: event.data,
+            });
           } catch {
-            // Stream closed or cancelled
+            // Server might be unreachable, continue trying
           }
         }
       };
@@ -182,16 +146,10 @@ import Layout from "../layouts/Layout.astro";
   }
 
   function stopStreaming() {
-    if (fetchController) {
-      try { fetchController.close(); } catch {}
-      fetchController = null;
-    }
-    if (fetchAbort) {
-      try { fetchAbort.abort(); } catch {}
-    }
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
       mediaRecorder.stop();
     }
+    fetch(`${API_BASE}/api/live/stop`, { method: "POST" }).catch(() => {});
     cleanup();
     setStatus("Stopped", "text-zinc-500");
   }
@@ -199,8 +157,6 @@ import Layout from "../layouts/Layout.astro";
   function cleanup() {
     isStreaming = false;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-    fetchController = null;
-    fetchAbort = null;
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
       try { mediaRecorder.stop(); } catch {}
       mediaRecorder = null;
@@ -247,7 +203,6 @@ import Layout from "../layouts/Layout.astro";
   }
 
   window.addEventListener("beforeunload", () => {
-    if (fetchController) try { fetchController.close(); } catch {}
     if (mediaRecorder && mediaRecorder.state !== "inactive") try { mediaRecorder.stop(); } catch {}
     if (audioStream) for (const t of audioStream.getTracks()) t.stop();
   });

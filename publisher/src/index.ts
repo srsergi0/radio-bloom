@@ -237,55 +237,29 @@ const _server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
 
-    // Live audio stream route (proxy desde input.harbor de Liquidsoap)
-    if (url.pathname === "/live.mp3") {
+    // PUT /live.mp3: FFmpeg envía audio en vivo al harbor de Liquidsoap
+    if (url.pathname === "/live.mp3" && req.method === "PUT") {
       const liveUrl = `http://${LIQUIDSOAP_HOST}:8001/live.mp3`;
-
-      // PUT: FFmpeg envía audio en vivo al harbor
-      if (req.method === "PUT") {
-        try {
-          const headers = new Headers(req.headers);
-          headers.delete("host");
-          const upRes = await fetch(liveUrl, {
-            method: "PUT",
-            headers,
-            body: req.body,
-            duplex: "half",
-          });
-          return new Response(upRes.body, {
-            status: upRes.status,
-            statusText: upRes.statusText,
-          });
-        } catch {
-          return new Response("Live upstream not available", { status: 502 });
-        }
-      }
-
-      // GET: oyentes escuchan el stream en vivo
       try {
-        const auth = btoa("source:hackme");
-        const res = await fetch(liveUrl, {
-          method: "GET",
-          headers: { Authorization: `Basic ${auth}` },
+        const headers = new Headers(req.headers);
+        headers.delete("host");
+        const upRes = await fetch(liveUrl, {
+          method: "PUT",
+          headers,
+          body: req.body,
+          duplex: "half",
         });
-        if (!res.ok || !res.body) throw new Error(`Upstream returned ${res.status}`);
-        return new Response(res.body, {
-          status: 200,
-          headers: {
-            "Content-Type": "audio/mpeg",
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            Pragma: "no-cache",
-            Expires: "0",
-            "Access-Control-Allow-Origin": "*",
-          },
+        return new Response(upRes.body, {
+          status: upRes.status,
+          statusText: upRes.statusText,
         });
       } catch {
-        return new Response("Live stream not available", { status: 503 });
+        return new Response("Live upstream not available", { status: 502 });
       }
     }
 
-    // Audio stream route (output.harbor)
-    if (url.pathname === "/radiobloom.mp3") {
+    // Audio stream route (radiobloom.mp3 y live.mp3 usan el broadcaster)
+    if (url.pathname === "/radiobloom.mp3" || url.pathname === "/live.mp3") {
       let clientController: ReadableStreamDefaultController | null = null;
       const stream = new ReadableStream({
         start(controller) {

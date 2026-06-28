@@ -204,6 +204,20 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def cleanup_orphan_temp_dirs():
+    tmp_root = os.path.join(SONGS_DIR, ".tmp")
+    if not os.path.isdir(tmp_root):
+        return
+    for entry in os.listdir(tmp_root):
+        entry_path = os.path.join(tmp_root, entry)
+        if os.path.isdir(entry_path):
+            try:
+                shutil.rmtree(entry_path, ignore_errors=True)
+                print(f"[downloader] Cleaned orphan temp dir: {entry}", flush=True)
+            except:
+                pass
+
+
 if __name__ == "__main__":
     cleanup_orphan_temp_dirs()
     port = int(os.environ.get("PORT", 4002))

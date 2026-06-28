@@ -196,6 +196,7 @@ class LiveChunkReceiver {
   private controller: ReadableStreamDefaultController | null = null;
   private abortController: AbortController | null = null;
   public isConnected = false;
+  private chunkCount = 0;
 
   async start() {
     if (this.controller) return;
@@ -226,11 +227,16 @@ class LiveChunkReceiver {
     });
 
     // Small delay to let the connection establish
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 500));
     this.isConnected = true;
+    console.log("[live] Chunk receiver started");
   }
 
   pushChunk(data: Uint8Array) {
+    this.chunkCount++;
+    if (this.chunkCount % 10 === 0) {
+      console.log(`[live] Received ${this.chunkCount} chunks`);
+    }
     if (this.controller) {
       try {
         this.controller.enqueue(data);
@@ -250,7 +256,10 @@ class LiveChunkReceiver {
       try { this.abortController.abort(); } catch {}
       this.abortController = null;
     }
-    console.log("[live] Chunk receiver stopped");
+    if (this.chunkCount > 0) {
+      console.log(`[live] Chunk receiver stopped after ${this.chunkCount} chunks`);
+    }
+    this.chunkCount = 0;
   }
 }
 

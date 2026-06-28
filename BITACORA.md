@@ -51,7 +51,7 @@ radio/
 │
 ├── downloader/                           # Microservicio de Descarga
 │   ├── Dockerfile                        # Dockerfile optimizado (BuildKit Cache) para la imagen Python del downloader
-│   └── server.py                         # Servidor web en Python que expone el endpoint de descarga vía SpotiFLAC
+│   └── server.py                         # Servidor HTTP en Python que usa SpotiFLAC como librería (v1.2.6+, sin subprocess)
 │
 ├── ftp/                                  # Servidor FTP para subir canciones manualmente
 │   ├── Dockerfile                        # Dockerfile basado en vsftpd con soporte para entrypoint personalizado
@@ -234,3 +234,4 @@ El sistema de playlists permite crear, gestionar y reproducir listas de reproduc
 - **Async play**: `POST /api/playlists/:id/play` ya no bloquea esperando descargas. Descarga asíncronamente y la primera canción que completa se reproduce inmediatamente.
 - **Library lookup**: El play endpoint ahora busca tracks por `spotifyUrl` en la biblioteca local antes de descargar.
 - **Bun idleTimeout**: Aumentado a 255s para requests largos.
+- **Upgrade downloader a SpotiFLAC v1.2.6**: `server.py` ahora importa `SpotiFLAC` como librería Python (`from backend import SpotiFLAC`), eliminando `subprocess`. Se agregó Qobuz como servicio prioritario, con fallback a Tidal, Deezer, Amazon, Apple Music y YouTube. Nuevo flag `DOWNLOAD_SERVICES` para configurar orden de servicios vía entorno.

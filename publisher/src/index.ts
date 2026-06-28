@@ -240,8 +240,34 @@ const _server = Bun.serve({
     // Live audio stream route (proxy desde input.harbor de Liquidsoap)
     if (url.pathname === "/live.mp3") {
       const liveUrl = `http://${LIQUIDSOAP_HOST}:8001/live.mp3`;
+
+      // PUT: FFmpeg envía audio en vivo al harbor
+      if (req.method === "PUT") {
+        try {
+          const headers = new Headers(req.headers);
+          headers.delete("host");
+          const upRes = await fetch(liveUrl, {
+            method: "PUT",
+            headers,
+            body: req.body,
+            duplex: "half",
+          });
+          return new Response(upRes.body, {
+            status: upRes.status,
+            statusText: upRes.statusText,
+          });
+        } catch {
+          return new Response("Live upstream not available", { status: 502 });
+        }
+      }
+
+      // GET: oyentes escuchan el stream en vivo
       try {
-        const res = await fetch(liveUrl);
+        const auth = btoa("source:hackme");
+        const res = await fetch(liveUrl, {
+          method: "GET",
+          headers: { Authorization: `Basic ${auth}` },
+        });
         if (!res.ok || !res.body) throw new Error(`Upstream returned ${res.status}`);
         return new Response(res.body, {
           status: 200,

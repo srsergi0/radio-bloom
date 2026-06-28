@@ -143,10 +143,10 @@ const { isEn = true } = Astro.props;
 
 <script>
   const STREAM_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:9876/radiobloom.mp3'
+    ? 'http://localhost:8000/radiobloom.mp3'
     : '/radiobloom.mp3';
   const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:9876'
+    ? 'http://localhost:8000'
     : '';
 
   const audio = new Audio();

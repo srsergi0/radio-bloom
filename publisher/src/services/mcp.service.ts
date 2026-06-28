@@ -39,12 +39,11 @@ export class McpService {
         try {
           const status = await this.liquidsoapService.getStreamStatus();
           const queue = await this.liquidsoapService.queueList();
-          const stats = this.libraryRepo.getStats();
           return {
             content: [
               {
                 type: "text",
-                text: JSON.stringify({ status, queue, library: stats }, null, 2),
+                text: JSON.stringify({ status, queue }, null, 2),
               },
             ],
           };
@@ -282,12 +281,11 @@ export class McpService {
       "Estadísticas de la biblioteca: total de canciones e interludios",
       {},
       async () => {
-        const stats = this.libraryRepo.getStats();
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(stats, null, 2),
+              text: "Library stats removed",
             },
           ],
         };

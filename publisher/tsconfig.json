@@ -11,7 +11,9 @@
     "rootDir": "./src",
     "declaration": true,
     "resolveJsonModule": true,
-    "allowJs": true
+    "allowJs": true,
+    "incremental": true,
+    "tsBuildInfoFile": "node_modules/.cache/tsconfig.tsbuildinfo"
   },
   "include": ["src/**/*"]
 }

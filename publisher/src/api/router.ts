@@ -81,62 +81,20 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     return c.json({ ok: true, data: deps.libraryService.listInterludios() });
   });
 
-  app.get("/api/library/stats", (c) => {
-    return c.json({ ok: true, data: deps.libraryService.getStats() });
-  });
-
-  app.get("/api/library/track", (c) => {
-    const file = c.req.query("file");
-    if (!file) return c.json({ ok: false, error: "file query param required" }, 400);
-    const track = deps.libraryService.getTrackByFile(file);
+  app.get("/api/library/track/:id", (c) => {
+    const id = c.req.param("id");
+    const track = deps.libraryService.getTrackById(id);
     if (!track) return c.json({ ok: false, error: "Track not found" }, 404);
     return c.json({ ok: true, data: track });
   });
 
-  app.delete("/api/library/track", (c) => {
-    const file = c.req.query("file");
-    if (!file) return c.json({ ok: false, error: "file query param required" }, 400);
-    const deleted = deps.libraryService.deleteTrack(file);
-    if (!deleted) return c.json({ ok: false, error: "File not found or could not delete" }, 404);
-    return c.json({ ok: true, data: { deleted: file } });
-  });
-
-  app.post("/api/library/scan", (c) => {
-    const stats = deps.libraryService.scan();
-    return c.json({ ok: true, data: stats });
-  });
-
-  app.put("/api/library/track/spotify-url", async (c) => {
-    const body = await c.req.json();
-    if (!body.file || !body.spotifyUrl) {
-      return c.json({ ok: false, error: "file and spotifyUrl are required" }, 400);
-    }
-    const ok = deps.libraryService.updateSpotifyUrl(body.file, body.spotifyUrl);
-    if (!ok) return c.json({ ok: false, error: "Track not found" }, 404);
-    return c.json({ ok: true, data: { file: body.file, spotifyUrl: body.spotifyUrl } });
-  });
-
-  app.get("/api/library/tracks-without-url", (c) => {
-    const songs = deps.libraryService.listSongs().filter((t) => !t.spotifyUrl);
-    const interludios = deps.libraryService.listInterludios().filter((t) => !t.spotifyUrl);
-    return c.json({ ok: true, data: { songs, interludios } });
-  });
-
-  app.post("/api/library/re-download/:file", (c) => {
-    const file = c.req.param("file");
-    const job = deps.downloadService.reDownload(file);
-    if (!job) return c.json({ ok: false, error: "Track not found or no Spotify URL" }, 404);
-    return c.json({ ok: true, data: job });
-  });
-
-  app.post("/api/library/re-download-missing", (c) => {
-    const results = deps.downloadService.reDownloadMissing();
-    return c.json({ ok: true, data: { results, count: results.length } });
-  });
-
-  app.get("/api/downloads", (c) => {
-    const jobs = deps.downloadService.getAllDownloads();
-    return c.json({ ok: true, data: jobs });
+  app.delete("/api/library/track/:id", (c) => {
+    const id = c.req.param("id");
+    const track = deps.libraryService.getTrackById(id);
+    if (!track) return c.json({ ok: false, error: "Track not found" }, 404);
+    const deleted = deps.libraryService.deleteTrack(track.file);
+    if (!deleted) return c.json({ ok: false, error: "Could not delete" }, 500);
+    return c.json({ ok: true, data: { deleted: id } });
   });
 
   app.get("/api/library/search", (c) => {

@@ -10,6 +10,19 @@ services:
     networks:
       - radio-net
 
+  metadata-enricher:
+    build:
+      context: ./metadata-enricher
+      dockerfile: Dockerfile
+    container_name: radio-enricher
+    restart: unless-stopped
+    ports:
+      - "4001:4001"
+    environment:
+      - PORT=4001
+    networks:
+      - radio-net
+
   publisher:
     build:
       context: .
@@ -18,6 +31,7 @@ services:
     restart: unless-stopped
     depends_on:
       - liquidsoap
+      - metadata-enricher
     ports:
       - "${API_PORT}:${PUBLISHER_PORT}"
     environment:
@@ -25,6 +39,7 @@ services:
       - LIQUIDSOAP_TELNET_PORT=${LIQUIDSOAP_TELNET_PORT}
       - LIQUIDSOAP_HARBOUR_PORT=${LIQUIDSOAP_HARBOUR_PORT}
       - PORT=${PUBLISHER_PORT}
+      - ENRICHER_URL=http://metadata-enricher:4001
     volumes:
       - ./music:/app/music
       - ./publisher/data:/app/data

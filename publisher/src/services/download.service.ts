@@ -151,7 +151,7 @@ export class DownloadService {
   }
 
   public reDownload(file: string): DownloadJob | null {
-    const track = this.libraryRepo.getTrack(file);
+    const track = this.libraryRepo.getTrackByFile(file);
     if (!track) return null;
     if (!track.spotifyUrl) return null;
     const job = this.libraryRepo.createDownload(track.spotifyUrl);

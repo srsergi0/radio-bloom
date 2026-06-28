@@ -33,7 +33,8 @@ export class DatabaseConnection {
 
     this.client.exec(`
       CREATE TABLE IF NOT EXISTS library_tracks (
-        file TEXT PRIMARY KEY,
+        id TEXT PRIMARY KEY,
+        file TEXT NOT NULL,
         type TEXT NOT NULL DEFAULT 'song',
         title TEXT NOT NULL,
         artist TEXT DEFAULT '',
@@ -46,7 +47,12 @@ export class DatabaseConnection {
       )
     `);
 
-    // Ensure older databases get the spotify_url column
+    // Migrate from old schema (file as PK) to new schema (id as PK)
+    const cols = this.client.query("PRAGMA table_info(library_tracks)").all() as any[];
+    const hasId = cols.some((c: any) => c.name === "id");
+    if (!hasId) {
+      this.client.exec("ALTER TABLE library_tracks ADD COLUMN id TEXT");
+    }
     try {
       this.client.exec("ALTER TABLE library_tracks ADD COLUMN spotify_url TEXT DEFAULT ''");
     } catch {}

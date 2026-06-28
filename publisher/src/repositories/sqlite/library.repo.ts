@@ -1,5 +1,5 @@
-import { and, desc, eq, like, or, sql } from "drizzle-orm";
-import type { DownloadJob, LibraryStats, Track } from "../../domain/types";
+import { desc, eq, like, or, sql } from "drizzle-orm";
+import type { DownloadJob, Track } from "../../domain/types";
 import type { DatabaseConnection } from "../../infrastructure/database";
 import * as schema from "./schema";
 
@@ -10,6 +10,14 @@ function fileToId(file: string): string {
     hash |= 0;
   }
   return `lib_${Math.abs(hash).toString(36)}`;
+}
+
+function generateId(spotifyUrl?: string): string {
+  if (spotifyUrl) {
+    const m = spotifyUrl.match(/\/track\/([a-zA-Z0-9]+)/);
+    if (m) return m[1];
+  }
+  return `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export class LibraryRepository {
@@ -35,8 +43,7 @@ export class LibraryRepository {
       .orderBy(schema.downloads.startedAt)
       .limit(1)
       .get();
-    if (!row) return null;
-    return this.mapDownloadRow(row);
+    return row ? this.mapDownloadRow(row) : null;
   }
 
   public updateDownload(id: string, updates: Partial<DownloadJob & { result: Track }>): void {
@@ -65,17 +72,16 @@ export class LibraryRepository {
       .from(schema.downloads)
       .where(eq(schema.downloads.id, id))
       .get();
-    if (!row) return null;
-    return this.mapDownloadRow(row);
+    return row ? this.mapDownloadRow(row) : null;
   }
 
   public getAllDownloads(): DownloadJob[] {
-    const rows = this.db.drizzle
+    return this.db.drizzle
       .select()
       .from(schema.downloads)
       .orderBy(desc(schema.downloads.startedAt))
-      .all();
-    return rows.map((r) => this.mapDownloadRow(r));
+      .all()
+      .map((r) => this.mapDownloadRow(r));
   }
 
   public clearDownloads(): void {
@@ -93,7 +99,7 @@ export class LibraryRepository {
     };
     if (row.resultFile) {
       job.result = {
-        id: `lib_${Date.now()}`,
+        id: `dl_${Date.now()}`,
         type: "song",
         file: `songs/${row.resultFile}`,
         title: row.resultTitle || "",
@@ -107,45 +113,52 @@ export class LibraryRepository {
 
   // --- LIBRARY TRACKS ---
 
+  public getTrackById(id: string): Track | null {
+    const row = this.db.drizzle
+      .select()
+      .from(schema.libraryTracks)
+      .where(eq(schema.libraryTracks.id, id))
+      .get();
+    return row ? this.mapTrackRow(row) : null;
+  }
+
+  public getTrackByFile(file: string): Track | null {
+    const row = this.db.drizzle
+      .select()
+      .from(schema.libraryTracks)
+      .where(eq(schema.libraryTracks.file, file))
+      .get();
+    return row ? this.mapTrackRow(row) : null;
+  }
+
   public getTrackByUrl(spotifyUrl: string): Track | null {
     const row = this.db.drizzle
       .select()
       .from(schema.libraryTracks)
       .where(eq(schema.libraryTracks.spotifyUrl, spotifyUrl))
       .get();
-    if (!row) return null;
-    return this.mapTrackRow(row);
-  }
-
-  public getTrack(file: string): Track | null {
-    const row = this.db.drizzle
-      .select()
-      .from(schema.libraryTracks)
-      .where(eq(schema.libraryTracks.file, file))
-      .get();
-    if (!row) return null;
-    return this.mapTrackRow(row);
+    return row ? this.mapTrackRow(row) : null;
   }
 
   public getAllTracks(type?: "song" | "interludio"): Track[] {
     let query = this.db.drizzle.select().from(schema.libraryTracks).$dynamic();
-    if (type) {
-      query = query.where(eq(schema.libraryTracks.type, type));
-    }
-    const rows = query.orderBy(schema.libraryTracks.file).all();
-    return rows.map((r) => this.mapTrackRow(r));
+    if (type) query = query.where(eq(schema.libraryTracks.type, type));
+    return query
+      .orderBy(schema.libraryTracks.file)
+      .all()
+      .map((r) => this.mapTrackRow(r));
   }
 
   public getTracksPage(type: "song" | "interludio", limit: number, offset: number): Track[] {
-    const rows = this.db.drizzle
+    return this.db.drizzle
       .select()
       .from(schema.libraryTracks)
       .where(eq(schema.libraryTracks.type, type))
       .orderBy(schema.libraryTracks.file)
       .limit(limit)
       .offset(offset)
-      .all();
-    return rows.map((r) => this.mapTrackRow(r));
+      .all()
+      .map((r) => this.mapTrackRow(r));
   }
 
   public countTracks(type: "song" | "interludio"): number {
@@ -167,10 +180,12 @@ export class LibraryRepository {
     spotify_url?: string;
     size: number;
     mtime: string;
-  }): void {
+  }): string {
+    const id = generateId(track.spotify_url);
     this.db.drizzle
       .insert(schema.libraryTracks)
       .values({
+        id,
         file: track.file,
         type: track.type,
         title: track.title,
@@ -185,6 +200,7 @@ export class LibraryRepository {
       .onConflictDoUpdate({
         target: schema.libraryTracks.file,
         set: {
+          id,
           type: track.type,
           title: track.title,
           artist: track.artist || "",
@@ -197,14 +213,18 @@ export class LibraryRepository {
         },
       })
       .run();
+    return id;
   }
 
-  public updateSpotifyUrl(file: string, spotifyUrl: string): void {
+  public updateSpotifyUrl(file: string, spotifyUrl: string): string | null {
+    const spotifyId = spotifyUrl.match(/\/track\/([a-zA-Z0-9]+)/)?.[1];
+    if (!spotifyId) return null;
     this.db.drizzle
       .update(schema.libraryTracks)
-      .set({ spotifyUrl })
+      .set({ spotifyUrl, id: spotifyId })
       .where(eq(schema.libraryTracks.file, file))
       .run();
+    return spotifyId;
   }
 
   public removeTrack(file: string): void {
@@ -213,61 +233,33 @@ export class LibraryRepository {
 
   public search(query: string, limit = 50, offset = 0): { items: Track[]; total: number } {
     const q = `%${query}%`;
+    const where = or(
+      like(schema.libraryTracks.title, q),
+      like(schema.libraryTracks.artist, q),
+      like(schema.libraryTracks.album, q)
+    );
+
     const totalRow = this.db.drizzle
       .select({ count: sql<number>`count(*)` })
       .from(schema.libraryTracks)
-      .where(
-        or(
-          like(schema.libraryTracks.title, q),
-          like(schema.libraryTracks.artist, q),
-          like(schema.libraryTracks.album, q)
-        )
-      )
+      .where(where)
       .get();
 
     const rows = this.db.drizzle
       .select()
       .from(schema.libraryTracks)
-      .where(
-        or(
-          like(schema.libraryTracks.title, q),
-          like(schema.libraryTracks.artist, q),
-          like(schema.libraryTracks.album, q)
-        )
-      )
+      .where(where)
       .orderBy(schema.libraryTracks.file)
       .limit(limit)
       .offset(offset)
       .all();
 
-    return {
-      total: totalRow ? totalRow.count : 0,
-      items: rows.map((r) => this.mapTrackRow(r)),
-    };
-  }
-
-  public getStats(): LibraryStats {
-    const stats = this.db.drizzle
-      .select({
-        totalSongs: sql<number>`COUNT(*) FILTER (WHERE type = 'song')`,
-        totalInterludios: sql<number>`COUNT(*) FILTER (WHERE type = 'interludio')`,
-        totalSize: sql<number>`COALESCE(SUM(size), 0)`,
-        totalDuration: sql<number>`COALESCE(SUM(duration), 0)`,
-      })
-      .from(schema.libraryTracks)
-      .get();
-
-    return {
-      totalSongs: stats?.totalSongs || 0,
-      totalInterludios: stats?.totalInterludios || 0,
-      totalSizeBytes: stats?.totalSize || 0,
-      totalDurationSeconds: stats?.totalDuration || 0,
-    };
+    return { total: totalRow ? totalRow.count : 0, items: rows.map((r) => this.mapTrackRow(r)) };
   }
 
   private mapTrackRow(row: any): Track {
     return {
-      id: fileToId(row.file),
+      id: row.id || fileToId(row.file),
       type: row.type as any,
       file: row.file,
       title: row.title,

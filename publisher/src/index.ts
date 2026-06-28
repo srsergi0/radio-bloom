@@ -13,6 +13,7 @@ import { DownloadService } from "./services/download.service";
 import { LibraryService } from "./services/library.service";
 import { LiquidsoapService } from "./services/liquidsoap.service";
 import { McpService } from "./services/mcp.service";
+import { MetadataEnrichmentService } from "./services/metadata-enrichment.service";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
@@ -53,10 +54,18 @@ const playlistRepo = new PlaylistRepository(dbConnection);
 const configService = new ConfigService(configRepo);
 const liquidsoapService = new LiquidsoapService(telnetClient, ffprobeClient, MUSIC_MOUNT);
 
+const metadataEnrichment = new MetadataEnrichmentService();
+
 // LibraryService deletes should clear the Liquidsoap queue
-const libraryService = new LibraryService(libraryRepo, ffprobeClient, MUSIC_DIR, async () => {
-  await liquidsoapService.queueClear();
-});
+const libraryService = new LibraryService(
+  libraryRepo,
+  ffprobeClient,
+  MUSIC_DIR,
+  metadataEnrichment,
+  async () => {
+    await liquidsoapService.queueClear();
+  }
+);
 
 const downloadService = new DownloadService(libraryRepo, spotiflacClient, ffprobeClient, SONGS_DIR);
 
@@ -65,6 +74,14 @@ const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liq
 // Initialize active services
 libraryService.init();
 downloadService.init();
+
+// Auto re-download missing tracks on startup
+setTimeout(() => {
+  const results = downloadService.reDownloadMissing();
+  if (results.length > 0) {
+    console.log(`[startup] Re-downloading ${results.length} missing tracks...`);
+  }
+}, 5000);
 
 // ============================================================
 // 4. API & Static Router Instantiation

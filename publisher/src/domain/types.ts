@@ -39,13 +39,6 @@ export interface SystemConfig {
   playlistReloadSeconds: number;
 }
 
-export interface LibraryStats {
-  totalSongs: number;
-  totalInterludios: number;
-  totalSizeBytes: number;
-  totalDurationSeconds: number;
-}
-
 export interface Playlist {
   id: string;
   name: string;

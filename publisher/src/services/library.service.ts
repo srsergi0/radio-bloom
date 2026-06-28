@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, watch } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
-import type { LibraryStats, Track } from "../domain/types";
+import type { Track } from "../domain/types";
 import type { FfprobeClient } from "../infrastructure/ffprobe.client";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
+import type { MetadataEnrichmentService } from "./metadata-enrichment.service";
 
 const AUDIO_EXTENSIONS = /\.(mp3|wav|ogg|flac|m4a)$/i;
 
@@ -16,6 +17,7 @@ export class LibraryService {
     private readonly libraryRepo: LibraryRepository,
     private readonly ffprobeClient: FfprobeClient,
     private readonly musicDir: string,
+    private readonly metadataEnrichment?: MetadataEnrichmentService,
     private readonly onDeleteCallback?: () => Promise<void>
   ) {
     this.songsDir = join(musicDir, "songs");
@@ -53,7 +55,7 @@ export class LibraryService {
     return results;
   }
 
-  public scan(): LibraryStats {
+  public scan(): void {
     this.ensureDirs();
 
     // 1. Scan and upsert physical files recursively
@@ -95,11 +97,7 @@ export class LibraryService {
       }
     }
 
-    const stats = this.libraryRepo.getStats();
-    console.log(
-      `[LibraryService] Catalog indexed: ${stats.totalSongs} songs, ${stats.totalInterludios} interludios.`
-    );
-    return stats;
+    console.log(`[LibraryService] Catalog indexed.`);
   }
 
   private scanAndUpsertFiles(files: string[], baseDir: string, type: "song" | "interludio"): void {
@@ -132,9 +130,32 @@ export class LibraryService {
           size: stat.size,
           mtime: stat.mtime.toISOString(),
         });
+
+        if (
+          !meta.spotifyUrl &&
+          !existing?.spotifyUrl &&
+          this.metadataEnrichment &&
+          type === "song"
+        ) {
+          this.enrichTrackAfterScan(key, meta.title || name, meta.artist);
+        }
       } catch (err: any) {
         console.error(`[LibraryService] Failed to index file ${filePath}:`, err.message);
       }
+    }
+  }
+
+  private async enrichTrackAfterScan(file: string, title: string, artist: string): Promise<void> {
+    try {
+      const result = await this.metadataEnrichment!.enrich(title, artist);
+      if (result?.spotifyUrl) {
+        const spotifyId = this.libraryRepo.updateSpotifyUrl(file, result.spotifyUrl);
+        console.log(
+          `[LibraryService] Auto-enriched ${file} → Spotify ID: ${spotifyId} (${result.spotifyUrl})`
+        );
+      }
+    } catch (err: any) {
+      console.error(`[LibraryService] Failed to enrich ${file}:`, err.message);
     }
   }
 
@@ -198,19 +219,20 @@ export class LibraryService {
     };
   }
 
+  public getTrackById(id: string): Track | null {
+    return this.libraryRepo.getTrackById(id);
+  }
+
   public getTrackByFile(file: string): Track | null {
-    return this.libraryRepo.getTrack(file);
+    return this.libraryRepo.getTrackByFile(file);
   }
 
   public getTrackByUrl(url: string): Track | null {
     return this.libraryRepo.getTrackByUrl(url);
   }
 
-  public updateSpotifyUrl(file: string, spotifyUrl: string): boolean {
-    const track = this.libraryRepo.getTrack(file);
-    if (!track) return false;
-    this.libraryRepo.updateSpotifyUrl(file, spotifyUrl);
-    return true;
+  public updateSpotifyUrl(file: string, spotifyUrl: string): string | null {
+    return this.libraryRepo.updateSpotifyUrl(file, spotifyUrl);
   }
 
   public deleteTrack(file: string): boolean {
@@ -231,10 +253,6 @@ export class LibraryService {
       console.error(`[LibraryService] Failed to delete file ${file}:`, err.message);
       return false;
     }
-  }
-
-  public getStats(): LibraryStats {
-    return this.libraryRepo.getStats();
   }
 
   public shutdown(): void {

@@ -7,7 +7,7 @@ import {
   statSync,
   unlinkSync,
 } from "node:fs";
-import { basename, extname, join, relative } from "node:path";
+import { basename, extname, join } from "node:path";
 import { FfprobeClient } from "./ffprobe.client";
 
 export interface SpotiflacDownloadResult {
@@ -27,9 +27,9 @@ function getAllFiles(dir: string, fileList: string[] = []): string[] {
         fileList.push(name);
       }
     }
-  } catch (e) {
-    // Ignore error
-  }
+  } catch {
+      // Ignore error
+    }
   return fileList;
 }
 

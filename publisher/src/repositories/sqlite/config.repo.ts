@@ -1,4 +1,3 @@
-import { eq } from "drizzle-orm";
 import type { SystemConfig } from "../../domain/types";
 import type { DatabaseConnection } from "../../infrastructure/database";
 import * as schema from "./schema";

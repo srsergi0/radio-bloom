@@ -10,6 +10,7 @@ import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { LibraryService } from "./services/library.service";
 import { LiquidsoapService } from "./services/liquidsoap.service";
 import { McpService } from "./services/mcp.service";
+import { MetadataEnrichmentService } from "./services/metadata-enrichment.service";
 
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
 const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
@@ -28,9 +29,16 @@ const libraryRepo = new LibraryRepository(dbConnection);
 const playlistRepo = new PlaylistRepository(dbConnection);
 
 const liquidsoapService = new LiquidsoapService(telnetClient, ffprobeClient, MUSIC_MOUNT);
-const libraryService = new LibraryService(libraryRepo, ffprobeClient, MUSIC_DIR, async () => {
-  await liquidsoapService.queueClear();
-});
+const metadataEnrichment = new MetadataEnrichmentService();
+const libraryService = new LibraryService(
+  libraryRepo,
+  ffprobeClient,
+  MUSIC_DIR,
+  metadataEnrichment,
+  async () => {
+    await liquidsoapService.queueClear();
+  }
+);
 
 const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liquidsoapService);
 

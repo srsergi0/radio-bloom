@@ -3,9 +3,9 @@ import { useState, useRef, useCallback, useEffect } from "react";
 // Mp3Encoder from lame.all.js (global via script tag)
 const getMp3Encoder = () => (window as any).lamejs?.Mp3Encoder;
 
-const SAMPLE_RATE = 48000;
+const SAMPLE_RATE = 44100;
 const CHANNELS = 2;
-const Kbps = 192;
+const Kbps = 320;
 const PCM_BLOCK = 1152;
 
 export default function LiveStream() {
@@ -126,7 +126,7 @@ export default function LiveStream() {
     }
 
     setStreaming(true);
-    setFormat("MP3 192kbps");
+    setFormat("MP3 320kbps 44100Hz");
     setStatus("Encoding and streaming...");
     streamRef.current = mediaStream;
     startTimer();

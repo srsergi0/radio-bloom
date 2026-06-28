@@ -8,12 +8,12 @@ interface Props extends HTMLAttributes<'button'>, HTMLAttributes<'a'> {
   class?: string;
 }
 
-const { 
-  variant = 'solid', 
-  size = 'md', 
-  href, 
-  class: className = '', 
-  ...rest 
+const {
+  variant = 'solid',
+  size = 'md',
+  href,
+  class: className = '',
+  ...rest
 } = Astro.props;
 
 const Element = href ? 'a' : 'button';
@@ -37,59 +37,55 @@ const classes = `brutalist-btn btn-${variant} btn-${size} ${className}`;
     cursor: pointer;
     transition: background-color 0.15s, color 0.15s, transform 0.15s, box-shadow 0.15s;
     text-decoration: none;
-    border-radius: 0; /* Sharp brutalist corners */
+    border-radius: 0;
     outline: none;
     text-align: center;
+    letter-spacing: 0.02em;
   }
 
-  /* Variant Solid: Orange background with black text and thick black border */
   .btn-solid {
     background-color: var(--color-orange);
     color: var(--color-text-dark);
-    border: 2px solid var(--color-text-dark);
-    box-shadow: 4px 4px 0px var(--color-text-dark);
+    border: 3px solid var(--color-text-dark);
+    box-shadow: 5px 5px 0px var(--color-text-dark);
   }
   .btn-solid:hover {
     transform: translate(-2px, -2px);
-    box-shadow: 6px 6px 0px var(--color-text-dark);
+    box-shadow: 7px 7px 0px var(--color-text-dark);
   }
   .btn-solid:active {
     transform: translate(2px, 2px);
     box-shadow: 2px 2px 0px var(--color-text-dark);
   }
 
-  /* Variant Outline: Transparent background with solid border */
   .btn-outline {
     background-color: transparent;
     color: currentColor;
-    border: 2px solid currentColor;
-    box-shadow: 4px 4px 0px currentColor;
+    border: 3px solid currentColor;
+    box-shadow: 5px 5px 0px currentColor;
   }
   .btn-outline:hover {
     background-color: currentColor;
-    /* We invert color on hover by letting text color inherit background */
     filter: invert(1);
     transform: translate(-2px, -2px);
-    box-shadow: 6px 6px 0px currentColor;
+    box-shadow: 7px 7px 0px currentColor;
   }
   .btn-outline:active {
     transform: translate(2px, 2px);
     box-shadow: 2px 2px 0px currentColor;
   }
 
-  /* Variant Text: Clean text with arrows */
   .btn-text {
     background-color: transparent;
     color: currentColor;
     border: none;
     padding: 0.25rem 0.5rem;
-    border-bottom: 2px solid transparent;
+    border-bottom: 3px solid transparent;
   }
   .btn-text:hover {
     border-bottom-color: currentColor;
   }
 
-  /* Sizes */
   .btn-sm {
     padding: 0.5rem 1rem;
     font-size: 0.75rem;

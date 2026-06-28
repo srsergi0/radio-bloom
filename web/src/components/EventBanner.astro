@@ -8,28 +8,26 @@ interface Props {
 const { isEn = false } = Astro.props;
 ---
 
-<section class="px-4 sm:px-6 md:px-12 py-10 md:py-20 max-w-full bg-black border-b-2 border-white" id="events-section">
+<section class="section-pad max-w-full bg-black border-b-[3px] border-white" id="events-section">
   <div class="max-w-[1200px] mx-auto">
-    <div class="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] border-2 border-white shadow-[6px_6px_0px_#ffffff] overflow-hidden">
-      
-      <!-- Left Side: Solid Orange text info block -->
-      <div class="bg-orange text-text-dark p-6 sm:p-10 md:p-12 flex flex-col items-start justify-center gap-5 sm:gap-6 border-b-2 lg:border-b-0 lg:border-r-2 border-white">
+    <div class="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] border-[3px] border-white shadow-[8px_8px_0px_#ffffff] overflow-hidden">
+
+      <div class="bg-orange text-text-dark p-7 sm:p-10 md:p-12 flex flex-col items-start justify-center gap-5 sm:gap-6 border-b-[3px] lg:border-b-0 lg:border-r-[3px] border-white">
         <span class="font-mono text-xs sm:text-sm font-bold text-text-dark">[ {isEn ? "EXPERIENCES" : "EXPERIENCIAS"} ]</span>
-        <h2 class="text-2xl sm:text-3xl md:text-[2.75rem] font-black leading-[1.1] tracking-tighter uppercase text-text-dark">
+        <h2 class="text-2xl sm:text-3xl md:text-[2.75rem] font-black leading-[1.05] tracking-tighter uppercase text-text-dark">
           {isEn ? "Live the music, live Bloom." : "Vive la música, vive Bloom."}
         </h2>
-        <p class="text-[13px] sm:text-sm md:text-base leading-relaxed text-text-dark opacity-90">
-          {isEn 
-            ? "Concerts, festivals, and independent musical experiences. Discover our upcoming scheduled sound sessions." 
+        <p class="text-sm sm:text-base md:text-lg leading-relaxed text-text-dark opacity-90 font-medium">
+          {isEn
+            ? "Concerts, festivals, and independent musical experiences. Discover our upcoming scheduled sound sessions."
             : "Conciertos, festivales y experiencias sonoras independientes. Descubre nuestras próximas sesiones de sonido programadas."}
         </p>
         <Button href="#events-section" variant="outline" size="md" class="border-black! text-black! hover:bg-black! hover:text-orange!">
           {isEn ? "VIEW ALL EVENTS ↗" : "VER EVENTOS ↗"}
         </Button>
       </div>
-      
-      <!-- Right Side: Grayscale high-contrast concert image -->
-      <div class="relative w-full min-h-[250px] sm:min-h-[350px] lg:min-h-full">
+
+      <div class="relative w-full min-h-[280px] sm:min-h-[380px] lg:min-h-full">
         <div class="absolute inset-0 bg-cover bg-center grayscale contrast-[1.3] brightness-85" style="background-image: url('/images/concert_crowd_banner.png');">
           <div class="absolute inset-0 bg-violet-500/5 mix-blend-color"></div>
         </div>
@@ -38,4 +36,3 @@ const { isEn = false } = Astro.props;
     </div>
   </div>
 </section>
-

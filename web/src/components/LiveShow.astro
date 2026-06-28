@@ -36,37 +36,33 @@ const schedule = [
 ];
 ---
 
-<section class="px-4 sm:px-6 md:px-12 py-10 md:py-20 max-w-full bg-black border-b-2 border-white" id="live-section">
+<section class="section-pad max-w-full bg-black border-b-[3px] border-white" id="live-section">
   <div class="max-w-[1200px] mx-auto">
     <div class="mb-8 md:mb-12">
-      <div>
-        <span class="font-mono text-xs sm:text-sm font-bold text-orange">[ {isEn ? "LIVE BROADCAST" : "EN VIVO AHORA"} ]</span>
-      </div>
+      <span class="font-mono text-xs sm:text-sm font-bold text-orange">[ {isEn ? "LIVE BROADCAST" : "EN VIVO AHORA"} ]</span>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-8 lg:gap-12 items-stretch">
-      <!-- Player on the Left -->
+    <div class="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-6 lg:gap-8 items-stretch">
       <div class="w-full">
         <Player isEn={isEn} />
       </div>
 
-      <!-- Schedule on the Right -->
-      <Card theme="dark" shadow={true} class="schedule-brutalist-card p-0! overflow-hidden">
-        <div class="flex flex-col h-full justify-stretch">
+      <Card theme="dark" shadow={true} class="p-0! overflow-hidden">
+        <div class="flex flex-col h-full">
           {schedule.map((show) => (
-            <div class={`flex items-center gap-4 px-5 sm:px-8 py-5 md:py-6 border-b-2 border-white last:border-b-0 transition-all ${show.active ? 'bg-orange text-black' : 'bg-transparent text-white hover:bg-white/5'}`}>
-              <div class="font-mono text-base font-bold w-16 flex-shrink-0">{show.time}</div>
+            <div class={`flex items-center gap-4 px-5 sm:px-6 py-4 md:py-5 border-b-[3px] border-white last:border-b-0 transition-all ${show.active ? 'bg-orange text-black' : 'text-white hover:bg-white/5'}`}>
+              <div class="font-mono text-base font-bold w-14 flex-shrink-0">{show.time}</div>
               <div class="flex-grow min-w-0">
-                <h4 class="font-sans text-base md:text-lg font-black uppercase tracking-tight truncate">{show.title}</h4>
-                <p class="font-mono text-xs opacity-85 truncate">
+                <h4 class="font-sans text-base md:text-lg font-black uppercase tracking-tight truncate leading-tight">{show.title}</h4>
+                <p class="font-mono text-xs opacity-85 truncate mt-0.5">
                   {isEn ? "with " : "con "}
                   <span class="font-bold">{show.host}</span>
                 </p>
               </div>
               {show.active && (
-                <div class="flex items-end gap-1 h-3.5 flex-shrink-0">
+                <div class="flex items-end gap-1 h-4 flex-shrink-0">
                   <div class="w-[3px] h-1.5 bg-black eq-dot origin-bottom"></div>
-                  <div class="w-[3px] h-3.5 bg-black eq-dot origin-bottom"></div>
+                  <div class="w-[3px] h-4 bg-black eq-dot origin-bottom"></div>
                   <div class="w-[3px] h-2.5 bg-black eq-dot origin-bottom"></div>
                 </div>
               )}
@@ -79,20 +75,15 @@ const schedule = [
 </section>
 
 <style>
-  .schedule-brutalist-card :global(.brutalist-card) {
-    padding: 0 !important;
-  }
-  
   .eq-dot {
     animation: eq-bounce-black 0.6s ease-in-out infinite alternate;
   }
 
-  .eq-dot:nth-child(2) { height: 14px; animation-duration: 0.4s; }
-  .eq-dot:nth-child(3) { height: 10px; animation-duration: 0.5s; }
+  .eq-dot:nth-child(2) { height: 16px; animation-duration: 0.4s; }
+  .eq-dot:nth-child(3) { height: 12px; animation-duration: 0.5s; }
 
   @keyframes eq-bounce-black {
     from { transform: scaleY(0.4); }
     to { transform: scaleY(1.2); }
   }
 </style>
-

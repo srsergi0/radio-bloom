@@ -10,36 +10,35 @@ const esLink = isEn ? `/es${currentPath === "/" ? "" : currentPath}` : currentPa
 const enLink = isEn ? currentPath : currentPath.replace(/^\/es/, "") || "/";
 ---
 
-<header class="sticky top-0 z-50 bg-orange text-text-dark border-b-2 border-text-dark">
-  <div class="max-w-full px-4 sm:px-6 md:px-12 py-4 md:py-5 flex justify-between items-center">
-    <!-- Brand / Logo in lowercase bold -->
-    <a href={isEn ? "/" : "/es"} class="logo text-xl sm:text-2xl font-black tracking-tighter text-text-dark no-underline lowercase">
+<header class="sticky top-0 z-50 bg-orange border-b-[3px] border-text-dark">
+  <div class="max-w-full px-5 md:px-10 py-4 md:py-0 flex justify-between items-center">
+    <a href={isEn ? "/" : "/es"} class="logo text-2xl md:text-3xl font-black tracking-tighter text-text-dark lowercase leading-none py-3 md:py-4">
       bloom radio®
     </a>
 
-    <!-- Monospace centered categories mimicking the top metadata links in Mockup 1 -->
-    <div class="hidden md:flex flex-col font-mono text-[11px] leading-[1.3] font-bold">
-      <div class="flex items-center gap-1.5">
-        <span class="w-1.5 h-1.5 bg-text-dark rounded-full"></span>
-        <a href="#live-section" class="text-text-dark no-underline hover:opacity-70 transition-opacity">{isEn ? "LIVE BROADCAST" : "TRANSMISIÓN EN VIVO"}</a>
+    <div class="hidden lg:flex items-center gap-8">
+      <nav class="flex items-center gap-6 font-mono text-xs font-bold">
+        <a href="#live-section" class="text-text-dark no-underline hover:opacity-60 transition-opacity">{isEn ? "LIVE" : "EN VIVO"}</a>
+        <a href="#programs-section" class="text-text-dark no-underline hover:opacity-60 transition-opacity">{isEn ? "SCHEDULE" : "PROGRAMACIÓN"}</a>
+        <a href="#events-section" class="text-text-dark no-underline hover:opacity-60 transition-opacity">{isEn ? "EVENTS" : "EVENTOS"}</a>
+      </nav>
+
+      <div class="w-[3px] h-6 bg-text-dark opacity-30"></div>
+
+      <div class="font-mono text-xs font-bold flex items-center gap-1">
+        <a href={esLink} class={`text-text-dark no-underline px-2 py-1 transition-all ${!isEn ? 'bg-text-dark text-orange' : 'opacity-50 hover:opacity-80'}`}>ES</a>
+        <a href={enLink} class={`text-text-dark no-underline px-2 py-1 transition-all ${isEn ? 'bg-text-dark text-orange' : 'opacity-50 hover:opacity-80'}`}>EN</a>
       </div>
-      <a href="#programs-section" class="text-text-dark no-underline hover:opacity-70 transition-opacity">{isEn ? "SCHEDULE" : "PROGRAMACIÓN"}</a>
-      <a href="#events-section" class="text-text-dark no-underline hover:opacity-70 transition-opacity">{isEn ? "EVENTS" : "EVENTOS"}</a>
     </div>
 
-    <!-- Navigation / Actions -->
-    <div class="flex items-center gap-4 sm:gap-8 md:gap-10">
-      <div class="font-mono text-xs sm:text-sm font-bold">
-        <a href={esLink} class={`text-text-dark no-underline px-1 py-0.5 transition-all ${!isEn ? 'opacity-100 border-b-2 border-text-dark' : 'opacity-50 hover:opacity-80'}`}>ES</a>
-        <span class="text-text-dark opacity-35">|</span>
-        <a href={enLink} class={`text-text-dark no-underline px-1 py-0.5 transition-all ${isEn ? 'opacity-100 border-b-2 border-text-dark' : 'opacity-50 hover:opacity-80'}`}>EN</a>
+    <div class="flex lg:hidden items-center gap-3">
+      <div class="font-mono text-xs font-bold flex items-center">
+        <a href={esLink} class={`text-text-dark no-underline px-2 py-1 ${!isEn ? 'bg-text-dark text-orange' : 'opacity-50'}`}>ES</a>
+        <a href={enLink} class={`text-text-dark no-underline px-2 py-1 ${isEn ? 'bg-text-dark text-orange' : 'opacity-50'}`}>EN</a>
       </div>
-      
-      <!-- Minimal "Menu" button matching top right of Mockup 1 -->
-      <a href="#footer" class="font-mono text-xs sm:text-sm font-bold text-text-dark no-underline border-b-2 border-transparent hover:border-text-dark transition-all">
-        {isEn ? "Menu" : "Menú"}
+      <a href="#footer" class="font-mono text-xs font-bold text-text-dark no-underline border-b-[3px] border-text-dark pb-0.5">
+        {isEn ? "MENU" : "MENÚ"}
       </a>
     </div>
   </div>
 </header>
-

@@ -31,31 +31,30 @@ const shows = [
 ];
 ---
 
-<section class="px-4 sm:px-6 md:px-12 py-10 md:py-20 bg-ice-blue text-text-dark border-b-2 border-text-dark max-w-full" id="programs-section">
+<section class="section-pad bg-ice-blue text-text-dark border-b-[3px] border-text-dark max-w-full" id="programs-section">
   <div class="max-w-[1200px] mx-auto">
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 md:gap-0 mb-8 md:mb-16">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 md:gap-0 mb-10 md:mb-16">
       <div>
-        <span class="font-mono text-xs sm:text-sm font-bold text-orange block mb-2">[ {isEn ? "WEEKLY SCHEDULE" : "PROGRAMACIÓN SEMANAL"} ]</span>
+        <span class="font-mono text-xs sm:text-sm font-bold text-orange block mb-3">[ {isEn ? "WEEKLY SCHEDULE" : "PROGRAMACIÓN SEMANAL"} ]</span>
         <h2 class="text-3xl md:text-5xl font-black tracking-tighter leading-none uppercase">{isEn ? "Always something for you" : "Siempre hay algo para ti"}</h2>
       </div>
-      <a href="#programs-section" class="font-mono text-xs sm:text-sm font-bold text-text-dark no-underline flex items-center gap-1.5 border-b-2 border-text-dark pb-1 hover:translate-x-0.5 hover:-translate-y-0.5 transition-all">
+      <a href="#programs-section" class="font-mono text-xs sm:text-sm font-bold text-text-dark no-underline flex items-center gap-2 border-b-[3px] border-text-dark pb-1 hover:translate-x-1 hover:-translate-y-1 transition-all">
         {isEn ? "VIEW ALL SHOWS" : "VER TODOS LOS PROGRAMAS"}
         <span class="text-base">↗</span>
       </a>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
       {shows.map((show) => (
-        <Card theme="light" shadow={true} class="p-4! overflow-hidden">
-          <div class="flex items-center gap-4 sm:gap-6 w-full">
-            <!-- Brutalist Numbered Cover -->
-            <div class="w-16 h-16 sm:w-[90px] sm:h-[90px] bg-black text-white flex justify-center items-center border-2 border-black flex-shrink-0">
+        <Card theme="light" shadow={true} class="p-0! overflow-hidden">
+          <div class="flex items-center gap-4 sm:gap-5 w-full">
+            <div class="w-16 h-16 sm:w-[88px] sm:h-[88px] bg-black text-white flex justify-center items-center border-[3px] border-black flex-shrink-0">
               <span class="font-mono text-sm sm:text-lg font-bold">{show.idx}</span>
             </div>
-            
-            <div class="flex-grow min-w-0">
-              <h4 class="text-lg sm:text-xl font-black tracking-tight text-text-dark mb-1 truncate uppercase">{show.title}</h4>
-              <p class="text-[11px] sm:text-xs text-neutral-600 font-mono">{show.time}</p>
+
+            <div class="flex-grow min-w-0 py-2">
+              <h4 class="text-lg sm:text-xl font-black tracking-tight text-text-dark mb-1 truncate uppercase leading-tight">{show.title}</h4>
+              <p class="text-[11px] sm:text-xs text-neutral-600 font-mono font-bold">{show.time}</p>
             </div>
           </div>
         </Card>
@@ -63,4 +62,3 @@ const shows = [
     </div>
   </div>
 </section>
-

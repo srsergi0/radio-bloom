@@ -7,11 +7,11 @@ interface Props extends HTMLAttributes<'div'> {
   shadow?: boolean;
 }
 
-const { 
-  class: className = '', 
-  theme = 'light', 
-  shadow = true, 
-  ...rest 
+const {
+  class: className = '',
+  theme = 'light',
+  shadow = true,
+  ...rest
 } = Astro.props;
 
 const classes = `brutalist-card card-${theme} ${shadow ? 'card-shadow' : ''} ${className}`;
@@ -23,32 +23,30 @@ const classes = `brutalist-card card-${theme} ${shadow ? 'card-shadow' : ''} ${c
 
 <style>
   .brutalist-card {
-    border-radius: 0; /* Sharp brutalist corners */
+    border-radius: 0;
     padding: 1.5rem;
     position: relative;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
   }
 
-  /* Card Themes */
   .card-light {
     background-color: var(--color-ice-blue);
     color: var(--color-text-dark);
-    border: 2px solid var(--color-text-dark);
+    border: 3px solid var(--color-text-dark);
   }
-  
+
   .card-dark {
     background-color: #000000;
     color: var(--color-text-light);
-    border: 2px solid var(--color-text-light);
+    border: 3px solid var(--color-text-light);
   }
 
   .card-orange {
     background-color: var(--color-orange);
     color: var(--color-text-dark);
-    border: 2px solid var(--color-text-dark);
+    border: 3px solid var(--color-text-dark);
   }
 
-  /* Solid Shadow */
   .card-shadow.card-light {
     box-shadow: 6px 6px 0px var(--color-text-dark);
   }
@@ -61,7 +59,6 @@ const classes = `brutalist-card card-${theme} ${shadow ? 'card-shadow' : ''} ${c
     box-shadow: 6px 6px 0px var(--color-text-dark);
   }
 
-  /* Optional Hover Movement */
   .brutalist-card.card-shadow:hover {
     transform: translate(-2px, -2px);
   }

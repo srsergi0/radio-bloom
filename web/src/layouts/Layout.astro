@@ -23,12 +23,11 @@ const isEn = lang === "en";
   <head>
     <meta charset="utf-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="generator" content={Astro.generator} />
     <title>{title}</title>
     <meta name="description" content={description} />
 
-    <!-- Brutalist Grotesque and Monospace Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -42,5 +41,7 @@ const isEn = lang === "en";
     <main class="flex-grow">
       <slot />
     </main>
+
+    <Footer isEn={isEn} />
   </body>
 </html>

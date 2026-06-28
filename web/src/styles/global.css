@@ -25,8 +25,11 @@
   --font-sans: "Archivo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "Space Mono", monospace;
   --font-body: "Inter", sans-serif;
-  
+
   --text-muted: #888888;
+
+  --border-w: 3px;
+  --shadow-offset: 6px;
 }
 
 * {
@@ -40,16 +43,15 @@ html {
   background-color: var(--bg-color);
   color: var(--color-text-light);
   scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
 }
 
-h1,
-h2,
-h3,
-h4,
-.logo {
+h1, h2, h3, h4, h5, h6, .logo {
   font-family: var(--font-sans);
   text-transform: uppercase;
   font-weight: 900;
+  line-height: 0.9;
+  letter-spacing: -0.03em;
 }
 
 body {
@@ -60,27 +62,82 @@ body {
   background-color: var(--bg-color);
 }
 
-/* Custom Scrollbar in Brutalist Style */
+::selection {
+  background: var(--color-orange);
+  color: var(--color-text-dark);
+}
+
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
 }
 ::-webkit-scrollbar-track {
   background: #000000;
-  border-left: 1px solid #1a1a1a;
+  border-left: 2px solid #1a1a1a;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--color-orange);
-  border: 2px solid #000000;
+  border: 3px solid #000000;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #e63500;
 }
 
-/* Universal custom layout helpers */
 .mono-tag {
   font-family: var(--font-mono);
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.section-pad {
+  padding: 3rem 1.25rem;
+}
+
+@media (min-width: 640px) {
+  .section-pad {
+    padding: 4rem 2rem;
+  }
+}
+
+@media (min-width: 768px) {
+  .section-pad {
+    padding: 5rem 3rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .section-pad {
+    padding: 6rem 4rem;
+  }
+}
+
+.brutalist-border-b {
+  border-bottom: var(--border-w) solid;
+}
+
+.brutalist-border-t {
+  border-top: var(--border-w) solid;
+}
+
+.brutalist-border {
+  border: var(--border-w) solid;
+}
+
+.brutalist-shadow {
+  box-shadow: var(--shadow-offset) var(--shadow-offset) 0px;
+}
+
+.brutalist-shadow-lg {
+  box-shadow: 8px 8px 0px;
+}
+
+a {
+  text-decoration: none;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
 }

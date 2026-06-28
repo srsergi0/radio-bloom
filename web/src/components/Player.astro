@@ -6,31 +6,26 @@ interface Props {
 const { isEn = true } = Astro.props;
 ---
 
-<div class="synth-player bg-black border-[3px] border-white p-5 sm:p-7 flex flex-col gap-5 sm:gap-6 relative shadow-[6px_6px_0px_#ffffff] hover:shadow-[8px_8px_0px_#ffffff] transition-all hover:-translate-x-0.5 hover:-translate-y-0.5" id="live-player-card">
-  <!-- Top Status Panel (Monospace Hardware Stats) -->
-  <div class="flex justify-between items-center border-b-2 border-white pb-3">
-    <div class="flex items-center gap-2">
-      <span class="status-indicator w-2 h-2 bg-green-500 rounded-full shadow-[0_0_6px_#00ff00] animate-pulse"></span>
+<div class="synth-player bg-black border-[3px] border-white p-5 sm:p-6 flex flex-col gap-5 relative shadow-[8px_8px_0px_#ffffff] hover:shadow-[10px_10px_0px_#ffffff] transition-all hover:-translate-x-0.5 hover:-translate-y-0.5" id="live-player-card">
+  <div class="flex justify-between items-center border-b-[3px] border-white pb-4">
+    <div class="flex items-center gap-2.5">
+      <span class="status-indicator w-2.5 h-2.5 bg-green-500 rounded-full shadow-[0_0_8px_#00ff00] animate-pulse"></span>
       <span class="text-orange font-bold font-mono text-[10px] sm:text-xs">SIGNAL: ONLINE</span>
     </div>
-    <div class="flex gap-3 sm:gap-4">
-      <span class="text-orange font-bold font-mono text-[10px] sm:text-xs opacity-70">320KBPS / MP3</span>
+    <div class="flex gap-4">
+      <span class="text-orange font-bold font-mono text-[10px] sm:text-xs opacity-70">320KBPS</span>
       <span class="text-orange font-bold font-mono text-[10px] sm:text-xs opacity-70">104.2MHZ</span>
     </div>
   </div>
 
-  <!-- Main Hardware Screen -->
-  <div class="bg-[#07040a] border-2 border-white p-3 sm:p-4 flex flex-col gap-3 sm:gap-4">
-    <!-- Scrolling LED Marquee for track info -->
-    <div class="overflow-hidden whitespace-nowrap border-2 border-white bg-black p-2 text-orange font-mono text-xs sm:text-sm font-bold">
+  <div class="bg-[#07040a] border-[3px] border-white p-3 sm:p-4 flex flex-col gap-3">
+    <div class="overflow-hidden whitespace-nowrap border-[3px] border-white bg-black p-2.5 text-orange font-mono text-xs sm:text-sm font-bold">
       <div class="ticker-content" id="track-marquee">
         {isEn ? "LOADING LIVE SIGNAL BROADCAST..." : "CARGANDO EMISIÓN EN DIRECTO..."}
       </div>
     </div>
 
-    <!-- LED Spectrometer Matrix (6 rows x 12 columns) -->
     <div class="led-matrix flex justify-between h-12 opacity-15 transition-opacity duration-300" id="led-matrix">
-      <!-- 12 Columns -->
       {Array.from({ length: 12 }).map((_, colIdx) => (
         <div class="matrix-col" style={`--col-delay: ${colIdx * 0.15}s`}>
           {Array.from({ length: 6 }).map((_, cellIdx) => (
@@ -41,48 +36,40 @@ const { isEn = true } = Astro.props;
     </div>
   </div>
 
-  <!-- Hardware Controls Panel -->
-  <div class="grid grid-cols-[80px_1fr] sm:grid-cols-[80px_100px_1fr] gap-4 sm:gap-6 items-center">
-    <!-- Giant mechanical play key -->
-    <button class="synth-play-key w-20 h-20 bg-orange border-[3px] border-black cursor-pointer relative p-0 transition-all shadow-[4px_4px_0px_#ffffff] hover:shadow-[5px_5px_0px_#ffffff] hover:-translate-x-0.5 hover:-translate-y-0.5 active:translate-x-0.5 active:translate-y-0.5 active:shadow-[1px_1px_0px_#ffffff]" id="play-btn" aria-label="Play/Pause">
-      <div class="w-full h-full flex justify-center items-center text-black">
-        <svg class="w-8 h-8" id="play-icon" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M8 5v14l11-7z"/>
-        </svg>
-        <svg class="w-8 h-8 hidden" id="pause-icon" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
-        </svg>
-      </div>
-    </button>
+  <div class="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4 sm:gap-6 items-center">
+    <div class="flex sm:flex-col items-center gap-4 sm:gap-3">
+      <button class="synth-play-key w-20 h-20 bg-orange border-[3px] border-white cursor-pointer relative p-0 transition-all shadow-[5px_5px_0px_#ffffff] hover:shadow-[6px_6px_0px_#ffffff] hover:-translate-x-0.5 hover:-translate-y-0.5 active:translate-x-0.5 active:translate-y-0.5 active:shadow-[2px_2px_0px_#ffffff]" id="play-btn" aria-label="Play/Pause">
+        <div class="w-full h-full flex justify-center items-center text-black">
+          <svg class="w-8 h-8" id="play-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+          <svg class="w-8 h-8 hidden" id="pause-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+          </svg>
+        </div>
+      </button>
 
-    <!-- Fader / Volume Control Section -->
-    <div class="hidden sm:flex flex-col gap-2">
-      <div class="flex justify-between items-center text-white font-mono text-xs font-bold">
-        <span>VOL</span>
-        <button class="mute-btn bg-none border-none text-neutral-400 cursor-pointer p-0 hover:text-white" id="volume-btn" aria-label="Mute/Unmute">
+      <div class="hidden sm:flex flex-col items-center gap-2">
+        <button class="mute-btn bg-none border-none text-neutral-400 cursor-pointer p-0 hover:text-white transition-colors" id="volume-btn" aria-label="Mute/Unmute">
           <svg class="w-4 h-4" id="volume-icon" viewBox="0 0 24 24" fill="currentColor">
             <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
           </svg>
         </button>
-      </div>
-      <div class="h-10 flex items-center">
         <input type="range" min="0" max="1" step="0.05" value="0.8" class="synth-slider w-full h-1 bg-white border border-black outline-none appearance-none" id="volume-slider" aria-label="Volume Slider" />
       </div>
     </div>
 
-    <!-- Description Block -->
-    <div class="flex flex-col justify-center sm:border-l-2 sm:border-white sm:pl-6 h-20 min-w-0">
+    <div class="flex flex-col justify-center sm:border-l-[3px] sm:border-white sm:pl-6">
       <div class="show-meta min-w-0">
-        <span class="now-playing-tag font-mono text-[10px] text-orange block mb-0.5">[ {isEn ? "ACTIVE SHOW" : "PROGRAMA ACTIVO"} ]</span>
-        <h4 id="track-title-text" class="text-base sm:text-lg font-black uppercase text-white tracking-tight truncate leading-tight">Morning Bloom</h4>
-        <p id="track-artist-text" class="font-mono text-xs text-neutral-400 truncate">con Samantha Lee</p>
+        <span class="now-playing-tag font-mono text-[10px] text-orange block mb-1">[ {isEn ? "ACTIVE SHOW" : "PROGRAMA ACTIVO"} ]</span>
+        <h4 id="track-title-text" class="text-lg sm:text-xl font-black uppercase text-white tracking-tight truncate leading-none">Morning Bloom</h4>
+        <p id="track-artist-text" class="font-mono text-xs text-neutral-400 truncate mt-1">con Samantha Lee</p>
       </div>
     </div>
   </div>
 </div>
 
 <style>
-  /* Casing Status Indicator Pulse */
   @keyframes pulse-indicator {
     from { opacity: 0.4; }
     to { opacity: 1; }
@@ -92,7 +79,6 @@ const { isEn = true } = Astro.props;
     animation: pulse-indicator 1.5s infinite alternate;
   }
 
-  /* LED Ticker Marquee text animation */
   .ticker-content {
     display: inline-block;
     padding-left: 100%;
@@ -104,10 +90,9 @@ const { isEn = true } = Astro.props;
     100% { transform: translate3d(-100%, 0, 0); }
   }
 
-  /* LED Matrix spectrometer configuration */
   .matrix-col {
     display: flex;
-    flex-direction: column-reverse; /* stack from bottom up */
+    flex-direction: column-reverse;
     gap: 2px;
     width: 7%;
   }
@@ -117,19 +102,16 @@ const { isEn = true } = Astro.props;
     background-color: #1a1523;
   }
 
-  /* When playing, columns bounce */
   .led-matrix.active .matrix-col .matrix-cell {
     animation: col-flash 1s steps(6) infinite alternate;
     animation-delay: var(--col-delay);
   }
 
-  /* Cells light up progressively based on index */
   @keyframes col-flash {
     0% { background-color: #1a1523; }
     100% { background-color: var(--color-orange); }
   }
 
-  /* Color coding to top rows of LED matrix */
   .led-matrix.active .matrix-cell:nth-child(n+5) {
     animation-name: col-flash-alert;
   }
@@ -139,7 +121,6 @@ const { isEn = true } = Astro.props;
     100% { background-color: #ff3b00; }
   }
 
-  /* Brutalist range slider webkit overrides */
   .synth-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
@@ -160,9 +141,10 @@ const { isEn = true } = Astro.props;
   }
 </style>
 
-
 <script>
-  const STREAM_URL = "https://radio-bloom.taptapp.xyz/radiobloom.mp3";
+  const STREAM_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:9876/radiobloom.mp3'
+    : '/radiobloom.mp3';
   const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:9876'
     : '';
@@ -175,7 +157,7 @@ const { isEn = true } = Astro.props;
   const pauseIcon = document.getElementById("pause-icon");
   const ledMatrix = document.getElementById("led-matrix");
   const trackMarquee = document.getElementById("track-marquee");
-  
+
   const volumeBtn = document.getElementById("volume-btn");
   const volumeIcon = document.getElementById("volume-icon");
   const volumeSlider = document.getElementById("volume-slider") as HTMLInputElement;
@@ -192,7 +174,7 @@ const { isEn = true } = Astro.props;
   function togglePlay() {
     if (isPlaying) {
       audio.pause();
-      audio.src = ""; 
+      audio.src = "";
       isPlaying = false;
       playIcon?.classList.remove("hidden");
       pauseIcon?.classList.add("hidden");
@@ -249,20 +231,19 @@ const { isEn = true } = Astro.props;
         if (json.ok && json.data) {
           const title = json.data.title || "Morning Bloom";
           const artist = json.data.artist || "Samantha Lee";
-          
-          // Build ticker message
+
           const lang = document.documentElement.lang;
           const message = lang === 'en'
             ? `LIVE NOW: ${title.toUpperCase()} BY ${artist.toUpperCase()} - SIGNAL STATUS: EXCELLENT - STREAM RATE: 320 KBPS STABLE - `
             : `EN EMISIÓN: ${title.toUpperCase()} POR ${artist.toUpperCase()} - ESTADO DE SEÑAL: EXCELENTE - TASA DE BITS: 320 KBPS ESTABLE - `;
-          
+
           if (trackMarquee && trackMarquee.innerText !== message) {
             trackMarquee.innerText = message;
           }
           if (trackTitleText && trackTitleText.innerText !== title) {
             trackTitleText.innerText = title;
           }
-          
+
           const prefix = lang === 'en' ? 'with' : 'con';
           const fullArtistText = `${prefix} ${artist}`;
           if (trackArtistText && trackArtistText.innerText !== fullArtistText) {

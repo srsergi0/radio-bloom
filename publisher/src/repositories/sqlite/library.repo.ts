@@ -20,8 +20,20 @@ export class LibraryRepository {
   public createDownload(url: string): DownloadJob {
     const id = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
-    this.db.drizzle.insert(schema.downloads).values({ id, url, status: "downloading", startedAt: now }).run();
-    return { id, url, status: "downloading", startedAt: now };
+    this.db.drizzle.insert(schema.downloads).values({ id, url, status: "queued", startedAt: now }).run();
+    return { id, url, status: "queued", startedAt: now };
+  }
+
+  public getNextQueuedDownload(): DownloadJob | null {
+    const row = this.db.drizzle
+      .select()
+      .from(schema.downloads)
+      .where(eq(schema.downloads.status, "queued"))
+      .orderBy(schema.downloads.startedAt)
+      .limit(1)
+      .get();
+    if (!row) return null;
+    return this.mapDownloadRow(row);
   }
 
   public updateDownload(id: string, updates: Partial<DownloadJob & { result: Track }>): void {

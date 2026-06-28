@@ -137,7 +137,7 @@ const mockDbRaw = {
   getLibraryTrackByUrl: mock((url: string) => {
     return mockSongs.find((t) => t.spotifyUrl === url) || null;
   }),
-  createDownload: mock((url: string) => ({ id: "dl_1", url, status: "downloading", startedAt: new Date().toISOString() })),
+  createDownload: mock((url: string) => ({ id: "dl_1", url, status: "queued", startedAt: new Date().toISOString() })),
   updateDownload: mock(() => {}),
   getDownload: mock((id: string) => null),
   getAllDownloads: mock(() => []),

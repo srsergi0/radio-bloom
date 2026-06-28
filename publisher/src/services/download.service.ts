@@ -7,6 +7,8 @@ import { statSync } from "node:fs";
 
 export class DownloadService {
   private readonly onCompleteCallbacks = new Map<string, (track: Track) => Promise<void>>();
+  private processingCount = 0;
+  private readonly maxConcurrency = 1;
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
@@ -14,6 +16,120 @@ export class DownloadService {
     private readonly ffprobeClient: FfprobeClient,
     private readonly songsDir: string
   ) {}
+
+  public init(): void {
+    console.log("[DownloadService] Initializing queue service...");
+    // Find downloads that were left in "downloading" status (stuck due to previous process crash) and mark them as error
+    try {
+      const downloads = this.libraryRepo.getAllDownloads();
+      for (const job of downloads) {
+        if (job.status === "downloading") {
+          console.log(`[DownloadService] Cleaning up stuck downloading job: ${job.id}`);
+          this.libraryRepo.updateDownload(job.id, {
+            status: "error",
+            error: "Interrupted by server restart",
+            completedAt: new Date().toISOString(),
+          });
+        }
+      }
+    } catch (err: any) {
+      console.error("[DownloadService] Error cleaning up stuck downloads:", err.message);
+    }
+
+    // Trigger queue processing on startup to resume any remaining queued tasks
+    this.triggerQueueProcess();
+  }
+
+  private triggerQueueProcess(): void {
+    setTimeout(() => {
+      this.processQueue().catch((err) => {
+        console.error("[DownloadService] Error in processQueue loop:", err.message);
+      });
+    }, 0);
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.processingCount >= this.maxConcurrency) {
+      return;
+    }
+
+    const nextJob = this.libraryRepo.getNextQueuedDownload();
+    if (!nextJob) {
+      return;
+    }
+
+    this.processingCount++;
+    console.log(`[DownloadService] Processing job ${nextJob.id} from queue for URL: ${nextJob.url}`);
+
+    try {
+      // Mark it as downloading in the DB
+      this.libraryRepo.updateDownload(nextJob.id, { status: "downloading" });
+
+      const result = await this.spotiflacClient.download(nextJob.url, (line) => {
+        console.log(`[DownloadService] [spotiflac-log] ${line}`);
+      });
+
+      if (result.error || !result.filename) {
+        throw new Error(result.error || "No filename returned from spotiflac");
+      }
+
+      const latestFile = result.filename;
+      const filePath = join(this.songsDir, latestFile);
+      const name = basename(latestFile, extname(latestFile));
+      const fileStat = statSync(filePath);
+
+      const meta = this.ffprobeClient.extractMetadata(filePath);
+
+      const track: Track = {
+        id: `lib_${Date.now()}`,
+        type: "song",
+        file: `songs/${latestFile}`,
+        title: meta.title || name,
+        artist: meta.artist || undefined,
+        album: meta.album || undefined,
+        duration: meta.duration || Math.floor(fileStat.size / ((192 * 1000) / 8)),
+        spotifyUrl: nextJob.url,
+        addedAt: new Date().toISOString(),
+      };
+
+      this.libraryRepo.upsertTrack({
+        file: track.file,
+        type: "song",
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        duration: track.duration,
+        spotify_url: nextJob.url,
+        size: fileStat.size,
+        mtime: fileStat.mtime.toISOString(),
+      });
+
+      this.libraryRepo.updateDownload(nextJob.id, {
+        status: "done",
+        result: track,
+        completedAt: new Date().toISOString(),
+      });
+
+      console.log(`[DownloadService] Spotify download job ${nextJob.id} done: ${track.title}`);
+
+      const cb = this.onCompleteCallbacks.get(nextJob.id);
+      if (cb) {
+        this.onCompleteCallbacks.delete(nextJob.id);
+        await cb(track);
+      }
+    } catch (err: any) {
+      console.error(`[DownloadService] Spotify download job ${nextJob.id} failed:`, err.message);
+      this.libraryRepo.updateDownload(nextJob.id, {
+        status: "error",
+        error: err.message,
+        completedAt: new Date().toISOString(),
+      });
+    } finally {
+      this.processingCount--;
+      // Always trigger another loop in case there are more queued items
+      this.triggerQueueProcess();
+    }
+  }
 
   public async downloadFromSpotify(
     url: string,
@@ -24,72 +140,10 @@ export class DownloadService {
       this.onCompleteCallbacks.set(job.id, onComplete);
     }
 
-    console.log(`[DownloadService] Starting Spotify download job ${job.id} for: ${url}`);
+    console.log(`[DownloadService] Enqueued Spotify download job ${job.id} for: ${url}`);
 
-    // Execute the download asynchronously in the background
-    (async () => {
-      try {
-        const result = await this.spotiflacClient.download(url, (line) => {
-          console.log(`[DownloadService] [spotiflac-log] ${line}`);
-        });
-
-        if (result.error || !result.filename) {
-          throw new Error(result.error || "No filename returned from spotiflac");
-        }
-
-        const latestFile = result.filename;
-        const filePath = join(this.songsDir, latestFile);
-        const name = basename(latestFile, extname(latestFile));
-        const fileStat = statSync(filePath);
-
-        const meta = this.ffprobeClient.extractMetadata(filePath);
-
-        const track: Track = {
-          id: `lib_${Date.now()}`,
-          type: "song",
-          file: `songs/${latestFile}`,
-          title: meta.title || name,
-          artist: meta.artist || undefined,
-          album: meta.album || undefined,
-          duration: meta.duration || Math.floor(fileStat.size / ((192 * 1000) / 8)),
-          spotifyUrl: url,
-          addedAt: new Date().toISOString(),
-        };
-
-        this.libraryRepo.upsertTrack({
-          file: track.file,
-          type: "song",
-          title: track.title,
-          artist: track.artist,
-          album: track.album,
-          duration: track.duration,
-          spotify_url: url,
-          size: fileStat.size,
-          mtime: fileStat.mtime.toISOString(),
-        });
-
-        this.libraryRepo.updateDownload(job.id, {
-          status: "done",
-          result: track,
-          completedAt: new Date().toISOString(),
-        });
-
-        console.log(`[DownloadService] Spotify download job ${job.id} done: ${track.title}`);
-
-        const cb = this.onCompleteCallbacks.get(job.id);
-        if (cb) {
-          this.onCompleteCallbacks.delete(job.id);
-          await cb(track);
-        }
-      } catch (err: any) {
-        console.error(`[DownloadService] Spotify download job ${job.id} failed:`, err.message);
-        this.libraryRepo.updateDownload(job.id, {
-          status: "error",
-          error: err.message,
-          completedAt: new Date().toISOString(),
-        });
-      }
-    })();
+    // Trigger queue processing asynchronously
+    this.triggerQueueProcess();
 
     return this.getDownloadJob(job.id);
   }

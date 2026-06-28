@@ -78,6 +78,7 @@ const mcpService = new McpService(
 
 // Initialize active services
 libraryService.init();
+downloadService.init();
 
 // ============================================================
 // 4. API & Static Router Instantiation

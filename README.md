@@ -92,22 +92,25 @@ Los contenedores usan `container_name` fijo (`radio-liquidsoap`, `radio-publishe
 
 ### Configuracion en Coolify
 
-#### 1. Crear la red Docker y directorios (una sola vez en el servidor)
+#### 1. Crear volumes y red (una sola vez en el servidor)
 
 ```bash
 docker network create radio-net
-mkdir -p /data/radio/music/songs
-mkdir -p /data/radio/music/interludios
-mkdir -p /data/radio/config
-mkdir -p /data/radio/publisher-data
+docker volume create radio-music
+docker volume create radio-interludios
+docker volume create radio-publisher-data
 ```
 
-#### 2. Copiar archivos de configuración al servidor
+#### 2. Copiar config de liquidsoap
 
 ```bash
-# Copiar liquidsoap/radio.liq al servidor
-scp liquidsoap/radio.liq root@TU_SERVIDOR:/data/radio/config/radio.liq
+# Copiar radio.liq al volume
+docker run --rm -v /data/radio/config:/config -v radio-music:/music alpine sh -c "mkdir -p /config"
+scp liquidsoap/radio.liq root@TU_SERVIDOR:/tmp/radio.liq
+docker run --rm -v /data/radio/config:/config -v /tmp:/tmp alpine cp /tmp/radio.liq /config/radio.liq
 ```
+
+> **Nota:** Solo necesitas copiar `radio.liq` una vez. Si lo cambias, repite el paso.
 
 #### 2. Crear los dos resources en Coolify
 

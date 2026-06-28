@@ -16,8 +16,9 @@ services:
       - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
       - DOWNLOADER_URL=http://radio-downloader:4002
     volumes:
-      - /data/radio/music:/app/music
-      - /data/radio/publisher-data:/app/data
+      - radio-music:/app/music/songs
+      - radio-interludios:/app/music/interludios
+      - radio-publisher-data:/app/data
     networks:
       - radio-net
 
@@ -31,9 +32,17 @@ services:
       - PORT=4002
       - SONGS_DIR=/music/songs
     volumes:
-      - /data/radio/music/songs:/music/songs
+      - radio-music:/music/songs
     networks:
       - radio-net
+
+volumes:
+  radio-music:
+    external: true
+  radio-interludios:
+    external: true
+  radio-publisher-data:
+    external: true
 
 networks:
   radio-net:

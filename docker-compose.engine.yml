@@ -13,7 +13,7 @@ services:
       - radio-net
 
   ftp:
-    image: stilliard/pure-ftpd:hardened
+    build: ./ftp
     container_name: radio-ftp
     restart: unless-stopped
     ports:

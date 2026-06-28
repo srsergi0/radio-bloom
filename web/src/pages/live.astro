@@ -63,6 +63,16 @@ import Layout from "../layouts/Layout.astro";
 
   async function loadDevices() {
     try {
+      // Request permission first to get device labels
+      let permStream = null;
+      try {
+        permStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        });
+      } catch {
+        // Permission denied or no device — list what we can
+      }
+
       const devices = await navigator.mediaDevices.enumerateDevices();
       const audioInputs = devices.filter((d) => d.kind === "audioinput");
       deviceSelect.innerHTML = '<option value="">— Select a device —</option>';
@@ -72,6 +82,10 @@ import Layout from "../layouts/Layout.astro";
         opt.textContent = d.label || `Microphone ${deviceSelect.options.length}`;
         deviceSelect.appendChild(opt);
       }
+
+      // Release temp stream
+      if (permStream) for (const t of permStream.getTracks()) t.stop();
+
       if (audioInputs.length === 0) {
         statusText.textContent = "No audio input devices found";
         statusText.className = "text-red-400";

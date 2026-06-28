@@ -2,7 +2,6 @@ import { useState, useRef, useCallback } from "react";
 
 const getMp3Encoder = () => (window as any).lamejs?.Mp3Encoder;
 
-const SAMPLE_RATE = 44100;
 const CHANNELS = 2;
 const Kbps = 320;
 const PCM_BLOCK = 1152;
@@ -122,11 +121,11 @@ export default function LiveStream() {
       cleanup();
       return;
     }
-    const encoder = new Mp3Encoder(CHANNELS, SAMPLE_RATE, Kbps);
+    const encoder = new Mp3Encoder(CHANNELS, ctx.sampleRate, Kbps);
     encoderRef.current = encoder;
 
-    // 4. Audio pipeline with larger buffer for stability
-    const ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+    // 4. Audio pipeline — use default sample rate (matches source)
+    const ctx = new AudioContext();
     ctxRef.current = ctx;
 
     const source = ctx.createMediaStreamSource(mediaStream);
@@ -134,6 +133,10 @@ export default function LiveStream() {
 
     const processor = ctx.createScriptProcessor(16384, CHANNELS, CHANNELS);
     processorRef.current = processor;
+
+    // Mute output to prevent echo (graph must reach destination to process)
+    const mute = ctx.createGain();
+    mute.gain.value = 0;
 
     processor.onaudioprocess = (event) => {
       const input = event.inputBuffer;
@@ -161,10 +164,11 @@ export default function LiveStream() {
     };
 
     source.connect(processor);
-    processor.connect(ctx.destination);
+    processor.connect(mute);
+    mute.connect(ctx.destination);
 
     setStreaming(true);
-    setFormat("MP3 320kbps 44100Hz");
+    setFormat(`MP3 ${Kbps}kbps ${ctx.sampleRate}Hz`);
     setStatus("Streaming live");
     startTimer();
   };

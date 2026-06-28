@@ -1,17 +1,101 @@
 import "./env";
-import api from "./api";
-import { initDB } from "./db";
-import { initLibrary } from "./library";
-import { initLiquidsoap } from "./liquidsoap";
-import { createHttpTransport } from "./mcp";
+import { resolve } from "node:path";
+import { createApiRouter } from "./api/router";
+import { DatabaseConnection } from "./infrastructure/database";
+import { ConfigRepository } from "./repositories/sqlite/config.repo";
+import { LibraryRepository } from "./repositories/sqlite/library.repo";
+import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
+import { FfprobeClient } from "./infrastructure/ffprobe.client";
+import { SpotdlClient } from "./infrastructure/spotdl.client";
+import { TelnetClient } from "./infrastructure/telnet.client";
+import { ConfigService } from "./services/config.service";
+import { LibraryService } from "./services/library.service";
+import { LiquidsoapService } from "./services/liquidsoap.service";
+import { DownloadService } from "./services/download.service";
+import { McpService } from "./services/mcp.service";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
+const DATA_DIR = process.env.DATA_DIR || "/app/data";
+const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
+const SONGS_DIR = resolve(MUSIC_DIR, "songs");
+const MUSIC_MOUNT = process.env.MUSIC_MOUNT || "/app/music";
+
 const LIQUIDSOAP_HOST = process.env.LIQUIDSOAP_HOST || "liquidsoap";
+const LIQUIDSOAP_TELNET_PORT = parseInt(process.env.LIQUIDSOAP_TELNET_PORT || "1234", 10);
 const LIQUIDSOAP_HARBOUR_PORT = process.env.LIQUIDSOAP_HARBOUR_PORT || "8000";
 const STREAM_URL = `http://${LIQUIDSOAP_HOST}:${LIQUIDSOAP_HARBOUR_PORT}/radiobloom.mp3`;
 
-// Broadcaster class that maintains a sliding memory buffer of the stream
-// and sends it to new clients immediately upon connection (Burst-on-Connect)
+const DIST_DIR = process.env.NODE_ENV === "production"
+  ? "/app/web/dist"
+  : resolve(import.meta.dirname || "", "../../web/dist");
+
+// ============================================================
+// 1. Infrastructure & Connections Instantiation
+// ============================================================
+const dbPath = resolve(DATA_DIR, "radio.db");
+const dbConnection = new DatabaseConnection(dbPath);
+
+const telnetClient = new TelnetClient(LIQUIDSOAP_HOST, LIQUIDSOAP_TELNET_PORT);
+const ffprobeClient = new FfprobeClient();
+const spotdlClient = new SpotdlClient(SONGS_DIR);
+
+// ============================================================
+// 2. Repositories Instantiation (Data Access)
+// ============================================================
+const configRepo = new ConfigRepository(dbConnection);
+const libraryRepo = new LibraryRepository(dbConnection);
+const playlistRepo = new PlaylistRepository(dbConnection);
+
+// ============================================================
+// 3. Services & Use Cases Instantiation
+// ============================================================
+const configService = new ConfigService(configRepo);
+const liquidsoapService = new LiquidsoapService(telnetClient, ffprobeClient, MUSIC_MOUNT);
+
+// LibraryService deletes should clear the Liquidsoap queue
+const libraryService = new LibraryService(
+  libraryRepo,
+  ffprobeClient,
+  MUSIC_DIR,
+  async () => {
+    await liquidsoapService.queueClear();
+  }
+);
+
+const downloadService = new DownloadService(
+  libraryRepo,
+  spotdlClient,
+  ffprobeClient,
+  SONGS_DIR
+);
+
+const mcpService = new McpService(
+  libraryRepo,
+  playlistRepo,
+  libraryService,
+  liquidsoapService
+);
+
+// Initialize active services
+libraryService.init();
+
+// ============================================================
+// 4. API & Static Router Instantiation
+// ============================================================
+const apiRouter = createApiRouter({
+  configService,
+  libraryService,
+  liquidsoapService,
+  downloadService,
+  playlistRepo,
+  mcpService,
+  musicDir: MUSIC_DIR,
+  distDir: DIST_DIR,
+});
+
+// ============================================================
+// 5. Burst Buffer Stream Broadcaster
+// ============================================================
 class StreamBroadcaster {
   private buffer: Uint8Array[] = [];
   private maxBufferBytes = 320 * 1024; // 320 KB (approx 8 seconds of audio at 320kbps)
@@ -55,7 +139,7 @@ class StreamBroadcaster {
             }
           }
 
-          // Distribute the chunk to all active client streams
+          // Distribute chunk to active clients
           for (const client of this.clients) {
             try {
               client.enqueue(value);
@@ -64,21 +148,20 @@ class StreamBroadcaster {
             }
           }
         }
-      } catch (err) {
-        console.error("[Broadcaster] Error in upstream stream connection:", err);
+      } catch (err: any) {
+        console.error("[Broadcaster] Error in upstream stream connection:", err.message);
       }
 
-      // Reset buffer on error to prevent old/stale data looping
+      // Reset buffer on error to prevent old data looping
       this.buffer = [];
       this.bufferBytes = 0;
-      
+
       // Wait 2 seconds before attempting reconnection
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
 
   public registerClient(controller: ReadableStreamDefaultController) {
-    // 1. Deliver the burst (buffered historical audio) instantly
     for (const chunk of this.buffer) {
       try {
         controller.enqueue(chunk);
@@ -86,7 +169,6 @@ class StreamBroadcaster {
         return;
       }
     }
-    // 2. Add client to set for receiving live chunks
     this.clients.add(controller);
     console.log(`[Broadcaster] Client connected. Total active clients: ${this.clients.size}`);
   }
@@ -99,12 +181,15 @@ class StreamBroadcaster {
 
 const broadcaster = new StreamBroadcaster();
 
+// ============================================================
+// 6. HTTP Server (Bun.serve)
+// ============================================================
 const _server = Bun.serve({
   port: PORT,
   async fetch(req) {
     const url = new URL(req.url);
 
-    // Proxy streaming endpoint
+    // Audio stream route
     if (url.pathname === "/radiobloom.mp3") {
       let clientController: ReadableStreamDefaultController | null = null;
       const stream = new ReadableStream({
@@ -131,46 +216,13 @@ const _server = Bun.serve({
       });
     }
 
-    // API routes
-    return api.fetch(req);
+    // Delegate REST, static files, and MCP to Hono
+    return apiRouter.fetch(req);
   },
 });
 
 console.log(`[server] Radio Bloom API + Stream on port ${PORT}`);
 console.log(`[server] Stream: http://localhost:${PORT}/radiobloom.mp3`);
 console.log(`[server] API:    http://localhost:${PORT}/api/`);
-console.log(`[server] Endpoints:`);
-console.log(`  GET  /radiobloom.mp3          ← Stream de audio`);
-console.log(`  GET  /api/health`);
-console.log(`  GET  /api/system/status`);
-console.log(`  GET  /api/system/config`);
-console.log(`  PUT  /api/system/config`);
-console.log(`  GET  /api/library`);
-console.log(`  GET  /api/library/songs`);
-console.log(`  GET  /api/library/interludios`);
-console.log(`  GET  /api/library/stats`);
-console.log(`  GET  /api/library/search?q=...`);
-console.log(`  GET  /api/library/track?file=...`);
-console.log(`  DEL  /api/library/track?file=...`);
-console.log(`  POST /api/library/scan`);
-console.log(`  GET  /api/stream`);
-console.log(`  POST /api/stream/play`);
-console.log(`  POST /api/stream/pause`);
-console.log(`  GET  /api/stream/skip`);
-console.log(`  POST /api/stream/skip`);
-console.log(`  POST /api/stream/reload`);
-console.log(`  POST /api/stream/queue     (body: {"url":"..."})`);
-console.log(`  GET  /api/stream/queue`);
-console.log(`  DEL  /api/stream/queue`);
-console.log(`  DEL  /api/stream/queue/:rid`);
-console.log(`  POST /api/stream/queue/insert  (body: {"index", "url"})`);
-console.log(`  POST /api/stream/play/url  (body: {"url":"..."})`);
-console.log(`  POST /api/library/:id/play`);
-console.log(`  ALL  /mcp                     ← MCP protocol (Streamable HTTP)`);
-
-initDB();
-initLibrary();
-initLiquidsoap();
-createHttpTransport();
-
-console.log(`[server] Radio Bloom ready`);
+console.log(`[server] MCP:    http://localhost:${PORT}/mcp`);
+console.log(`[server] Radio Bloom Composition Root ready`);

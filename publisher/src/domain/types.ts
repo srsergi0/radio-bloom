@@ -14,8 +14,12 @@ export interface StreamStatus {
   connected: boolean;
   playing: boolean;
   currentTrack: string | null;
-  remaining: number;
-  uptime: number;
+  artist: string | null;
+  title: string | null;
+  uptime: string;
+  duration: number;
+  elapsed: number;
+  metadata?: Record<string, string>;
 }
 
 export interface DownloadJob {

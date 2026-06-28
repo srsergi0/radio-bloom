@@ -1,0 +1,450 @@
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { serveStatic } from "hono/bun";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { ConfigService } from "../services/config.service";
+import { LibraryService } from "../services/library.service";
+import { LiquidsoapService } from "../services/liquidsoap.service";
+import { DownloadService } from "../services/download.service";
+import { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
+import { McpService } from "../services/mcp.service";
+
+export interface ApiDependencies {
+  configService: ConfigService;
+  libraryService: LibraryService;
+  liquidsoapService: LiquidsoapService;
+  downloadService: DownloadService;
+  playlistRepo: PlaylistRepository;
+  mcpService: McpService;
+  musicDir: string;
+  distDir: string;
+}
+
+export function createApiRouter(deps: ApiDependencies): Hono {
+  const app = new Hono();
+
+  // CORS middleware configuration
+  app.use(
+    "*",
+    cors({
+      exposeHeaders: ["mcp-session-id", "mcp-protocol-version"],
+    })
+  );
+
+  // ============================================================
+  // SYSTEM
+  // ============================================================
+
+  app.get("/api/system/status", async (c) => {
+    const liquidsoapConnected = deps.liquidsoapService.isConnected();
+    const config = deps.configService.get();
+    return c.json({
+      ok: true,
+      data: {
+        liquidsoap: {
+          connected: liquidsoapConnected,
+          telnetPort: parseInt(process.env.LIQUIDSOAP_TELNET_PORT || "1234", 10),
+          harbourPort: parseInt(process.env.LIQUIDSOAP_HARBOUR_PORT || "8000", 10),
+          streamUrl: `http://localhost:${process.env.LIQUIDSOAP_HARBOUR_PORT || "8000"}/radiobloom.mp3`,
+        },
+        config,
+      },
+    });
+  });
+
+  app.get("/api/system/config", (c) => {
+    return c.json({ ok: true, data: deps.configService.get() });
+  });
+
+  app.put("/api/system/config", async (c) => {
+    const body = await c.req.json();
+    const config = deps.configService.update(body);
+    return c.json({ ok: true, data: config });
+  });
+
+  // ============================================================
+  // LIBRARY
+  // ============================================================
+
+  app.get("/api/library", (c) => {
+    const songs = deps.libraryService.listSongs();
+    const interludios = deps.libraryService.listInterludios();
+    return c.json({ ok: true, data: { songs, interludios } });
+  });
+
+  app.get("/api/library/songs", (c) => {
+    return c.json({ ok: true, data: deps.libraryService.listSongs() });
+  });
+
+  app.get("/api/library/interludios", (c) => {
+    return c.json({ ok: true, data: deps.libraryService.listInterludios() });
+  });
+
+  app.get("/api/library/stats", (c) => {
+    return c.json({ ok: true, data: deps.libraryService.getStats() });
+  });
+
+  app.get("/api/library/track", (c) => {
+    const file = c.req.query("file");
+    if (!file) return c.json({ ok: false, error: "file query param required" }, 400);
+    const track = deps.libraryService.getTrackByFile(file);
+    if (!track) return c.json({ ok: false, error: "Track not found" }, 404);
+    return c.json({ ok: true, data: track });
+  });
+
+  app.delete("/api/library/track", (c) => {
+    const file = c.req.query("file");
+    if (!file) return c.json({ ok: false, error: "file query param required" }, 400);
+    const deleted = deps.libraryService.deleteTrack(file);
+    if (!deleted) return c.json({ ok: false, error: "File not found or could not delete" }, 404);
+    return c.json({ ok: true, data: { deleted: file } });
+  });
+
+  app.post("/api/library/scan", (c) => {
+    const stats = deps.libraryService.scan();
+    return c.json({ ok: true, data: stats });
+  });
+
+  app.get("/api/library/search", (c) => {
+    const q = c.req.query("q");
+    if (!q) return c.json({ ok: false, error: "q query param required" }, 400);
+    const results = deps.libraryRepo.search(q);
+    return c.json({ ok: true, data: results });
+  });
+
+  app.post("/api/library/:id/play", async (c) => {
+    const id = c.req.param("id");
+    const allTracks = [...deps.libraryService.listSongs(), ...deps.libraryService.listInterludios()];
+    console.log("[library/play] id:", id, "total tracks:", allTracks.length);
+    const track = allTracks.find((t) => t.id === id);
+    if (!track) return c.json({ ok: false, error: "Track not found" }, 404);
+    
+    const filepath = `/music/${track.file}`;
+    const ok = await deps.liquidsoapService.playFileNow(filepath);
+    if (!ok) return c.json({ ok: false, error: "Failed to play track" }, 500);
+    return c.json({ ok: true, data: { action: "play", track } });
+  });
+
+  // ============================================================
+  // STREAM CONTROL (Liquidsoap)
+  // ============================================================
+
+  app.get("/api/stream", async (c) => {
+    const status = await deps.liquidsoapService.getStreamStatus();
+    return c.json({ ok: true, data: status });
+  });
+
+  app.post("/api/stream/play", async (c) => {
+    try {
+      await deps.liquidsoapService.startPlayback();
+      return c.json({ ok: true, data: { action: "play" } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  app.post("/api/stream/pause", async (c) => {
+    try {
+      await deps.liquidsoapService.pausePlayback();
+      return c.json({ ok: true, data: { action: "pause" } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  const handleSkip = async (c: any) => {
+    try {
+      await deps.liquidsoapService.skipTrack();
+      await new Promise((r) => setTimeout(r, 500));
+      const status = await deps.liquidsoapService.getStreamStatus();
+      return c.json({ ok: true, data: { action: "skip", nowPlaying: status } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  };
+
+  app.get("/api/stream/skip", handleSkip);
+  app.post("/api/stream/skip", handleSkip);
+
+  app.post("/api/stream/reload", async (c) => {
+    try {
+      await deps.liquidsoapService.reloadPlaylist();
+      return c.json({ ok: true, data: { action: "reload" } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  app.post("/api/stream/queue", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { url } = body;
+      if (!url) return c.json({ ok: false, error: "url is required" }, 400);
+
+      const existing = deps.libraryService.getTrackByUrl(url);
+      if (!existing) {
+        const job = await deps.downloadService.downloadFromSpotify(url, async (track) => {
+          const filepath = `/music/${track.file}`;
+          await deps.liquidsoapService.queuePush(filepath);
+        });
+        const list = await deps.liquidsoapService.queueList();
+        return c.json({ ok: true, data: { source: "download", job, queue: list } });
+      }
+
+      const filepath = `/music/${existing.file}`;
+      const rid = await deps.liquidsoapService.queuePush(filepath);
+      const list = await deps.liquidsoapService.queueList();
+      return c.json({ ok: true, data: { source: "library", rid, track: existing, queue: list } });
+    } catch (err: any) {
+      return c.json(
+        { ok: false, error: err.message, stack: err.stack?.split("\n").slice(0, 5).join("\\n") },
+        500
+      );
+    }
+  });
+
+  app.get("/api/stream/queue", async (c) => {
+    try {
+      const items = await deps.liquidsoapService.queueList();
+      return c.json({ ok: true, data: items });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  app.delete("/api/stream/queue", async (c) => {
+    try {
+      await deps.liquidsoapService.queueClear();
+      return c.json({ ok: true, data: { cleared: true } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  app.delete("/api/stream/queue/:rid", async (c) => {
+    try {
+      const rid = c.req.param("rid");
+      const ok = await deps.liquidsoapService.queueRemove(rid);
+      if (!ok) {
+        return c.json(
+          { ok: false, error: "RID not found in queue (ya pasó a reproducción o no existe)" },
+          404
+        );
+      }
+      const list = await deps.liquidsoapService.queueList();
+      return c.json({ ok: true, data: { removed: rid, queue: list } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  app.post("/api/stream/queue/insert", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { index, url } = body;
+      if (typeof index !== "number" || !url) {
+        return c.json({ ok: false, error: "index and url are required" }, 400);
+      }
+
+      const existing = deps.libraryService.getTrackByUrl(url);
+      if (existing) {
+        const ok = await deps.liquidsoapService.queueInsert(index, `/music/${existing.file}`);
+        if (!ok) return c.json({ ok: false, error: "Failed to insert" }, 500);
+        const list = await deps.liquidsoapService.queueList();
+        return c.json({ ok: true, data: { index, track: existing, queue: list } });
+      }
+
+      const job = await deps.downloadService.downloadFromSpotify(url, async (track) => {
+        await deps.liquidsoapService.queueInsert(index, `/music/${track.file}`).catch(() => {});
+      });
+      return c.json({ ok: true, data: { source: "download", job } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  app.post("/api/stream/play/url", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { url } = body;
+      if (!url) return c.json({ ok: false, error: "url is required" }, 400);
+
+      const existing = deps.libraryService.getTrackByUrl(url);
+      if (existing) {
+        const filepath = `/music/${existing.file}`;
+        await deps.liquidsoapService.sendCommand("queue.flush_and_skip");
+        await new Promise((r) => setTimeout(r, 500));
+        const rid = await deps.liquidsoapService.queuePush(filepath);
+        if (!rid) return c.json({ ok: false, error: "Failed to queue" }, 500);
+        const st = await deps.liquidsoapService.getStreamStatus();
+        const list = await deps.liquidsoapService.queueList();
+        return c.json({
+          ok: true,
+          data: { source: "library", track: existing, nowPlaying: st, queue: list },
+        });
+      }
+
+      const job = await deps.downloadService.downloadFromSpotify(url, async (track) => {
+        const filepath = `/music/${track.file}`;
+        await deps.liquidsoapService.sendCommand("queue.flush_and_skip").catch(() => {});
+        await new Promise((r) => setTimeout(r, 500));
+        await deps.liquidsoapService.queuePush(filepath).catch(() => {});
+      });
+      return c.json({ ok: true, data: { source: "download", job } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  // ============================================================
+  // PLAYLISTS
+  // ============================================================
+
+  app.post("/api/playlists", async (c) => {
+    const body = await c.req.json();
+    if (!body.name) return c.json({ ok: false, error: "name is required" }, 400);
+    const playlist = deps.playlistRepo.create(body.name);
+    return c.json({ ok: true, data: playlist });
+  });
+
+  app.get("/api/playlists", (c) => {
+    return c.json({ ok: true, data: deps.playlistRepo.list() });
+  });
+
+  app.get("/api/playlists/:id", (c) => {
+    const playlist = deps.playlistRepo.get(c.req.param("id"));
+    if (!playlist) return c.json({ ok: false, error: "Playlist not found" }, 404);
+    return c.json({ ok: true, data: playlist });
+  });
+
+  app.put("/api/playlists/:id", async (c) => {
+    const body = await c.req.json();
+    if (!body.name) return c.json({ ok: false, error: "name is required" }, 400);
+    const ok = deps.playlistRepo.updateName(c.req.param("id"), body.name);
+    if (!ok) return c.json({ ok: false, error: "Playlist not found" }, 404);
+    return c.json({ ok: true, data: deps.playlistRepo.get(c.req.param("id")) });
+  });
+
+  app.delete("/api/playlists/:id", (c) => {
+    const ok = deps.playlistRepo.delete(c.req.param("id"));
+    if (!ok) return c.json({ ok: false, error: "Playlist not found" }, 404);
+    return c.json({ ok: true, data: { deleted: c.req.param("id") } });
+  });
+
+  app.post("/api/playlists/:id/tracks", async (c) => {
+    const body = await c.req.json();
+    if (!body.title) return c.json({ ok: false, error: "title is required" }, 400);
+    const track = deps.playlistRepo.addTrack(c.req.param("id"), {
+      type: body.type || "song",
+      file: body.file,
+      title: body.title,
+      artist: body.artist,
+      duration: body.duration || 0,
+      spotifyUrl: body.spotifyUrl,
+    });
+    if (!track) return c.json({ ok: false, error: "Playlist not found" }, 404);
+    return c.json({ ok: true, data: track });
+  });
+
+  app.delete("/api/playlists/:id/tracks/:trackId", (c) => {
+    const ok = deps.playlistRepo.removeTrack(c.req.param("id"), c.req.param("trackId"));
+    if (!ok) return c.json({ ok: false, error: "Track not found" }, 404);
+    return c.json({ ok: true, data: { removed: c.req.param("trackId") } });
+  });
+
+  app.put("/api/playlists/:id/tracks/reorder", async (c) => {
+    const body = await c.req.json();
+    if (!body.trackIds || !Array.isArray(body.trackIds)) {
+      return c.json({ ok: false, error: "trackIds array is required" }, 400);
+    }
+    deps.playlistRepo.reorderTracks(c.req.param("id"), body.trackIds);
+    return c.json({ ok: true, data: deps.playlistRepo.get(c.req.param("id")) });
+  });
+
+  app.post("/api/playlists/:id/load", async (c) => {
+    const playlist = deps.playlistRepo.get(c.req.param("id"));
+    if (!playlist) return c.json({ ok: false, error: "Playlist not found" }, 404);
+
+    const results: { title: string; status: string; error?: string }[] = [];
+    const pending: { track: (typeof playlist.tracks)[0]; filepath: string }[] = [];
+
+    for (const track of playlist.tracks) {
+      const filepath = track.file ? join(deps.musicDir, track.file) : "";
+      if (filepath && existsSync(filepath)) {
+        const rid = await deps.liquidsoapService.queuePush(`/music/${track.file}`);
+        results.push({ title: track.title, status: rid ? "queued" : "error" });
+        continue;
+      }
+      if (track.spotifyUrl) {
+        pending.push({ track, filepath });
+      } else if (track.file) {
+        results.push({ title: track.title, status: "error", error: "File not found" });
+      }
+    }
+
+    // Download pending tracks in batches (2 at a time), queue as they complete
+    const BATCH = 2;
+    for (let i = 0; i < pending.length; i += BATCH) {
+      const batch = pending.slice(i, i + BATCH);
+      const downloads = batch.map((p) =>
+        deps.downloadService.downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
+          const rid = await deps.liquidsoapService.queuePush(`/music/${downloaded.file}`);
+          results.push({ title: downloaded.title, status: rid ? "queued" : "error" });
+        }).catch((err: any) => {
+          results.push({ title: p.track.title, status: "error", error: err.message });
+          return null;
+        })
+      );
+      await Promise.allSettled(downloads);
+    }
+
+    return c.json({ ok: true, data: { playlistId: playlist.id, results } });
+  });
+
+  // ============================================================
+  // HEALTH
+  // ============================================================
+
+  app.get("/api/health", (c) => {
+    return c.json({
+      ok: true,
+      data: {
+        status: "running",
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+      },
+    });
+  });
+
+  // ============================================================
+  // MCP (Model Context Protocol) over HTTP
+  // ============================================================
+
+  app.all("/mcp", async (c) => {
+    try {
+      const response = await deps.mcpService.handleHttpRequest(c.req.raw);
+      return c.newResponse(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  // ============================================================
+  // STATIC FILES (Astro Landing Page)
+  // ============================================================
+
+  app.use("/*", serveStatic({
+    root: deps.distDir,
+    rewriteRequestPath: (path) => {
+      if (path === "/en" || path === "/en/") return "/en/index.html";
+      return path;
+    }
+  }));
+
+  return app;
+}

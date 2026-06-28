@@ -399,22 +399,15 @@ export function createApiRouter(deps: ApiDependencies): Hono {
       }
     }
 
-    // Download pending tracks in batches (2 at a time), queue as they complete
-    const BATCH = 2;
-    for (let i = 0; i < pending.length; i += BATCH) {
-      const batch = pending.slice(i, i + BATCH);
-      const downloads = batch.map((p) =>
-        deps.downloadService
-          .downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
-            const rid = await deps.liquidsoapService.queuePush(`/music/${downloaded.file}`);
-            results.push({ title: downloaded.title, status: rid ? "queued" : "error" });
-          })
-          .catch((err: any) => {
-            results.push({ title: p.track.title, status: "error", error: err.message });
-            return null;
-          })
-      );
-      await Promise.allSettled(downloads);
+    // Fire all pending downloads asynchronously (queued when complete)
+    for (const p of pending) {
+      deps.downloadService.downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
+        const rid = await deps.liquidsoapService.queuePush(`/music/${downloaded.file}`);
+        results.push({ title: downloaded.title, status: rid ? "queued" : "error" });
+      }).catch((err: any) => {
+        results.push({ title: p.track.title, status: "error", error: err.message });
+        return null;
+      });
     }
 
     return c.json({ ok: true, data: { playlistId: playlist.id, results } });
@@ -456,21 +449,28 @@ export function createApiRouter(deps: ApiDependencies): Hono {
       }
     }
 
-    const BATCH = 2;
-    for (let i = 0; i < pending.length; i += BATCH) {
-      const batch = pending.slice(i, i + BATCH);
-      const downloads = batch.map((p) =>
-        deps.downloadService
-          .downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
-            filepaths.push(`/music/${downloaded.file}`);
-            results.push({ title: downloaded.title, status: "queued" });
-          })
-          .catch((err: any) => {
-            results.push({ title: p.track.title, status: "error", error: err.message });
-            return null;
-          })
-      );
-      await Promise.allSettled(downloads);
+    // If there are tracks to download, download the first one and wait so we can play it immediately
+    if (pending.length > 0) {
+      const first = pending.shift()!;
+      try {
+        const downloaded = await deps.downloadService.downloadAndWait(first.track.spotifyUrl!);
+        filepaths.push(`/music/${downloaded.file}`);
+        results.push({ title: downloaded.title, status: "queued" });
+        console.log(`[play] First track downloaded: ${downloaded.title}`);
+      } catch (err: any) {
+        results.push({ title: first.track.title, status: "error", error: err.message });
+      }
+    }
+
+    // Fire remaining downloads asynchronously (they'll be queued when ready)
+    for (const p of pending) {
+      deps.downloadService.downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
+        const rid = await deps.liquidsoapService.queuePush(`/music/${downloaded.file}`);
+        console.log(`[play] Queued (async): ${downloaded.title} rid=${rid}`);
+      }).catch((err: any) => {
+        results.push({ title: p.track.title, status: "error", error: err.message });
+        return null;
+      });
     }
 
     if (filepaths.length === 0) {
@@ -487,6 +487,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
         action: "play",
         shuffle,
         queued: filepaths.length,
+        pendingDownloads: pending.length,
         results,
       },
     });

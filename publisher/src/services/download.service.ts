@@ -150,6 +150,26 @@ export class DownloadService {
     return this.getDownloadJob(job.id);
   }
 
+  public async downloadAndWait(url: string): Promise<Track> {
+    const job = this.libraryRepo.createDownload(url);
+    console.log(`[DownloadService] downloadAndWait job ${job.id} for: ${url}`);
+
+    return new Promise<Track>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.onCompleteCallbacks.delete(job.id);
+        reject(new Error(`Download timeout for ${url}`));
+      }, 600_000);
+
+      this.onCompleteCallbacks.set(job.id, async (track: Track) => {
+        clearTimeout(timeout);
+        this.onCompleteCallbacks.delete(job.id);
+        resolve(track);
+      });
+
+      this.triggerQueueProcess();
+    });
+  }
+
   public reDownload(file: string): DownloadJob | null {
     const track = this.libraryRepo.getTrackByFile(file);
     if (!track) return null;

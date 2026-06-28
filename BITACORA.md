@@ -47,6 +47,7 @@ radio/
 ├── docker-compose.override.yml           # Overrides para desarrollo local (bind mounts)
 ├── README.md                             # Guía del proyecto (arquitectura, despliegue manual/Coolify y API REST)
 ├── AGENTS.md                             # Reglas globales de comportamiento y control de herramientas para agentes IA
+├── opencode.json                         # Configuración del cliente/agente OpenCode (MCP local/remoto)
 │
 ├── downloader/                           # Microservicio de Descarga
 │   ├── Dockerfile                        # Dockerfile optimizado (BuildKit Cache) para la imagen Python del downloader

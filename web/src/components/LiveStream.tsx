@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Mp3Encoder } from "lamejs";
+
+// Mp3Encoder de lamejs (cargado via /scripts/lame.all.js)
+declare const Mp3Encoder: any;
 
 const SAMPLE_RATE = 48000;
 const CHANNELS = 2;

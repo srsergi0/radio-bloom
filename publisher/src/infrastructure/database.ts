@@ -57,6 +57,19 @@ export class DatabaseConnection {
       this.client.exec("ALTER TABLE library_tracks ADD COLUMN spotify_url TEXT DEFAULT ''");
     } catch {}
 
+    // Ensure unique index on file for upsert (upsertTrack uses ON CONFLICT(file))
+    // First deduplicate any rows with the same file (keep the one with most data)
+    try {
+      this.client.exec(`
+        DELETE FROM library_tracks WHERE rowid NOT IN (
+          SELECT MIN(rowid) FROM library_tracks GROUP BY file
+        )
+      `);
+      this.client.exec(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_library_tracks_file ON library_tracks(file)"
+      );
+    } catch {}
+
     this.client.exec(`
       CREATE TABLE IF NOT EXISTS downloads (
         id TEXT PRIMARY KEY,

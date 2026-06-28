@@ -401,13 +401,15 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
     // Fire all pending downloads asynchronously (queued when complete)
     for (const p of pending) {
-      deps.downloadService.downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
-        const rid = await deps.liquidsoapService.queuePush(`/music/${downloaded.file}`);
-        results.push({ title: downloaded.title, status: rid ? "queued" : "error" });
-      }).catch((err: any) => {
-        results.push({ title: p.track.title, status: "error", error: err.message });
-        return null;
-      });
+      deps.downloadService
+        .downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
+          const rid = await deps.liquidsoapService.queuePush(`/music/${downloaded.file}`);
+          results.push({ title: downloaded.title, status: rid ? "queued" : "error" });
+        })
+        .catch((err: any) => {
+          results.push({ title: p.track.title, status: "error", error: err.message });
+          return null;
+        });
     }
 
     return c.json({ ok: true, data: { playlistId: playlist.id, results } });
@@ -431,54 +433,68 @@ export function createApiRouter(deps: ApiDependencies): Hono {
       }
     }
 
-    const filepaths: string[] = [];
-    const pending: { track: (typeof tracks)[0]; filepath: string }[] = [];
+    const local: string[] = [];
+    const pending: { track: (typeof tracks)[0] }[] = [];
     const results: { title: string; status: string; error?: string }[] = [];
+    let firstPlayed = false;
 
     for (const track of tracks) {
+      // Check if track has a file path set and it exists on disk
       const filepath = track.file ? join(deps.musicDir, track.file) : "";
       if (filepath && existsSync(filepath)) {
-        filepaths.push(`/music/${track.file}`);
+        local.push(`/music/${track.file}`);
         results.push({ title: track.title, status: "queued" });
         continue;
       }
+      // Check if track's spotifyUrl already exists in the library
       if (track.spotifyUrl) {
-        pending.push({ track, filepath });
+        const libTrack = deps.libraryRepo.getTrackByUrl(track.spotifyUrl);
+        if (libTrack) {
+          local.push(`/music/${libTrack.file}`);
+          results.push({ title: libTrack.title, status: "queued" });
+          continue;
+        }
+        pending.push({ track });
       } else if (track.file) {
         results.push({ title: track.title, status: "error", error: "File not found" });
       }
     }
 
-    // If there are tracks to download, download the first one and wait so we can play it immediately
-    if (pending.length > 0) {
-      const first = pending.shift()!;
-      try {
-        const downloaded = await deps.downloadService.downloadAndWait(first.track.spotifyUrl!);
-        filepaths.push(`/music/${downloaded.file}`);
-        results.push({ title: downloaded.title, status: "queued" });
-        console.log(`[play] First track downloaded: ${downloaded.title}`);
-      } catch (err: any) {
-        results.push({ title: first.track.title, status: "error", error: err.message });
-      }
+    // Play local files immediately
+    if (local.length > 0) {
+      const ok = await deps.liquidsoapService.playFilesNow(local);
+      firstPlayed = ok;
     }
 
-    // Fire remaining downloads asynchronously (they'll be queued when ready)
+    // Fire all pending Spotify downloads — when first completes, flush queue and play it
+    let firstDownloadFired = false;
     for (const p of pending) {
-      deps.downloadService.downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
-        const rid = await deps.liquidsoapService.queuePush(`/music/${downloaded.file}`);
-        console.log(`[play] Queued (async): ${downloaded.title} rid=${rid}`);
-      }).catch((err: any) => {
-        results.push({ title: p.track.title, status: "error", error: err.message });
-        return null;
-      });
+      deps.downloadService
+        .downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
+          const filepath = `/music/${downloaded.file}`;
+          if (!firstPlayed && !firstDownloadFired) {
+            firstDownloadFired = true;
+            await deps.liquidsoapService.sendCommand("queue.flush_and_skip").catch(() => {});
+            await new Promise((r) => setTimeout(r, 500));
+            const rid = await deps.liquidsoapService.queuePush(filepath);
+            console.log(`[play] First downloaded track played: ${downloaded.title} rid=${rid}`);
+            firstPlayed = true;
+          } else {
+            const rid = await deps.liquidsoapService.queuePush(filepath);
+            console.log(`[play] Queued (async): ${downloaded.title} rid=${rid}`);
+          }
+          results.push({ title: downloaded.title, status: "queued" });
+        })
+        .catch((err: any) => {
+          results.push({ title: p.track.title, status: "error", error: err.message });
+          return null;
+        });
     }
 
-    if (filepaths.length === 0) {
+    const totalQueued = local.length + pending.length;
+    if (totalQueued === 0) {
       return c.json({ ok: false, error: "No playable tracks found" }, 400);
     }
-
-    const ok = await deps.liquidsoapService.playFilesNow(filepaths);
-    if (!ok) return c.json({ ok: false, error: "Failed to start playback" }, 500);
 
     return c.json({
       ok: true,
@@ -486,8 +502,9 @@ export function createApiRouter(deps: ApiDependencies): Hono {
         playlistId: playlist.id,
         action: "play",
         shuffle,
-        queued: filepaths.length,
+        localQueued: local.length,
         pendingDownloads: pending.length,
+        firstPlayed,
         results,
       },
     });

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import { WebStandardStreamableHTTPServerTransport } from "../webStandardStreamableHttp.js";
+import type { DownloadService } from "./download.service";
 import type { LibraryService } from "./library.service";
 import type { LiquidsoapService } from "./liquidsoap.service";
 
@@ -21,7 +22,8 @@ export class McpService {
     private readonly libraryRepo: LibraryRepository,
     private readonly playlistRepo: PlaylistRepository,
     private readonly libraryService: LibraryService,
-    private readonly liquidsoapService: LiquidsoapService
+    private readonly liquidsoapService: LiquidsoapService,
+    private readonly downloadService: DownloadService
   ) {
     this.server = new McpServer({
       name: "radio-bloom",
@@ -430,6 +432,189 @@ export class McpService {
             {
               type: "text",
               text: JSON.stringify(playlist, null, 2),
+            },
+          ],
+        };
+      }
+    );
+
+    server.tool(
+      "radio_playlist_create",
+      "Crear una nueva playlist vacía",
+      {
+        name: z.string().describe("Nombre de la playlist"),
+      },
+      async ({ name }) => {
+        const playlist = this.playlistRepo.create(name);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(playlist, null, 2),
+            },
+          ],
+        };
+      }
+    );
+
+    server.tool(
+      "radio_playlist_add_track",
+      "Añadir una canción o interludio a una playlist. Si tiene spotifyUrl se descargará al reproducir la playlist",
+      {
+        playlistId: z.string().describe("ID de la playlist"),
+        title: z.string().describe("Título de la canción"),
+        artist: z.string().optional().describe("Artista"),
+        spotifyUrl: z
+          .string()
+          .optional()
+          .describe("URL de Spotify (https://open.spotify.com/track/...)"),
+        duration: z.number().int().optional().default(0).describe("Duración en segundos"),
+        type: z.enum(["song", "interludio"]).optional().default("song").describe("Tipo de track"),
+      },
+      async ({ playlistId, title, artist, spotifyUrl, duration, type }) => {
+        const track = this.playlistRepo.addTrack(playlistId, {
+          type,
+          title,
+          artist,
+          duration,
+          spotifyUrl,
+        });
+        if (!track)
+          return { content: [{ type: "text", text: "Playlist no encontrada" }], isError: true };
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(track, null, 2),
+            },
+          ],
+        };
+      }
+    );
+
+    server.tool(
+      "radio_queue_add_url",
+      "Añadir una URL de Spotify a la cola de reproducción. Descarga automáticamente si no está en la biblioteca",
+      {
+        url: z.string().describe("URL de Spotify (https://open.spotify.com/track/...)"),
+      },
+      async ({ url }) => {
+        const existing = this.libraryRepo.getTrackByUrl(url);
+        if (existing) {
+          const rid = await this.liquidsoapService.queuePush(`/music/${existing.file}`);
+          const queue = await this.liquidsoapService.queueList();
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  { ok: !!rid, source: "library", track: existing.title, queue: queue.map((q, i) => ({ position: i + 1, ...q })) },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+        this.downloadService.downloadFromSpotify(url, async (track) => {
+          const rid = await this.liquidsoapService.queuePush(`/music/${track.file}`);
+          console.log(`[MCP] Queued downloaded track: ${track.title} rid=${rid}`);
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ ok: true, source: "download", message: "Descarga iniciada. Se encolará automáticamente al completarse." }, null, 2),
+            },
+          ],
+        };
+      }
+    );
+
+    server.tool(
+      "radio_playlist_play",
+      "Reproducir una playlist inmediatamente. Descarga automáticamente canciones de Spotify si es necesario",
+      {
+        id: z.string().describe("ID de la playlist"),
+        shuffle: z.boolean().optional().default(false).describe("Mezclar aleatoriamente"),
+      },
+      async ({ id, shuffle }) => {
+        const playlist = this.playlistRepo.get(id);
+        if (!playlist)
+          return { content: [{ type: "text", text: "Playlist no encontrada" }], isError: true };
+        if (playlist.tracks.length === 0)
+          return { content: [{ type: "text", text: "Playlist vacía" }], isError: true };
+
+        const tracks = [...playlist.tracks];
+        if (shuffle) {
+          for (let i = tracks.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [tracks[i], tracks[j]] = [tracks[j], tracks[i]];
+          }
+        }
+
+        const local: string[] = [];
+        const pending: { track: (typeof tracks)[0] }[] = [];
+        let firstPlayed = false;
+        let firstDownloadFired = false;
+
+        for (const track of tracks) {
+          const filepath = track.file ? `/music/${track.file}` : "";
+          if (filepath) {
+            local.push(filepath);
+            continue;
+          }
+          if (track.spotifyUrl) {
+            const libTrack = this.libraryRepo.getTrackByUrl(track.spotifyUrl);
+            if (libTrack) {
+              local.push(`/music/${libTrack.file}`);
+              continue;
+            }
+            pending.push({ track });
+          }
+        }
+
+        // Play local files immediately
+        if (local.length > 0) {
+          firstPlayed = await this.liquidsoapService.playFilesNow(local);
+        }
+
+        // Fire pending downloads asynchronously
+        for (const p of pending) {
+          this.downloadService.downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
+            const fp = `/music/${downloaded.file}`;
+            if (!firstPlayed && !firstDownloadFired) {
+              firstDownloadFired = true;
+              await this.liquidsoapService.sendCommand("queue.flush_and_skip").catch(() => {});
+              await new Promise((r) => setTimeout(r, 500));
+              await this.liquidsoapService.queuePush(fp);
+              firstPlayed = true;
+            } else {
+              await this.liquidsoapService.queuePush(fp);
+            }
+          }).catch(() => {});
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  ok: true,
+                  playlistId: id,
+                  name: playlist.name,
+                  shuffle,
+                  localQueued: local.length,
+                  pendingDownloads: pending.length,
+                  firstPlayed,
+                  message: pending.length > 0
+                    ? `${local.length} canciones encoladas, ${pending.length} descargándose...`
+                    : `${local.length} canciones encoladas`,
+                },
+                null,
+                2
+              ),
             },
           ],
         };

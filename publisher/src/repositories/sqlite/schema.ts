@@ -8,7 +8,7 @@ export const config = sqliteTable("config", {
 
 export const libraryTracks = sqliteTable("library_tracks", {
   id: text("id").primaryKey(),
-  file: text("file").notNull(),
+  file: text("file").notNull().unique(),
   type: text("type").notNull().default("song"),
   title: text("title").notNull(),
   artist: text("artist").default(""),

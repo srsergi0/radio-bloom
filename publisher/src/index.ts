@@ -71,7 +71,7 @@ const libraryService = new LibraryService(
 
 const downloadService = new DownloadService(libraryRepo, spotiflacClient, ffprobeClient, SONGS_DIR);
 
-const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liquidsoapService);
+const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liquidsoapService, downloadService);
 
 // Initialize active services
 libraryService.init();
@@ -275,6 +275,7 @@ const broadcaster = new StreamBroadcaster();
 // ============================================================
 const _server = Bun.serve({
   port: PORT,
+  idleTimeout: 255,
   async fetch(req) {
     const url = new URL(req.url);
 

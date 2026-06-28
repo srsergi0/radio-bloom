@@ -102,7 +102,7 @@ radio/
 │           ├── download.service.ts       # Orquestador del flujo de descargas de Spotify
 │           ├── library.service.ts        # Escaneador del directorio `music/songs` y catalogación
 │           ├── liquidsoap.service.ts     # Sincronización y órdenes sobre el reproductor (incluye playFilesNow)
-│           ├── mcp.service.ts            # Implementación de herramientas MCP para interactuar con la radio
+│           ├── mcp.service.ts            # Herramientas MCP: radio_playlist_create, radio_playlist_add_track, radio_queue_add_url, etc.
 │           └── metadata-enrichment.service.ts # Servicio para completar metadatos faltantes mediante Spotify
 │
 └── web/                                  # Interfaz Frontend (Astro)
@@ -147,9 +147,17 @@ Para entender cómo se conectan los archivos durante una operación común:
    - La UI llama a `/api/download` expuesto en `publisher/src/api/router.ts`.
    - `router.ts` delega en `publisher/src/services/download.service.ts`.
    - El servicio llama a `publisher/src/infrastructure/spotiflac.client.ts` para enviar la solicitud HTTP a `downloader/server.py`.
-   - `downloader/server.py` corre `spotdl`/`SpotiFLAC` para descargar la canción de Spotify y guardarla en `music/songs/`.
+   - `downloader/server.py` corre `SpotiFLAC` para descargar la canción de Spotify y guardarla en `music/songs/`.
    - Una vez finalizada la descarga, el `library.service.ts` detecta el nuevo archivo físico, extrae sus metadatos con `ffprobe.client.ts` y actualiza la biblioteca usando `library.repo.ts`.
-    - El frontend refresca la biblioteca mediante polling REST y renderiza el cambio.
+   - El frontend refresca la biblioteca mediante polling REST y renderiza el cambio.
+
+2. **Crear playlist desde Spotify y reproducir** (vía API REST):
+   - Crear playlist: `POST /api/playlists` con `{ name }`
+   - Añadir tracks con spotifyUrl: `POST /api/playlists/:id/tracks` con `{ title, spotifyUrl, artist, duration }`
+   - Reproducir: `POST /api/playlists/:id/play`
+   - El servidor descarga automáticamente cada canción vía SpotiFLAC (1 a la vez, secuencial)
+   - Las canciones ya descargadas se encolan inmediatamente
+   - La primera descarga completada se reproduce al instante (flushea la cola)
 
 ## 🔄 Persistencia de Reproducción (Restore al Reiniciar)
 
@@ -166,7 +174,7 @@ Los volúmenes Docker (`radio-music`, `radio-interludios`, `radio-publisher-data
 
 ## 🎵 API de Playlists (estilo Spotify)
 
-El sistema de playlists permite crear, gestionar y reproducir listas de reproducción con canciones e interludios.
+El sistema de playlists permite crear, gestionar y reproducir listas de reproducción con canciones e interludios que pueden descargarse de Spotify automáticamente.
 
 ### Endpoints de Playlists
 
@@ -177,32 +185,52 @@ El sistema de playlists permite crear, gestionar y reproducir listas de reproduc
 | `GET` | `/api/playlists/:id` | Obtener playlist con tracks |
 | `PUT` | `/api/playlists/:id` | Actualizar nombre |
 | `DELETE` | `/api/playlists/:id` | Eliminar playlist y tracks |
-| `POST` | `/api/playlists/:id/tracks` | Agregar track (acepta `position` opcional) |
+| `POST` | `/api/playlists/:id/tracks` | Agregar track (body: `{ title, artist?, spotifyUrl?, duration?, type?, file? }`) |
 | `PUT` | `/api/playlists/:id/tracks/:trackId` | Editar track existente |
 | `DELETE` | `/api/playlists/:id/tracks/:trackId` | Eliminar track |
 | `PUT` | `/api/playlists/:id/tracks/reorder` | Reordenar tracks (body: `{ trackIds: string[] }`) |
-| `POST` | `/api/playlists/:id/play` | **Play now** - limpia cola y reproduce. Acepta `{ shuffle: true }` |
+| `POST` | `/api/playlists/:id/play` | **Play now** - descarga/encola y reproduce. Acepta `{ shuffle: true }` |
 | `POST` | `/api/playlists/:id/queue` | **Añadir a cola** - push al final. Acepta `{ shuffle: true }` |
+| `POST` | `/api/playlists/:id/load` | Cargar playlist a cola (descarga si es necesario) |
 
 ### Tipos de Track
 
 - `"song"` - Canción normal
 - `"interludio"` - Jingle, cuña o transición
 
+### Herramientas MCP para Playlists
+
+| Herramienta | Descripción |
+|-------------|-------------|
+| `radio_playlist_create` | Crear playlist (name) |
+| `radio_playlist_list` | Listar playlists |
+| `radio_playlist_get` | Obtener playlist con tracks |
+| `radio_playlist_add_track` | Añadir track (title, artist?, spotifyUrl?, duration?, type?) |
+| `radio_queue_add_url` | Añadir URL de Spotify a cola |
+
+> **Nota**: Para reproducir una playlist desde MCP, usa el endpoint REST:
+> `curl -X POST http://localhost:9876/api/playlists/ID/play`
+
 ### Flujo de Play Now (`POST /api/playlists/:id/play`)
 
 1. Obtiene la playlist con todos sus tracks
 2. Mezcla si `shuffle: true`
 3. Para tracks con `file` en disco → van directos a la cola
-4. Para tracks con `spotifyUrl` → descarga vía SpotiFLAC primero
-5. Limpia la cola actual (`queue.clear`)
-6. Encola todos los tracks en orden
-7. Salta al primero (`queue.skip`)
+4. Para tracks cuyo `spotifyUrl` ya existe en la biblioteca → van directos a la cola
+5. Para el resto con `spotifyUrl` → inicia descarga asíncrona; cuando la primera completa, se flushea la cola y se reproduce
+6. Responde inmediatamente (no bloquea)
 
 ### Flujo de Queue (`POST /api/playlists/:id/queue`)
 
 1. Obtiene la playlist con todos sus tracks
 2. Mezcla si `shuffle: true`
-3. Para tracks locales → push al final de la cola
+3. Para tracks locales o ya en biblioteca → push al final de la cola
 4. Para tracks con `spotifyUrl` → descarga y encola cuando está listo
 5. No interrumpe lo que está sonando
+
+### Fixes Aplicados
+
+- **Unique index en `library_tracks.file`**: El `ON CONFLICT(file)` en `upsertTrack` ahora funciona correctamente (se agregó índice único y deduplicación en `database.ts`).
+- **Async play**: `POST /api/playlists/:id/play` ya no bloquea esperando descargas. Descarga asíncronamente y la primera canción que completa se reproduce inmediatamente.
+- **Library lookup**: El play endpoint ahora busca tracks por `spotifyUrl` en la biblioteca local antes de descargar.
+- **Bun idleTimeout**: Aumentado a 255s para requests largos.

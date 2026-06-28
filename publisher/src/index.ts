@@ -338,8 +338,10 @@ const _server = Bun.serve({
     return apiRouter.fetch(req);
   },
   websocket: {
+    idleTimeout: 0,
+    maxPayloadLength: 1024 * 1024,
     open(ws) {
-      console.log("[ws/live] Browser connected (MP3)");
+      console.log("[ws/live] Browser connected");
       const pass = new TransformStream<Uint8Array>();
       const writer = pass.writable.getWriter();
       ws.data = { writer };

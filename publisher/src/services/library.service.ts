@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, watch } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { basename, extname, join, relative } from "node:path";
 import { LibraryRepository } from "../repositories/sqlite/library.repo";
 import { FfprobeClient } from "../infrastructure/ffprobe.client";
 import { LibraryStats, Track } from "../domain/types";
@@ -10,6 +10,7 @@ export class LibraryService {
   private readonly songsDir: string;
   private readonly interludiosDir: string;
   private watchers: any[] = [];
+  private scanTimeout: Timer | null = null;
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
@@ -32,47 +33,120 @@ export class LibraryService {
     if (!existsSync(this.interludiosDir)) mkdirSync(this.interludiosDir, { recursive: true });
   }
 
+  private getAllFiles(dir: string): string[] {
+    let results: string[] = [];
+    if (!existsSync(dir)) return results;
+    try {
+      const list = readdirSync(dir);
+      for (const file of list) {
+        const filePath = join(dir, file);
+        const stat = statSync(filePath);
+        if (stat.isDirectory()) {
+          results = results.concat(this.getAllFiles(filePath));
+        } else if (AUDIO_EXTENSIONS.test(file)) {
+          results.push(filePath);
+        }
+      }
+    } catch (err: any) {
+      console.error(`[LibraryService] Error reading directory ${dir}:`, err.message);
+    }
+    return results;
+  }
+
   public scan(): LibraryStats {
     this.ensureDirs();
-    this.scanAndUpsert(this.songsDir, "song");
-    this.scanAndUpsert(this.interludiosDir, "interludio");
+
+    // 1. Scan and upsert physical files recursively
+    const songFiles = this.getAllFiles(this.songsDir);
+    this.scanAndUpsertFiles(songFiles, this.songsDir, "song");
+
+    const interludioFiles = this.getAllFiles(this.interludiosDir);
+    this.scanAndUpsertFiles(interludioFiles, this.interludiosDir, "interludio");
+
+    // 2. Prune tracks that no longer exist on disk
+    const dbSongs = this.libraryRepo.getAllTracks("song");
+    const dbInterludios = this.libraryRepo.getAllTracks("interludio");
+
+    const physicalSongKeys = new Set(
+      songFiles.map((f) => {
+        const relPath = relative(this.songsDir, f).replace(/\\/g, "/");
+        return `songs/${relPath}`;
+      })
+    );
+
+    const physicalInterludioKeys = new Set(
+      interludioFiles.map((f) => {
+        const relPath = relative(this.interludiosDir, f).replace(/\\/g, "/");
+        return `interludios/${relPath}`;
+      })
+    );
+
+    for (const track of dbSongs) {
+      if (!physicalSongKeys.has(track.file)) {
+        this.libraryRepo.removeTrack(track.file);
+        console.log(`[LibraryService] Pruned deleted song from DB: ${track.file}`);
+      }
+    }
+
+    for (const track of dbInterludios) {
+      if (!physicalInterludioKeys.has(track.file)) {
+        this.libraryRepo.removeTrack(track.file);
+        console.log(`[LibraryService] Pruned deleted interludio from DB: ${track.file}`);
+      }
+    }
+
     const stats = this.libraryRepo.getStats();
     console.log(`[LibraryService] Catalog indexed: ${stats.totalSongs} songs, ${stats.totalInterludios} interludios.`);
     return stats;
   }
 
-  private scanAndUpsert(dir: string, type: "song" | "interludio"): void {
+  private scanAndUpsertFiles(files: string[], baseDir: string, type: "song" | "interludio"): void {
     const prefix = type === "song" ? "songs" : "interludios";
-    if (!existsSync(dir)) return;
-    const files = readdirSync(dir).filter((f) => AUDIO_EXTENSIONS.test(f));
-
     const existingTracks = this.libraryRepo.getAllTracks(type);
 
-    for (const file of files) {
-      const filePath = join(dir, file);
-      const stat = statSync(filePath);
-      const key = `${prefix}/${file}`;
-      const existing = existingTracks.find((t) => t.file === key);
+    for (const filePath of files) {
+      try {
+        const stat = statSync(filePath);
+        const relPath = relative(baseDir, filePath).replace(/\\/g, "/");
+        const key = `${prefix}/${relPath}`;
+        const existing = existingTracks.find((t) => t.file === key);
 
-      if (existing && new Date(stat.mtime.toISOString()) <= new Date(existing.addedAt)) {
-        continue;
+        if (existing && new Date(stat.mtime.toISOString()) <= new Date(existing.addedAt)) {
+          continue;
+        }
+
+        const file = basename(filePath);
+        const name = basename(file, extname(file));
+        const meta = this.ffprobeClient.extractMetadata(filePath);
+
+        this.libraryRepo.upsertTrack({
+          file: key,
+          type,
+          title: meta.title || name,
+          artist: meta.artist,
+          album: meta.album,
+          duration: meta.duration || Math.floor(stat.size / ((192 * 1000) / 8)),
+          spotify_url: meta.spotifyUrl,
+          size: stat.size,
+          mtime: stat.mtime.toISOString(),
+        });
+      } catch (err: any) {
+        console.error(`[LibraryService] Failed to index file ${filePath}:`, err.message);
       }
-
-      const name = basename(file, extname(file));
-      const meta = this.ffprobeClient.extractMetadata(filePath);
-
-      this.libraryRepo.upsertTrack({
-        file: key,
-        type,
-        title: meta.title || name,
-        artist: meta.artist,
-        album: meta.album,
-        duration: meta.duration || Math.floor(stat.size / ((192 * 1000) / 8)),
-        spotify_url: meta.spotifyUrl,
-        size: stat.size,
-        mtime: stat.mtime.toISOString(),
-      });
     }
+  }
+
+  private triggerDebouncedScan(): void {
+    if (this.scanTimeout) {
+      clearTimeout(this.scanTimeout);
+    }
+    this.scanTimeout = setTimeout(() => {
+      try {
+        this.scan();
+      } catch (err: any) {
+        console.error("[LibraryService] Error running debounced scan:", err.message);
+      }
+    }, 2000);
   }
 
   private watchDirectories(): void {
@@ -82,25 +156,17 @@ export class LibraryService {
 
   private watchDir(dir: string, type: "song" | "interludio") {
     try {
-      const watcher = watch(dir, (_event: string, filename: string | null) => {
-        if (!filename || !AUDIO_EXTENSIONS.test(filename)) return;
+      const watcher = watch(dir, { recursive: true }, (_event: string, filename: string | null) => {
+        // Skip scanning if the change is a temporary download folder or file
+        if (filename && (filename.startsWith("tmp_download_") || filename.includes(".tmp"))) {
+          return;
+        }
 
-        setTimeout(() => {
-          const filePath = join(dir, filename);
-          const key = `${type === "song" ? "songs" : "interludios"}/${filename}`;
-
-          if (!existsSync(filePath)) {
-            this.libraryRepo.removeTrack(key);
-            console.log(`[LibraryService] File removed: ${key}`);
-            return;
-          }
-
-          this.scanAndUpsert(dir, type);
-          console.log(`[LibraryService] File updated/added: ${filename}`);
-        }, 1000);
+        console.log(`[LibraryService] [Watcher] File change detected in ${type} folder: ${filename || "unknown"}. Triggering scan...`);
+        this.triggerDebouncedScan();
       });
       this.watchers.push(watcher);
-      console.log(`[LibraryService] Watching directory: ${dir}`);
+      console.log(`[LibraryService] Watching directory recursively: ${dir}`);
     } catch (err: any) {
       console.error(`[LibraryService] Failed to set watch on ${dir}:`, err.message);
     }

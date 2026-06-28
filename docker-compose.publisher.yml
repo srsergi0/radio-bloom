@@ -1,0 +1,24 @@
+services:
+  publisher:
+    build:
+      context: .
+      dockerfile: ./publisher/Dockerfile
+    container_name: radio-publisher
+    restart: unless-stopped
+    ports:
+      - "${API_PORT}:${PUBLISHER_PORT}"
+    environment:
+      - LIQUIDSOAP_HOST=radio-liquidsoap
+      - LIQUIDSOAP_TELNET_PORT=${LIQUIDSOAP_TELNET_PORT}
+      - LIQUIDSOAP_HARBOUR_PORT=${LIQUIDSOAP_HARBOUR_PORT}
+      - PORT=${PUBLISHER_PORT}
+      - ENRICHER_URL=http://radio-enricher:4001
+    volumes:
+      - ./music:/app/music
+      - ./publisher/data:/app/data
+    networks:
+      - radio-net
+
+networks:
+  radio-net:
+    external: true

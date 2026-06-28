@@ -23,29 +23,6 @@ services:
     networks:
       - radio-net
 
-  publisher:
-    build:
-      context: .
-      dockerfile: ./publisher/Dockerfile
-    container_name: radio-publisher
-    restart: unless-stopped
-    depends_on:
-      - liquidsoap
-      - metadata-enricher
-    ports:
-      - "${API_PORT}:${PUBLISHER_PORT}"
-    environment:
-      - LIQUIDSOAP_HOST=${LIQUIDSOAP_HOST}
-      - LIQUIDSOAP_TELNET_PORT=${LIQUIDSOAP_TELNET_PORT}
-      - LIQUIDSOAP_HARBOUR_PORT=${LIQUIDSOAP_HARBOUR_PORT}
-      - PORT=${PUBLISHER_PORT}
-      - ENRICHER_URL=http://metadata-enricher:4001
-    volumes:
-      - ./music:/app/music
-      - ./publisher/data:/app/data
-    networks:
-      - radio-net
-
   ftp:
     image: stilliard/pure-ftpd:hardened
     container_name: radio-ftp
@@ -68,4 +45,4 @@ services:
 
 networks:
   radio-net:
-    driver: bridge
+    external: true

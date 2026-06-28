@@ -18,7 +18,7 @@ Internet radio station powered by Icecast, Bun, spotDL, and Cloudflare Tunnel.
                    music/songs/ (local)
 ```
 
-## Quick Start
+## Quick Start (Local)
 
 ### 1. Configure environment
 
@@ -34,13 +34,20 @@ mkdir -p music/songs
 mkdir -p music/interludios
 ```
 
-### 3. Start everything
+### 3. Create the shared Docker network
 
 ```bash
-docker compose up -d
+docker network create radio-net
 ```
 
-### 4. Open the control panel
+### 4. Start everything
+
+```bash
+docker compose -f docker-compose.engine.yml up -d
+docker compose -f docker-compose.publisher.yml up -d
+```
+
+### 5. Open the control panel
 
 ```bash
 cd web
@@ -50,7 +57,7 @@ bun run dev
 
 Open http://localhost:3001
 
-### 5. Add music
+### 6. Add music
 
 - Pega un link de Spotify en el input del sidebar
 - Click descargar (o presiona Enter)
@@ -58,7 +65,7 @@ Open http://localhost:3001
 - La canción aparece en la biblioteca
 - Arrástrala al timeline
 
-### 6. Configure Cloudflare Tunnel
+### 7. Configure Cloudflare Tunnel
 
 Tu tunnel ya instalado debe apuntar a `localhost:8000`:
 
@@ -70,6 +77,92 @@ ingress:
 ```
 
 Stream URL: `https://radio.tudominio.com/radiobloom.mp3`
+
+## Despliegue en Coolify (Zero-Downtime)
+
+El proyecto incluye dos Docker Compose separados para Coolify, de modo que los cambios en el código (publisher, web) **no reinician el motor de streaming** (Liquidsoap).
+
+### Problema
+
+Coolify redeployea todos los contenedores de un recurso en cada push. Si todo va en un solo `docker-compose.yml`, un cambio en la web tira la radio.
+
+### Solucion
+
+Se divide en 2 stacks independientes que comparten una red Docker externa:
+
+| Stack | Compose | Servicios | Auto Deploy |
+|-------|---------|-----------|-------------|
+| **radio-engine** | `docker-compose.engine.yml` | liquidsoap, metadata-enricher, ftp | ❌ Manual |
+| **radio-publisher** | `docker-compose.publisher.yml` | publisher | ✅ ON |
+
+Los contenedores usan `container_name` fijo (`radio-liquidsoap`, `radio-enricher`, `radio-publisher`, `radio-ftp`) para que Docker DNS los resuelva correctamente entre stacks mediante la red externa `radio-net`.
+
+### Configuracion en Coolify
+
+#### 1. Crear la red Docker (una sola vez en el servidor)
+
+```bash
+docker network create radio-net
+```
+
+#### 2. Crear los dos resources en Coolify
+
+En un mismo proyecto de Coolify, crear **2 resources** apuntando al mismo repositorio Git:
+
+**Resource 1 — radio-engine:**
+- Build Pack: Docker Compose
+- Docker Compose Location: `docker-compose.engine.yml`
+- Auto Deploy: **OFF** (desactivado)
+- Base Directory: `/`
+
+**Resource 2 — radio-publisher:**
+- Build Pack: Docker Compose
+- Docker Compose Location: `docker-compose.publisher.yml`
+- Auto Deploy: **ON** (activado)
+- Base Directory: `/`
+
+#### 3. Variables de entorno
+
+Configurar las mismas variables del `.env` en ambos resources de Coolify (seccion Environment Variables de cada resource):
+
+```
+API_PORT=9876
+LIQUIDSOAP_HOST=radio-liquidsoap
+LIQUIDSOAP_TELNET_PORT=1234
+LIQUIDSOAP_HARBOUR_PORT=8000
+PUBLISHER_PORT=3000
+FTP_PUBLIC_HOST=<tu-dominio>
+FTP_PORT=21
+FTP_PASSIVE_MIN=30000
+FTP_PASSIVE_MAX=30009
+FTP_USER_NAME=radio
+FTP_USER_PASS=<tu-password>
+FTP_USER_HOME=/home/radio
+FTP_UMASK=133
+```
+
+> **Importante:** `LIQUIDSOAP_HOST` debe ser `radio-liquidsoap` (el `container_name`), no `liquidsoap`. Igualmente `ENRICHER_URL` usa `http://radio-enricher:4001`.
+
+#### 4. Despliegue inicial
+
+1. Deployear **radio-engine** primero (crea liquidsoap, enricher y ftp)
+2. Deployear **radio-publisher** despues (conecta con engine via `radio-net`)
+
+### Flujo de trabajo
+
+| Que cambia | Que pasa |
+|------------|----------|
+| `web/`, `publisher/` | radio-publisher se redeployea solo. La radio **no se cae**. |
+| `liquidsoap/`, `metadata-enricher/` | Entras a Coolify y deployeas radio-engine manualmente. |
+| `.env` | Actualizar variables en ambos resources de Coolify. |
+
+### Local (sin Coolify)
+
+```bash
+docker network create radio-net          # una vez
+docker compose -f docker-compose.engine.yml up -d
+docker compose -f docker-compose.publisher.yml up -d
+```
 
 ## API
 
@@ -93,7 +186,8 @@ Stream URL: `https://radio.tudominio.com/radiobloom.mp3`
 
 ```
 radio/
-├── docker-compose.yml
+├── docker-compose.engine.yml        # liquidsoap + enricher + ftp
+├── docker-compose.publisher.yml     # publisher solo
 ├── .env
 ├── icecast/
 │   └── icecast.xml

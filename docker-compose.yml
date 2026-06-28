@@ -80,6 +80,8 @@ services:
       - FTP_USER_HOME=${FTP_USER_HOME}
       - UMASK=${FTP_UMASK}
       - TLS_CN=${FTP_PUBLIC_HOST}
+      - FTP_PASSIVE_MIN=${FTP_PASSIVE_MIN}
+      - FTP_PASSIVE_MAX=${FTP_PASSIVE_MAX}
 
 volumes:
   radio-music:

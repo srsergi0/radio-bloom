@@ -71,7 +71,13 @@ const libraryService = new LibraryService(
 
 const downloadService = new DownloadService(libraryRepo, spotiflacClient, ffprobeClient, SONGS_DIR);
 
-const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liquidsoapService, downloadService);
+const mcpService = new McpService(
+  libraryRepo,
+  playlistRepo,
+  libraryService,
+  liquidsoapService,
+  downloadService
+);
 
 // Initialize active services
 libraryService.init();

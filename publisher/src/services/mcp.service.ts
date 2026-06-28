@@ -508,7 +508,12 @@ export class McpService {
               {
                 type: "text",
                 text: JSON.stringify(
-                  { ok: !!rid, source: "library", track: existing.title, queue: queue.map((q, i) => ({ position: i + 1, ...q })) },
+                  {
+                    ok: !!rid,
+                    source: "library",
+                    track: existing.title,
+                    queue: queue.map((q, i) => ({ position: i + 1, ...q })),
+                  },
                   null,
                   2
                 ),
@@ -524,7 +529,15 @@ export class McpService {
           content: [
             {
               type: "text",
-              text: JSON.stringify({ ok: true, source: "download", message: "Descarga iniciada. Se encolará automáticamente al completarse." }, null, 2),
+              text: JSON.stringify(
+                {
+                  ok: true,
+                  source: "download",
+                  message: "Descarga iniciada. Se encolará automáticamente al completarse.",
+                },
+                null,
+                2
+              ),
             },
           ],
         };
@@ -581,18 +594,20 @@ export class McpService {
 
         // Fire pending downloads asynchronously
         for (const p of pending) {
-          this.downloadService.downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
-            const fp = `/music/${downloaded.file}`;
-            if (!firstPlayed && !firstDownloadFired) {
-              firstDownloadFired = true;
-              await this.liquidsoapService.sendCommand("queue.flush_and_skip").catch(() => {});
-              await new Promise((r) => setTimeout(r, 500));
-              await this.liquidsoapService.queuePush(fp);
-              firstPlayed = true;
-            } else {
-              await this.liquidsoapService.queuePush(fp);
-            }
-          }).catch(() => {});
+          this.downloadService
+            .downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
+              const fp = `/music/${downloaded.file}`;
+              if (!firstPlayed && !firstDownloadFired) {
+                firstDownloadFired = true;
+                await this.liquidsoapService.sendCommand("queue.flush_and_skip").catch(() => {});
+                await new Promise((r) => setTimeout(r, 500));
+                await this.liquidsoapService.queuePush(fp);
+                firstPlayed = true;
+              } else {
+                await this.liquidsoapService.queuePush(fp);
+              }
+            })
+            .catch(() => {});
         }
 
         return {
@@ -608,9 +623,10 @@ export class McpService {
                   localQueued: local.length,
                   pendingDownloads: pending.length,
                   firstPlayed,
-                  message: pending.length > 0
-                    ? `${local.length} canciones encoladas, ${pending.length} descargándose...`
-                    : `${local.length} canciones encoladas`,
+                  message:
+                    pending.length > 0
+                      ? `${local.length} canciones encoladas, ${pending.length} descargándose...`
+                      : `${local.length} canciones encoladas`,
                 },
                 null,
                 2

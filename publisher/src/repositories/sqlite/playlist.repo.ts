@@ -99,7 +99,8 @@ export class PlaylistRepository {
       artist?: string;
       duration: number;
       spotifyUrl?: string;
-    }
+    },
+    position?: number
   ): PlaylistTrack | null {
     const exists = this.db.drizzle
       .select({ id: schema.playlists.id })
@@ -109,13 +110,65 @@ export class PlaylistRepository {
     if (!exists) return null;
 
     const id = `pt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+
+    if (position !== undefined) {
+      const existingTracks = this.db.drizzle
+        .select({ id: schema.playlistTracks.id, pos: schema.playlistTracks.pos })
+        .from(schema.playlistTracks)
+        .where(eq(schema.playlistTracks.playlistId, playlistId))
+        .orderBy(schema.playlistTracks.pos)
+        .all();
+
+      const safePos = Math.max(0, Math.min(position, existingTracks.length));
+
+      this.db.drizzle.transaction((tx) => {
+        for (let i = safePos; i < existingTracks.length; i++) {
+          tx.update(schema.playlistTracks)
+            .set({ pos: i + 1 })
+            .where(eq(schema.playlistTracks.id, existingTracks[i].id))
+            .run();
+        }
+        tx.insert(schema.playlistTracks)
+          .values({
+            id,
+            playlistId,
+            pos: safePos,
+            type: track.type,
+            file: track.file || null,
+            title: track.title,
+            artist: track.artist || "",
+            duration: track.duration,
+            spotifyUrl: track.spotifyUrl || "",
+            addedAt: now,
+          })
+          .run();
+        tx.update(schema.playlists)
+          .set({ updatedAt: sql`datetime('now')` })
+          .where(eq(schema.playlists.id, playlistId))
+          .run();
+      });
+
+      return {
+        id,
+        playlistId,
+        pos: safePos,
+        type: track.type,
+        file: track.file,
+        title: track.title,
+        artist: track.artist,
+        duration: track.duration,
+        spotifyUrl: track.spotifyUrl,
+        addedAt: now,
+      };
+    }
+
     const maxPosRow = this.db.drizzle
       .select({ next: sql<number>`COALESCE(MAX(pos), -1) + 1` })
       .from(schema.playlistTracks)
       .where(eq(schema.playlistTracks.playlistId, playlistId))
       .get();
     const nextPos = maxPosRow ? maxPosRow.next : 0;
-    const now = new Date().toISOString();
 
     this.db.drizzle.transaction((tx) => {
       tx.insert(schema.playlistTracks)
@@ -149,6 +202,68 @@ export class PlaylistRepository {
       duration: track.duration,
       spotifyUrl: track.spotifyUrl,
       addedAt: now,
+    };
+  }
+
+  public updateTrack(
+    playlistId: string,
+    trackId: string,
+    updates: {
+      type?: "song" | "interludio";
+      title?: string;
+      artist?: string;
+      duration?: number;
+      spotifyUrl?: string;
+    }
+  ): PlaylistTrack | null {
+    const existing = this.db.drizzle
+      .select()
+      .from(schema.playlistTracks)
+      .where(
+        and(eq(schema.playlistTracks.id, trackId), eq(schema.playlistTracks.playlistId, playlistId))
+      )
+      .get();
+    if (!existing) return null;
+
+    const setValues: Record<string, any> = {};
+    if (updates.type !== undefined) setValues.type = updates.type;
+    if (updates.title !== undefined) setValues.title = updates.title;
+    if (updates.artist !== undefined) setValues.artist = updates.artist;
+    if (updates.duration !== undefined) setValues.duration = updates.duration;
+    if (updates.spotifyUrl !== undefined) setValues.spotifyUrl = updates.spotifyUrl;
+
+    if (Object.keys(setValues).length === 0) return null;
+
+    this.db.drizzle.transaction((tx) => {
+      tx.update(schema.playlistTracks)
+        .set(setValues)
+        .where(eq(schema.playlistTracks.id, trackId))
+        .run();
+      tx.update(schema.playlists)
+        .set({ updatedAt: sql`datetime('now')` })
+        .where(eq(schema.playlists.id, playlistId))
+        .run();
+    });
+
+    const updated = this.db.drizzle
+      .select()
+      .from(schema.playlistTracks)
+      .where(eq(schema.playlistTracks.id, trackId))
+      .get();
+
+    if (!updated) return null;
+
+    return {
+      id: updated.id,
+      playlistId: updated.playlistId,
+      pos: updated.pos,
+      type: updated.type as "song" | "interludio",
+      file: updated.file || undefined,
+      title: updated.title,
+      artist: updated.artist || undefined,
+      duration: updated.duration,
+      spotifyUrl: updated.spotifyUrl || undefined,
+      addedAt: updated.addedAt,
     };
   }
 

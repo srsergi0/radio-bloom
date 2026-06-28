@@ -10,7 +10,7 @@ El sistema está compuesto por 4 microservicios principales que se ejecutan en c
 
 1. **`web` (Astro UI)**:
    - **Puerto**: `3000` (despliegue) / `3001` (desarrollo).
-   - **Conexión**: Se comunica con el `publisher` usando REST API y WebSockets (puerto `9876` o `3000` según configuración) para obtener el estado actual, timeline, cola de reproducción y enviar comandos (skip, encolar, reordenar).
+   - **Conexión**: Se comunica con el `publisher` usando REST API (puerto `9876` o `3000` según configuración) para obtener el estado actual, timeline, cola de reproducción y enviar comandos (skip, encolar, reordenar).
 
 2. **`publisher` (API Bun + SQLite)**:
    - **Puerto**: `3000` (interno) / `9876` (público API).
@@ -43,10 +43,8 @@ radio/
 ├── .env.example                          # Plantilla de variables de entorno (Spotify API, puertos, contraseñas)
 ├── .env                                  # Archivo de configuración local con credenciales (ignorado en git)
 ├── .gitignore                            # Archivos excluidos del control de versiones git
-├── docker-compose.engine.yml             # Configuración Docker Compose para el motor de streaming (liquidsoap + ftp)
-├── docker-compose.engine.override.yml    # Modificaciones locales para enlazar directorios locales al motor
-├── docker-compose.publisher.yml          # Configuración Docker Compose para los servicios web (publisher + downloader)
-├── docker-compose.publisher.override.yml # Modificaciones locales para enlazar directorios al publisher y downloader
+├── docker-compose.yml                    # Docker Compose unificado (producción / Coolify)
+├── docker-compose.override.yml           # Overrides para desarrollo local (bind mounts)
 ├── README.md                             # Guía del proyecto (arquitectura, despliegue manual/Coolify y API REST)
 ├── AGENTS.md                             # Reglas globales de comportamiento y control de herramientas para agentes IA
 │
@@ -72,13 +70,13 @@ radio/
 │   ├── drizzle.config.ts                 # Configuración de Drizzle ORM (schema, output, db path)
 │   ├── check_db.ts                       # Script de utilidad rápida para verificar la base de datos
 │   └── src/                              # Código fuente del Backend
-│       ├── index.ts                      # Servidor principal (Elysia, WebSockets, inicialización de servicios)
+│       ├── index.ts                      # Servidor principal (Elysia, inicialización de servicios)
 │       ├── env.ts                        # Tipado y validación de variables de entorno
 │       ├── webStandardStreamableHttp.ts  # Soporte de streaming HTTP estándar web
 │       ├── mcp-entry.ts                  # Integración del protocolo MCP para agentes IA
 │       │
 │       ├── api/
-│       │   └── router.ts                 # Rutas de la API (Timeline, descargas, skip, cola, websocket, etc.)
+│       │   └── router.ts                 # Rutas de la API (Timeline, descargas, skip, cola, etc.)
 │       │
 │       ├── domain/
 │       │   └── types.ts                  # Declaraciones de tipos TypeScript compartidos en la aplicación
@@ -96,13 +94,13 @@ radio/
 │       │       ├── config.repo.ts        # Repositorio de configuración guardada en DB
 │       │       ├── library.repo.ts       # Repositorio de biblioteca física (escaneos de canciones locales)
 │       │       ├── playback-state.repo.ts# Repositorio del estado de reproducción actual
-│       │       └── playlist.repo.ts      # Repositorio de control del timeline/playlist activa
+│       │       └── playlist.repo.ts      # Repositorio CRUD de playlists y tracks (addTrackAtPosition, updateTrack)
 │       │
 │       └── services/                     # Lógica de Negocio
 │           ├── config.service.ts         # Servicio de gestión y persistencia de configuraciones
 │           ├── download.service.ts       # Orquestador del flujo de descargas de Spotify
 │           ├── library.service.ts        # Escaneador del directorio `music/songs` y catalogación
-│           ├── liquidsoap.service.ts     # Sincronización y órdenes sobre el reproductor de Liquidsoap
+│           ├── liquidsoap.service.ts     # Sincronización y órdenes sobre el reproductor (incluye playFilesNow)
 │           ├── mcp.service.ts            # Implementación de herramientas MCP para interactuar con la radio
 │           └── metadata-enrichment.service.ts # Servicio para completar metadatos faltantes mediante Spotify
 │
@@ -150,4 +148,60 @@ Para entender cómo se conectan los archivos durante una operación común:
    - El servicio llama a `publisher/src/infrastructure/spotiflac.client.ts` para enviar la solicitud HTTP a `downloader/server.py`.
    - `downloader/server.py` corre `spotdl`/`SpotiFLAC` para descargar la canción de Spotify y guardarla en `music/songs/`.
    - Una vez finalizada la descarga, el `library.service.ts` detecta el nuevo archivo físico, extrae sus metadatos con `ffprobe.client.ts` y actualiza la biblioteca usando `library.repo.ts`.
-   - El cliente WebSockets (`web/src/components/Player.astro`) recibe la notificación de actualización de la biblioteca mediante `publisher/src/index.ts` y renderiza el cambio.
+    - El frontend refresca la biblioteca mediante polling REST y renderiza el cambio.
+
+## 🔄 Persistencia de Reproducción (Restore al Reiniciar)
+
+El sistema garantiza que al reiniciar el servidor o los contenedores, la canción se retoma donde quedó:
+
+1. **Guardado automático**: Cada 15 segundos, el publisher guarda el estado actual (archivo, título, artista, posición, duración) en SQLite dentro del volumen `radio-publisher-data`.
+2. **Al reiniciar**: El publisher espera 3 segundos, luego reintenta conectarse a Liquidsoap (hasta 60s).
+3. **Restore**: Hace `queuePush` del track guardado → `queue.skip` → `seek` a la posición exacta.
+4. **Si la canción ya habría terminado**: Limpia el estado y empieza fresco con la playlist de fondo.
+
+Los volúmenes Docker (`radio-music`, `radio-interludios`, `radio-publisher-data`) persisten los datos entre reinicios.
+
+---
+
+## 🎵 API de Playlists (estilo Spotify)
+
+El sistema de playlists permite crear, gestionar y reproducir listas de reproducción con canciones e interludios.
+
+### Endpoints de Playlists
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `POST` | `/api/playlists` | Crear playlist (body: `{ name }`) |
+| `GET` | `/api/playlists` | Listar todas las playlists |
+| `GET` | `/api/playlists/:id` | Obtener playlist con tracks |
+| `PUT` | `/api/playlists/:id` | Actualizar nombre |
+| `DELETE` | `/api/playlists/:id` | Eliminar playlist y tracks |
+| `POST` | `/api/playlists/:id/tracks` | Agregar track (acepta `position` opcional) |
+| `PUT` | `/api/playlists/:id/tracks/:trackId` | Editar track existente |
+| `DELETE` | `/api/playlists/:id/tracks/:trackId` | Eliminar track |
+| `PUT` | `/api/playlists/:id/tracks/reorder` | Reordenar tracks (body: `{ trackIds: string[] }`) |
+| `POST` | `/api/playlists/:id/play` | **Play now** - limpia cola y reproduce. Acepta `{ shuffle: true }` |
+| `POST` | `/api/playlists/:id/queue` | **Añadir a cola** - push al final. Acepta `{ shuffle: true }` |
+
+### Tipos de Track
+
+- `"song"` - Canción normal
+- `"interludio"` - Jingle, cuña o transición
+
+### Flujo de Play Now (`POST /api/playlists/:id/play`)
+
+1. Obtiene la playlist con todos sus tracks
+2. Mezcla si `shuffle: true`
+3. Para tracks con `file` en disco → van directos a la cola
+4. Para tracks con `spotifyUrl` → descarga vía SpotiFLAC primero
+5. Limpia la cola actual (`queue.clear`)
+6. Encola todos los tracks en orden
+7. Salta al primero (`queue.skip`)
+
+### Flujo de Queue (`POST /api/playlists/:id/queue`)
+
+1. Obtiene la playlist con todos sus tracks
+2. Mezcla si `shuffle: true`
+3. Para tracks locales → push al final de la cola
+4. Para tracks con `spotifyUrl` → descarga y encola cuando está listo
+5. No interrumpe lo que está sonando

@@ -1,0 +1,25 @@
+# Radio Bloom - Local Development Overrides
+# Maps local directories into containers for live editing
+# Usage: docker compose up (automatically merges with docker-compose.yml)
+
+services:
+  liquidsoap:
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./music/songs:/music/songs
+      - ./music/interludios:/music/interludios
+
+  publisher:
+    volumes:
+      - ./music/songs:/app/music/songs
+      - ./music/interludios:/app/music/interludios
+
+  downloader:
+    volumes:
+      - ./music/songs:/music/songs
+
+  ftp:
+    volumes:
+      - ./music/songs:/home/radio/music/songs
+      - ./music/interludios:/home/radio/music/interludios

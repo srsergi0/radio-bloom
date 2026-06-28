@@ -331,15 +331,35 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   app.post("/api/playlists/:id/tracks", async (c) => {
     const body = await c.req.json();
     if (!body.title) return c.json({ ok: false, error: "title is required" }, 400);
-    const track = deps.playlistRepo.addTrack(c.req.param("id"), {
-      type: body.type || "song",
-      file: body.file,
-      title: body.title,
-      artist: body.artist,
-      duration: body.duration || 0,
-      spotifyUrl: body.spotifyUrl,
-    });
+    const track = deps.playlistRepo.addTrack(
+      c.req.param("id"),
+      {
+        type: body.type || "song",
+        file: body.file,
+        title: body.title,
+        artist: body.artist,
+        duration: body.duration || 0,
+        spotifyUrl: body.spotifyUrl,
+      },
+      body.position
+    );
     if (!track) return c.json({ ok: false, error: "Playlist not found" }, 404);
+    return c.json({ ok: true, data: track });
+  });
+
+  app.put("/api/playlists/:id/tracks/:trackId", async (c) => {
+    const body = await c.req.json();
+    const updates: Record<string, any> = {};
+    if (body.type !== undefined) updates.type = body.type;
+    if (body.title !== undefined) updates.title = body.title;
+    if (body.artist !== undefined) updates.artist = body.artist;
+    if (body.duration !== undefined) updates.duration = body.duration;
+    if (body.spotifyUrl !== undefined) updates.spotifyUrl = body.spotifyUrl;
+    if (Object.keys(updates).length === 0) {
+      return c.json({ ok: false, error: "No fields to update" }, 400);
+    }
+    const track = deps.playlistRepo.updateTrack(c.req.param("id"), c.req.param("trackId"), updates);
+    if (!track) return c.json({ ok: false, error: "Track not found" }, 404);
     return c.json({ ok: true, data: track });
   });
 
@@ -398,6 +418,144 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     }
 
     return c.json({ ok: true, data: { playlistId: playlist.id, results } });
+  });
+
+  app.post("/api/playlists/:id/play", async (c) => {
+    const playlist = deps.playlistRepo.get(c.req.param("id"));
+    if (!playlist) return c.json({ ok: false, error: "Playlist not found" }, 404);
+    if (playlist.tracks.length === 0) {
+      return c.json({ ok: false, error: "Playlist is empty" }, 400);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const shuffle = body?.shuffle === true;
+
+    const tracks = [...playlist.tracks];
+    if (shuffle) {
+      for (let i = tracks.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [tracks[i], tracks[j]] = [tracks[j], tracks[i]];
+      }
+    }
+
+    const filepaths: string[] = [];
+    const pending: { track: (typeof tracks)[0]; filepath: string }[] = [];
+    const results: { title: string; status: string; error?: string }[] = [];
+
+    for (const track of tracks) {
+      const filepath = track.file ? join(deps.musicDir, track.file) : "";
+      if (filepath && existsSync(filepath)) {
+        filepaths.push(`/music/${track.file}`);
+        results.push({ title: track.title, status: "queued" });
+        continue;
+      }
+      if (track.spotifyUrl) {
+        pending.push({ track, filepath });
+      } else if (track.file) {
+        results.push({ title: track.title, status: "error", error: "File not found" });
+      }
+    }
+
+    const BATCH = 2;
+    for (let i = 0; i < pending.length; i += BATCH) {
+      const batch = pending.slice(i, i + BATCH);
+      const downloads = batch.map((p) =>
+        deps.downloadService
+          .downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
+            filepaths.push(`/music/${downloaded.file}`);
+            results.push({ title: downloaded.title, status: "queued" });
+          })
+          .catch((err: any) => {
+            results.push({ title: p.track.title, status: "error", error: err.message });
+            return null;
+          })
+      );
+      await Promise.allSettled(downloads);
+    }
+
+    if (filepaths.length === 0) {
+      return c.json({ ok: false, error: "No playable tracks found" }, 400);
+    }
+
+    const ok = await deps.liquidsoapService.playFilesNow(filepaths);
+    if (!ok) return c.json({ ok: false, error: "Failed to start playback" }, 500);
+
+    return c.json({
+      ok: true,
+      data: {
+        playlistId: playlist.id,
+        action: "play",
+        shuffle,
+        queued: filepaths.length,
+        results,
+      },
+    });
+  });
+
+  app.post("/api/playlists/:id/queue", async (c) => {
+    const playlist = deps.playlistRepo.get(c.req.param("id"));
+    if (!playlist) return c.json({ ok: false, error: "Playlist not found" }, 404);
+    if (playlist.tracks.length === 0) {
+      return c.json({ ok: false, error: "Playlist is empty" }, 400);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const shuffle = body?.shuffle === true;
+
+    const tracks = [...playlist.tracks];
+    if (shuffle) {
+      for (let i = tracks.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [tracks[i], tracks[j]] = [tracks[j], tracks[i]];
+      }
+    }
+
+    const results: { title: string; status: string; error?: string }[] = [];
+    const pending: { track: (typeof tracks)[0]; filepath: string }[] = [];
+
+    for (const track of tracks) {
+      const filepath = track.file ? join(deps.musicDir, track.file) : "";
+      if (filepath && existsSync(filepath)) {
+        const rid = await deps.liquidsoapService.queuePush(`/music/${track.file}`);
+        results.push({ title: track.title, status: rid ? "queued" : "error" });
+        continue;
+      }
+      if (track.spotifyUrl) {
+        pending.push({ track, filepath });
+      } else if (track.file) {
+        results.push({ title: track.title, status: "error", error: "File not found" });
+      }
+    }
+
+    const BATCH = 2;
+    for (let i = 0; i < pending.length; i += BATCH) {
+      const batch = pending.slice(i, i + BATCH);
+      const downloads = batch.map((p) =>
+        deps.downloadService
+          .downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
+            const rid = await deps.liquidsoapService.queuePush(`/music/${downloaded.file}`);
+            results.push({ title: downloaded.title, status: rid ? "queued" : "error" });
+          })
+          .catch((err: any) => {
+            results.push({ title: p.track.title, status: "error", error: err.message });
+            return null;
+          })
+      );
+      await Promise.allSettled(downloads);
+    }
+
+    const queue = await deps.liquidsoapService.queueList();
+    return c.json({
+      ok: true,
+      data: {
+        playlistId: playlist.id,
+        action: "queue",
+        shuffle,
+        queued: results.filter((r) => r.status === "queued").length,
+        results,
+        queue,
+      },
+    });
   });
 
   // ============================================================

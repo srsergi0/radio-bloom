@@ -1,0 +1,86 @@
+# Radio Bloom - Unified Docker Compose
+# All services in one stack for Coolify / production deployment
+
+services:
+  # ──────────────────────────────────────────────
+  # Liquidsoap - Streaming Engine
+  # ──────────────────────────────────────────────
+  liquidsoap:
+    image: savonet/liquidsoap:v2.2.5
+    restart: unless-stopped
+    volumes:
+      - ./liquidsoap/radio.liq:/etc/liquidsoap/radio.liq
+      - radio-music:/music/songs
+      - radio-interludios:/music/interludios
+    command: /etc/liquidsoap/radio.liq
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/localhost/8000' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ──────────────────────────────────────────────
+  # Publisher - API + Stream Broadcaster
+  # ──────────────────────────────────────────────
+  publisher:
+    build:
+      context: .
+      dockerfile: ./publisher/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${API_PORT}:${PUBLISHER_PORT}"
+    environment:
+      - LIQUIDSOAP_HOST=liquidsoap
+      - LIQUIDSOAP_TELNET_PORT=${LIQUIDSOAP_TELNET_PORT}
+      - LIQUIDSOAP_HARBOUR_PORT=${LIQUIDSOAP_HARBOUR_PORT}
+      - PORT=${PUBLISHER_PORT}
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+      - DOWNLOADER_URL=http://downloader:4002
+    volumes:
+      - radio-music:/app/music/songs
+      - radio-interludios:/app/music/interludios
+      - radio-publisher-data:/app/data
+    depends_on:
+      liquidsoap:
+        condition: service_healthy
+
+  # ──────────────────────────────────────────────
+  # Downloader - SpotiFLAC
+  # ──────────────────────────────────────────────
+  downloader:
+    build:
+      context: ./downloader
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - PORT=4002
+      - SONGS_DIR=/music/songs
+    volumes:
+      - radio-music:/music/songs
+
+  # ──────────────────────────────────────────────
+  # FTP - Song Upload Server
+  # ──────────────────────────────────────────────
+  ftp:
+    build: ./ftp
+    restart: unless-stopped
+    ports:
+      - "${FTP_PORT}:21"
+      - "${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}:${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}"
+    volumes:
+      - radio-music:/home/radio/music/songs
+      - radio-interludios:/home/radio/music/interludios
+    environment:
+      - PUBLICHOST=${FTP_PUBLIC_HOST}
+      - FTP_USER_NAME=${FTP_USER_NAME}
+      - FTP_USER_PASS=${FTP_USER_PASS}
+      - FTP_USER_HOME=${FTP_USER_HOME}
+      - UMASK=${FTP_UMASK}
+      - TLS_CN=${FTP_PUBLIC_HOST}
+
+volumes:
+  radio-music:
+  radio-interludios:
+  radio-publisher-data:

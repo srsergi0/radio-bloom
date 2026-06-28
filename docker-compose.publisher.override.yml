@@ -1,8 +1,0 @@
-services:
-  publisher:
-    volumes:
-      - ./music/songs:/app/music/songs
-      - ./music/interludios:/app/music/interludios
-  downloader:
-    volumes:
-      - ./music/songs:/music/songs

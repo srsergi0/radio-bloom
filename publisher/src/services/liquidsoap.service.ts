@@ -258,6 +258,21 @@ export class LiquidsoapService {
     }
   }
 
+  public async playFilesNow(filepaths: string[]): Promise<boolean> {
+    try {
+      await this.sendCommand("queue.clear");
+      await new Promise((r) => setTimeout(r, 500));
+      for (const filepath of filepaths) {
+        await this.queuePush(filepath);
+      }
+      await new Promise((r) => setTimeout(r, 500));
+      await this.sendCommand("queue.skip");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   public async reloadPlaylist(): Promise<void> {
     await this.sendCommand("reload");
   }

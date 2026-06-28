@@ -41,13 +41,10 @@ mkdir -p music/songs music/interludios
 ### 3. Arrancar
 
 ```bash
-docker network create radio-net 2>/dev/null
-
-docker compose -f docker-compose.engine.yml -f docker-compose.engine.override.yml up -d
-docker compose -f docker-compose.publisher.yml -f docker-compose.publisher.override.yml up -d
+docker compose up -d
 ```
 
-Los archivos `.override.yml` mapean tu carpeta `./music/` local a los contenedores (bind mounts), así que al agregar canciones por FTP o Spotify aparecen directamente en tu disco.
+El archivo `docker-compose.override.yml` se aplica automáticamente y mapea tu carpeta `./music/` local a los contenedores (bind mounts).
 
 ### 4. Abrir la web
 
@@ -66,8 +63,7 @@ Abrir http://localhost:3001
 ### Detener todo
 
 ```bash
-docker compose -f docker-compose.engine.yml -f docker-compose.engine.override.yml down
-docker compose -f docker-compose.publisher.yml -f docker-compose.publisher.override.yml down
+docker compose down
 ```
 
 ---
@@ -85,10 +81,9 @@ cp .env.example .env
 # Editar .env con credenciales reales
 ```
 
-### 2. Crear red y volumes
+### 2. Crear volumes
 
 ```bash
-docker network create radio-net
 docker volume create radio-music
 docker volume create radio-interludios
 docker volume create radio-publisher-data
@@ -106,8 +101,7 @@ docker run --rm \
 ### 4. Arrancar
 
 ```bash
-docker compose -f docker-compose.engine.yml up -d
-docker compose -f docker-compose.publisher.yml up -d
+docker compose up -d
 ```
 
 ### 5. Exponer stream
@@ -127,33 +121,23 @@ server {
     }
 
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:9876;
         proxy_set_header Host $host;
     }
 }
 ```
 
+> **Importante**: `proxy_buffering off;` es OBLIGATORIO para el stream de audio en vivo.
+
 ---
 
-## Despliegue en Coolify (Zero-Downtime)
+## Despliegue en Coolify
 
-Coolify redeployea todos los contenedores de un recurso en cada push. Para que un cambio en la web **no reinicie el motor de streaming**, se usan 2 stacks separados.
-
-### Concepto
-
-| Stack | Compose | Servicios | Auto Deploy |
-|-------|---------|-----------|-------------|
-| **radio-engine** | `docker-compose.engine.yml` | liquidsoap, ftp | Manual |
-| **radio-publisher** | `docker-compose.publisher.yml` | publisher, downloader | ON |
-
-Ambos stacks comparten la red Docker externa `radio-net` para comunicarse por DNS.
+Coolify usa el `docker-compose.yml` unificado. Todos los servicios comparten la misma red automáticamente.
 
 ### 1. Preparar el servidor (una sola vez)
 
 ```bash
-# Crear red compartida
-docker network create radio-net
-
 # Crear volumes
 docker volume create radio-music
 docker volume create radio-interludios
@@ -168,26 +152,23 @@ docker run --rm -v /data/radio/config:/config -v /tmp:/tmp alpine sh -c \
   "mkdir -p /config && cp /tmp/radio.liq /config/radio.liq"
 ```
 
-### 3. Crear los 2 resources en Coolify
+### 3. Crear el resource en Coolify
 
-En el mismo proyecto de Coolify, crear 2 resources apuntando al mismo repo:
-
-**Resource 1 — radio-engine:**
 - Build Pack: Docker Compose
-- Compose Location: `docker-compose.engine.yml`
-- Auto Deploy: **OFF**
-- Base Directory: `/`
-
-**Resource 2 — radio-publisher:**
-- Build Pack: Docker Compose
-- Compose Location: `docker-compose.publisher.yml`
+- Compose Location: `docker-compose.yml`
 - Auto Deploy: **ON**
 - Base Directory: `/`
 
 ### 4. Variables de entorno en Coolify
 
-**radio-engine:**
 ```
+API_PORT=9876
+LIQUIDSOAP_HOST=liquidsoap
+LIQUIDSOAP_TELNET_PORT=1234
+LIQUIDSOAP_HARBOUR_PORT=8000
+PUBLISHER_PORT=3000
+SPOTIFY_CLIENT_ID=tu-client-id
+SPOTIFY_CLIENT_SECRET=tu-client-secret
 FTP_PUBLIC_HOST=tudominio.com
 FTP_PORT=21
 FTP_PASSIVE_MIN=30000
@@ -198,33 +179,20 @@ FTP_USER_HOME=/home/radio
 FTP_UMASK=133
 ```
 
-**radio-publisher:**
-```
-API_PORT=9876
-LIQUIDSOAP_HOST=radio-liquidsoap
-LIQUIDSOAP_TELNET_PORT=1234
-LIQUIDSOAP_HARBOUR_PORT=8000
-PUBLISHER_PORT=3000
-SPOTIFY_CLIENT_ID=tu-client-id
-SPOTIFY_CLIENT_SECRET=tu-client-secret
-DOWNLOADER_URL=http://radio-downloader:4002
-```
-
-> `LIQUIDSOAP_HOST` debe ser `radio-liquidsoap` (el `container_name`), no `liquidsoap`.
+> `LIQUIDSOAP_HOST` debe ser `liquidsoap` (el nombre del servicio), no `radio-liquidsoap`.
 
 ### 5. Orden de deploy
 
-1. Deployear **radio-engine** primero (crea liquidsoap y ftp)
-2. Deployear **radio-publisher** después (se conecta al engine via `radio-net`)
+Solo hay un stack. Coolify redeployea todos los contenedores en cada push. El estado de reproducción se guarda en SQLite y se restaura automáticamente.
 
 ### Flujo de trabajo
 
 | Que cambia | Que pasa |
 |------------|----------|
-| `publisher/`, `web/` | radio-publisher se redeployea solo. **La radio no se cae**. |
-| `liquidsoap/radio.liq` | Deploy manual de radio-engine en Coolify. |
-| `downloader/` | Se rebuilda con radio-publisher. |
-| `ftp/` | Se rebuilda con radio-engine (deploy manual). |
+| `publisher/`, `web/` | Todo se redeployea. **La radio se cae ~5s y retoma donde quedó**. |
+| `liquidsoap/radio.liq` | Deploy manual o auto-deploy. |
+| `downloader/` | Se rebuilda con el publisher. |
+| `ftp/` | Se rebuilda con el mismo stack. |
 
 ---
 
@@ -245,7 +213,6 @@ DOWNLOADER_URL=http://radio-downloader:4002
 | POST | /api/stream/queue | Encolar canción |
 | GET | /api/stream/queue | Ver cola |
 | DELETE | /api/stream/queue | Vaciar cola |
-| WS | /ws | Eventos en tiempo real |
 
 ---
 
@@ -253,15 +220,13 @@ DOWNLOADER_URL=http://radio-downloader:4002
 
 ```
 radio/
-├── docker-compose.engine.yml          # Engine (liquidsoap + ftp)
-├── docker-compose.engine.override.yml # Local: bind mounts + port 8000
-├── docker-compose.publisher.yml       # Publisher + downloader
-├── docker-compose.publisher.override.yml  # Local: bind mounts
+├── docker-compose.yml               # Unificado (producción / Coolify)
+├── docker-compose.override.yml      # Local: bind mounts + ports
 ├── .env
 ├── liquidsoap/
-│   └── radio.liq                      # Config de Liquidsoap
+│   └── radio.liq                    # Config de Liquidsoap
 ├── ftp/
-│   ├── Dockerfile                     # Custom entrypoint (fix permisos)
+│   ├── Dockerfile                   # Custom entrypoint (fix permisos)
 │   └── entrypoint.sh
 ├── publisher/
 │   ├── src/
@@ -287,7 +252,10 @@ radio/
 
 ## Notas
 
+- **Producción**: `docker-compose.yml` — todos los servicios en un solo stack, misma red Docker automática.
+- **Desarrollo local**: `docker compose up` usa automáticamente `docker-compose.override.yml` con bind mounts.
 - **FTP**: Sube canciones a `music/songs/` vía FTP. El entrypoint del contenedor arregla permisos automáticamente.
 - **Spotify**: El publisher descarga directamente de Spotify usando Client Credentials API + SpotiFLAC.
 - **Liquidsoap**: Lee `/music/songs/` y reinicia la playlist cada 30 segundos. Soporta mp3, flac, m4a, ogg.
-- **Puertos**: Liquidsoap escucha en 8000 (harbor). En Coolify NO se expone al host — el publisher lo alcanza por Docker network. En local, el override lo mapea.
+- **Persistencia**: El estado de reproducción se guarda cada 15s en SQLite. Al reiniciar, retoma la canción donde quedó.
+- **Puertos**: Liquidsoap escucha en 8000 (harbor). En Coolify NO se expone al host — el publisher lo alcanza por Docker network.

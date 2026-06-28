@@ -50,3 +50,13 @@ If a commit was just made without permission, apologize and follow the rule goin
 
 - **First Step for Agents**: When starting to work on this project to understand its structure, scope, and key files, the first file you MUST read is `BITACORA.md`.
 - **Maintenance**: Whenever you create, modify, or delete files, you MUST update `BITACORA.md` to reflect any changes to the project's structure, files, or component connections. Only log useful/relevant changes that help future agents understand the project.
+
+# BITACORA.md Update Checklist
+
+**IMPORTANT**: After ANY code change (new feature, refactor, bugfix), you MUST:
+
+1. **Update file descriptions** in the tree if files were added/removed/renamed
+2. **Add new API endpoints** to the relevant table if endpoints were added/modified
+3. **Document new services/methods** if business logic was added
+4. **Update the workflow section** if data flow changed
+5. **Run `bun run check`** before finishing to ensure code quality

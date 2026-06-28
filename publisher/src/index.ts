@@ -7,8 +7,8 @@ import { SpotiflacClient } from "./infrastructure/spotiflac.client";
 import { TelnetClient } from "./infrastructure/telnet.client";
 import { ConfigRepository } from "./repositories/sqlite/config.repo";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
-import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { PlaybackStateRepository } from "./repositories/sqlite/playback-state.repo";
+import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { ConfigService } from "./services/config.service";
 import { DownloadService } from "./services/download.service";
 import { LibraryService } from "./services/library.service";
@@ -92,7 +92,10 @@ setTimeout(() => {
 // Restore playback state on startup (after Liquidsoap is likely ready)
 setTimeout(async () => {
   const state = playbackStateRepo.get();
-  if (!state || !state.file) return;
+  if (!state?.file) {
+    console.log("[restore] No saved state found. Starting fresh.");
+    return;
+  }
 
   console.log(`[restore] Previous track found: "${state.title}" by ${state.artist}`);
 
@@ -124,24 +127,26 @@ setTimeout(async () => {
       }
 
       // Wait for it to be ready, then skip to it
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 1000));
       await liquidsoapService.sendCommand("queue.skip");
 
       // Wait for the track to start playing, then seek to position
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 800));
 
       const currentRid = await liquidsoapService.getCurrentRequestId();
       if (currentRid) {
         const seekPos = Math.max(0, currentElapsed);
         const ok = await liquidsoapService.requestSeek(currentRid, seekPos);
-        console.log(`[restore] Seek to ${Math.round(seekPos)}s: ${ok ? "OK" : "failed, playing from start"}`);
+        console.log(
+          `[restore] Seek to ${Math.round(seekPos)}s: ${ok ? "OK" : "failed, playing from start"}`
+        );
       }
       return;
     }
     await new Promise((r) => setTimeout(r, 2000));
   }
   console.log("[restore] Liquidsoap not available after 60s, skipping restore.");
-}, 8000);
+}, 3000);
 
 // Persist current playback state every 15 seconds
 setInterval(async () => {

@@ -1,0 +1,10 @@
+services:
+  liquidsoap:
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./music/songs:/music/songs
+  ftp:
+    volumes:
+      - ./music/songs:/home/radio/music/songs
+      - ./music/interludios:/home/radio/music/interludios

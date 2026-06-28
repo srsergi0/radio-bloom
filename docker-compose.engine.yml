@@ -7,8 +7,6 @@ services:
       - ./liquidsoap/radio.liq:/etc/liquidsoap/radio.liq
       - radio-music:/music/songs
     command: /etc/liquidsoap/radio.liq
-    ports:
-      - "8000:8000"
     networks:
       - radio-net
 

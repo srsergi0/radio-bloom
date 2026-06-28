@@ -33,11 +33,6 @@ const DIST_DIR =
     ? "/app/web/dist"
     : resolve(import.meta.dirname || "", "../../web/dist");
 
-const DIST_DIR =
-  process.env.NODE_ENV === "production"
-    ? "/app/web/dist"
-    : resolve(import.meta.dirname || "", "../../web/dist");
-
 // ============================================================
 // 1. Infrastructure & Connections Instantiation
 // ============================================================

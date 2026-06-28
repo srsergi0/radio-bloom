@@ -1,4 +1,4 @@
-import { SpotdlClient } from "../infrastructure/spotdl.client";
+import { SpotiflacClient } from "../infrastructure/spotiflac.client";
 import { LibraryRepository } from "../repositories/sqlite/library.repo";
 import { FfprobeClient } from "../infrastructure/ffprobe.client";
 import { DownloadJob, Track } from "../domain/types";
@@ -10,7 +10,7 @@ export class DownloadService {
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
-    private readonly spotdlClient: SpotdlClient,
+    private readonly spotiflacClient: SpotiflacClient,
     private readonly ffprobeClient: FfprobeClient,
     private readonly songsDir: string
   ) {}
@@ -29,12 +29,12 @@ export class DownloadService {
     // Execute the download asynchronously in the background
     (async () => {
       try {
-        const result = await this.spotdlClient.download(url, (line) => {
-          console.log(`[DownloadService] [spotdl-log] ${line}`);
+        const result = await this.spotiflacClient.download(url, (line) => {
+          console.log(`[DownloadService] [spotiflac-log] ${line}`);
         });
 
         if (result.error || !result.filename) {
-          throw new Error(result.error || "No filename returned from spotdl");
+          throw new Error(result.error || "No filename returned from spotiflac");
         }
 
         const latestFile = result.filename;

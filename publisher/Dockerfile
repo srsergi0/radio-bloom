@@ -10,7 +10,7 @@ RUN bun run build
 FROM oven/bun:1.2-alpine
 
 RUN apk add --no-cache python3 py3-pip py3-setuptools ffmpeg && \
-    pip3 install --break-system-packages spotdl
+    pip3 install --break-system-packages SpotiFLAC
 
 WORKDIR /app/publisher
 

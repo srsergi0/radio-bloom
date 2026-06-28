@@ -6,7 +6,7 @@ import { ConfigRepository } from "./repositories/sqlite/config.repo";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { FfprobeClient } from "./infrastructure/ffprobe.client";
-import { SpotdlClient } from "./infrastructure/spotdl.client";
+import { SpotiflacClient } from "./infrastructure/spotiflac.client";
 import { TelnetClient } from "./infrastructure/telnet.client";
 import { ConfigService } from "./services/config.service";
 import { LibraryService } from "./services/library.service";
@@ -37,7 +37,7 @@ const dbConnection = new DatabaseConnection(dbPath);
 
 const telnetClient = new TelnetClient(LIQUIDSOAP_HOST, LIQUIDSOAP_TELNET_PORT);
 const ffprobeClient = new FfprobeClient();
-const spotdlClient = new SpotdlClient(SONGS_DIR);
+const spotiflacClient = new SpotiflacClient(SONGS_DIR);
 
 // ============================================================
 // 2. Repositories Instantiation (Data Access)
@@ -64,7 +64,7 @@ const libraryService = new LibraryService(
 
 const downloadService = new DownloadService(
   libraryRepo,
-  spotdlClient,
+  spotiflacClient,
   ffprobeClient,
   SONGS_DIR
 );

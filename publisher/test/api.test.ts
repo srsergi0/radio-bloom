@@ -10,7 +10,7 @@ process.env.MUSIC_DIR = process.env.MUSIC_DIR || join(TEMP_DIR, "music");
 process.env.MUSIC_MOUNT = process.env.MUSIC_MOUNT || join(TEMP_DIR, "music");
 
 import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
-import type { Track, SystemConfig, LibraryStats } from "../src/types";
+import type { Track, SystemConfig, LibraryStats } from "../src/domain/types";
 
 const mockSongs: Track[] = [
   { id: "s1", type: "song", file: "songs/cancion1.mp3", title: "Canción 1", artist: "Artist A", duration: 200, addedAt: "2024-01-01" },

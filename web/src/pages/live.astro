@@ -1,0 +1,228 @@
+---
+import Layout from "../layouts/Layout.astro";
+---
+
+<Layout title="Live Broadcast — Radio Bloom">
+  <main class="max-w-xl mx-auto px-6 py-16 space-y-8">
+    <h1 class="text-4xl font-black uppercase tracking-tight">Live Broadcast</h1>
+    <p class="text-zinc-400">Stream your microphone or CABLE Output directly to the radio.</p>
+
+    <div class="space-y-6 border-2 border-white p-6">
+      <div class="space-y-2">
+        <label class="text-sm font-bold uppercase tracking-wider">Audio Device</label>
+        <select id="deviceSelect" class="w-full border-2 border-white bg-black p-3 text-white">
+          <option value="">— Select a device —</option>
+        </select>
+        <button id="refreshDevices" class="text-xs underline text-zinc-500 hover:text-white">Refresh list</button>
+      </div>
+
+      <div class="flex gap-4">
+        <button id="startBtn" class="flex-1 border-2 border-white px-6 py-3 font-bold uppercase tracking-wider hover:bg-white hover:text-black disabled:opacity-30 disabled:cursor-not-allowed" disabled>
+          Start Streaming
+        </button>
+        <button id="stopBtn" class="flex-1 border-2 border-red-500 text-red-500 px-6 py-3 font-bold uppercase tracking-wider hover:bg-red-500 hover:text-black disabled:opacity-30 disabled:cursor-not-allowed" disabled>
+          Stop
+        </button>
+      </div>
+    </div>
+
+    <div id="status" class="border-2 border-zinc-800 p-4 font-mono text-sm space-y-1">
+      <div>Status: <span id="statusText" class="text-zinc-500">Idle</span></div>
+      <div>Streaming: <span id="streamTime">—</span></div>
+      <div>Audio format: <span id="audioFormat">—</span></div>
+    </div>
+
+    <div id="errorLog" class="text-red-400 text-sm font-mono hidden"></div>
+  </main>
+</Layout>
+
+<script>
+(() => {
+  const API_BASE = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+    ? "http://localhost:9876"
+    : "";
+
+  const WS_BASE = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+    ? "ws://localhost:9876"
+    : `wss://${window.location.hostname}`;
+
+  const deviceSelect = document.getElementById("deviceSelect");
+  const refreshBtn = document.getElementById("refreshDevices");
+  const startBtn = document.getElementById("startBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const statusText = document.getElementById("statusText");
+  const streamTime = document.getElementById("streamTime");
+  const audioFormat = document.getElementById("audioFormat");
+
+  let mediaRecorder = null;
+  let ws = null;
+  let stream = null;
+  let startTime = null;
+  let timerInterval = null;
+  let isStreaming = false;
+
+  async function loadDevices() {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices.filter((d) => d.kind === "audioinput");
+      deviceSelect.innerHTML = '<option value="">— Select a device —</option>';
+      for (const d of audioInputs) {
+        const opt = document.createElement("option");
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `Microphone ${deviceSelect.options.length}`;
+        deviceSelect.appendChild(opt);
+      }
+      if (audioInputs.length === 0) {
+        statusText.textContent = "No audio input devices found";
+        statusText.className = "text-red-400";
+      }
+    } catch (err) {
+      statusText.textContent = "Error loading devices: " + err.message;
+      statusText.className = "text-red-400";
+    }
+  }
+
+  deviceSelect.addEventListener("change", () => {
+    startBtn.disabled = !deviceSelect.value;
+  });
+
+  refreshBtn.addEventListener("click", loadDevices);
+
+  startBtn.addEventListener("click", startStreaming);
+  stopBtn.addEventListener("click", stopStreaming);
+
+  async function startStreaming() {
+    const deviceId = deviceSelect.value;
+    if (!deviceId) return;
+
+    setStatus("Requesting microphone...", "text-yellow-400");
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: { exact: deviceId },
+          sampleRate: 48000,
+          channelCount: 2,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+
+      const mimeType = getSupportedMimeType();
+      if (!mimeType) {
+        setStatus("No supported audio codec in this browser", "text-red-400");
+        return;
+      }
+
+      audioFormat.textContent = mimeType;
+      setStatus("Connecting to server...", "text-yellow-400");
+
+      // Connect WebSocket
+      ws = new WebSocket(`${WS_BASE}/ws/live`);
+      ws.binaryType = "arraybuffer";
+
+      ws.onopen = () => {
+        setStatus("Streaming live", "text-green-400");
+        isStreaming = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        deviceSelect.disabled = true;
+        startTimer();
+
+        mediaRecorder = new MediaRecorder(stream, { mimeType });
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0 && ws?.readyState === WebSocket.OPEN) {
+            ws.send(event.data);
+          }
+        };
+        mediaRecorder.onstop = () => cleanup();
+        mediaRecorder.start(1000);
+      };
+
+      ws.onerror = () => {
+        setStatus("WebSocket connection error", "text-red-400");
+        cleanup();
+      };
+
+      ws.onclose = () => {
+        if (isStreaming) {
+          setStatus("Connection lost", "text-red-400");
+          cleanup();
+        }
+      };
+    } catch (err) {
+      setStatus("Error: " + err.message, "text-red-400");
+    }
+  }
+
+  function stopStreaming() {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+    }
+    cleanup();
+    setStatus("Stopped", "text-zinc-500");
+  }
+
+  function cleanup() {
+    isStreaming = false;
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      try { mediaRecorder.stop(); } catch {}
+    }
+    if (ws) { try { ws.close(); } catch {} ws = null; }
+    if (stream) {
+      for (const track of stream.getTracks()) track.stop();
+      stream = null;
+    }
+    startBtn.disabled = !deviceSelect.value;
+    stopBtn.disabled = true;
+    deviceSelect.disabled = false;
+    streamTime.textContent = "—";
+    startTime = null;
+  }
+
+  function getSupportedMimeType() {
+    const types = [
+      "audio/webm;codecs=opus",
+      "audio/webm;codecs=pcm",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+      "audio/mp4;codecs=mp4a.40.2",
+      "audio/mpeg",
+    ];
+    for (const t of types) {
+      if (MediaRecorder.isTypeSupported(t)) return t;
+    }
+    return null;
+  }
+
+  function setStatus(msg, className) {
+    statusText.textContent = msg;
+    statusText.className = className || "text-zinc-400";
+  }
+
+  function startTimer() {
+    startTime = Date.now();
+    timerInterval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      const m = String(Math.floor(elapsed / 60)).padStart(2, "0");
+      const s = String(elapsed % 60).padStart(2, "0");
+      streamTime.textContent = `${m}:${s}`;
+    }, 1000);
+  }
+
+  // Handle page close
+  window.addEventListener("beforeunload", () => {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+    if (ws) ws.close();
+    if (stream) for (const t of stream.getTracks()) t.stop();
+  });
+
+  // Initial load
+  loadDevices();
+
+  // Reload devices when new ones appear
+  navigator.mediaDevices.addEventListener("devicechange", loadDevices);
+})();
+</script>

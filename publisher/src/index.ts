@@ -25,6 +25,13 @@ const LIQUIDSOAP_HOST = process.env.LIQUIDSOAP_HOST || "liquidsoap";
 const LIQUIDSOAP_TELNET_PORT = parseInt(process.env.LIQUIDSOAP_TELNET_PORT || "1234", 10);
 const LIQUIDSOAP_HARBOUR_PORT = process.env.LIQUIDSOAP_HARBOUR_PORT || "8000";
 const STREAM_URL = `http://${LIQUIDSOAP_HOST}:${LIQUIDSOAP_HARBOUR_PORT}/radiobloom.mp3`;
+const LIVE_HARBOUR_URL = `http://${LIQUIDSOAP_HOST}:8001/live.mp3`;
+const LIVE_AUTH = `Basic ${Buffer.from("source:hackme").toString("base64")}`;
+
+const DIST_DIR =
+  process.env.NODE_ENV === "production"
+    ? "/app/web/dist"
+    : resolve(import.meta.dirname || "", "../../web/dist");
 
 const DIST_DIR =
   process.env.NODE_ENV === "production"
@@ -187,20 +194,26 @@ class StreamBroadcaster {
 const broadcaster = new StreamBroadcaster();
 
 // ============================================================
-// 6. HTTP Server (Bun.serve)
+// 6. HTTP Server (Bun.serve) with WebSocket for browser live
 // ============================================================
 const _server = Bun.serve({
   port: PORT,
-  async fetch(req) {
+  async fetch(req, server) {
     const url = new URL(req.url);
+
+    // WebSocket for browser live streaming
+    if (url.pathname === "/ws/live") {
+      const upgraded = server.upgrade(req);
+      if (!upgraded) return new Response("WebSocket upgrade failed", { status: 400 });
+      return;
+    }
 
     // PUT /live.mp3: FFmpeg envía audio en vivo al harbor de Liquidsoap
     if (url.pathname === "/live.mp3" && req.method === "PUT") {
-      const liveUrl = `http://${LIQUIDSOAP_HOST}:8001/live.mp3`;
       try {
         const headers = new Headers(req.headers);
         headers.delete("host");
-        const upRes = await fetch(liveUrl, {
+        const upRes = await fetch(LIVE_HARBOUR_URL, {
           method: "PUT",
           headers,
           body: req.body,
@@ -244,6 +257,50 @@ const _server = Bun.serve({
 
     // Delegate REST, static files, and MCP to Hono
     return apiRouter.fetch(req);
+  },
+  websocket: {
+    open(ws) {
+      console.log("[ws/live] Browser connected for live streaming");
+      let streamController: ReadableStreamDefaultController | null = null;
+
+      const body = new ReadableStream({
+        start(c) { streamController = c; },
+        cancel() { ws.close(); },
+      });
+
+      ws.data = { streamController };
+
+      fetch(LIVE_HARBOUR_URL, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "audio/webm;codecs=opus",
+          Authorization: LIVE_AUTH,
+        },
+        body,
+        duplex: "half",
+      }).then((res) => {
+        console.log(`[ws/live] Harbor responded: ${res.status}`);
+      }).catch((err) => {
+        console.error("[ws/live] Harbor error:", err.message);
+        ws.close();
+      });
+    },
+    message(ws, message) {
+      if (typeof message === "string") return;
+      if (ws.data?.streamController) {
+        try {
+          ws.data.streamController.enqueue(message);
+        } catch {
+          ws.close();
+        }
+      }
+    },
+    close(ws) {
+      console.log("[ws/live] Browser disconnected");
+      if (ws.data?.streamController) {
+        try { ws.data.streamController.close(); } catch {}
+      }
+    },
   },
 });
 

@@ -154,12 +154,12 @@ export default function LiveStream() {
       codec: "mp4a.40.2",
       sampleRate,
       numberOfChannels: channels,
-      bitrate: 320_000,
+      bitrate: 192_000,
     });
     encoderRef.current = encoder;
 
     setStreaming(true);
-    setFormat(`AAC 320kbps ${sampleRate}Hz`);
+    setFormat(`AAC 192kbps ${sampleRate}Hz`);
 
     // Read PCM frames and feed to encoder
     const pump = async () => {

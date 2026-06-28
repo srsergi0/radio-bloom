@@ -239,6 +239,5 @@ export class LibraryService {
     }
   }
 
-  public shutdown(): void {
-  }
+  public shutdown(): void {}
 }

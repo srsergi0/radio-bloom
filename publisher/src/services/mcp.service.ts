@@ -157,6 +157,12 @@ export class McpService {
           ),
       },
       async ({ file }) => {
+        const track = this.libraryRepo.getTrackByFile(file);
+        if (!track)
+          return {
+            content: [{ type: "text", text: `El archivo '${file}' no existe en la biblioteca` }],
+            isError: true,
+          };
         const filepath = `/music/${file}`;
         const rid = await this.liquidsoapService.queuePush(filepath);
         if (!rid) return { content: [{ type: "text", text: "Error al encolar" }], isError: true };
@@ -188,6 +194,12 @@ export class McpService {
         file: z.string().describe("Ruta del archivo (campo 'file' del track)"),
       },
       async ({ position, file }) => {
+        const track = this.libraryRepo.getTrackByFile(file);
+        if (!track)
+          return {
+            content: [{ type: "text", text: `El archivo '${file}' no existe en la biblioteca` }],
+            isError: true,
+          };
         const filepath = `/music/${file}`;
         const ok = await this.liquidsoapService.queueInsert(position - 1, filepath);
         if (!ok)
@@ -266,6 +278,12 @@ export class McpService {
         file: z.string().describe("Ruta del archivo (campo 'file' del track)"),
       },
       async ({ file }) => {
+        const track = this.libraryRepo.getTrackByFile(file);
+        if (!track)
+          return {
+            content: [{ type: "text", text: `El archivo '${file}' no existe en la biblioteca` }],
+            isError: true,
+          };
         const filepath = `/music/${file}`;
         const ok = await this.liquidsoapService.playFileNow(filepath);
         if (!ok) return { content: [{ type: "text", text: "Error al reproducir" }], isError: true };

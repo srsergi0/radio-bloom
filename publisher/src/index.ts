@@ -349,7 +349,7 @@ const _server = Bun.serve({
       fetch(LIVE_HARBOUR_URL, {
         method: "PUT",
         headers: {
-          "Content-Type": "audio/mpeg",
+          "Content-Type": "audio/aac",
           Authorization: LIVE_AUTH,
         },
         body: pass.readable,

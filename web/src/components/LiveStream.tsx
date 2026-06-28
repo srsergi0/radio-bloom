@@ -1,25 +1,11 @@
 import { useState, useRef, useCallback } from "react";
 
-const getMp3Encoder = () => (window as any).lamejs?.Mp3Encoder;
-
-const CHANNELS = 2;
-const Kbps = 320;
-const PCM_BLOCK = 1152;
-
 function wsUrl(): string {
   const loc = window.location;
   if (loc.hostname === "localhost" || loc.hostname === "127.0.0.1") {
     return "ws://localhost:9876/ws/live";
   }
   return `wss://${loc.host}/ws/live`;
-}
-
-function apiBase(): string {
-  const loc = window.location;
-  if (loc.hostname === "localhost" || loc.hostname === "127.0.0.1") {
-    return "http://localhost:9876";
-  }
-  return "";
 }
 
 export default function LiveStream() {
@@ -29,13 +15,16 @@ export default function LiveStream() {
   const [format, setFormat] = useState("—");
 
   const wsRef = useRef<WebSocket | null>(null);
-  const encoderRef = useRef<any>(null);
-  const ctxRef = useRef<AudioContext | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const encoderRef = useRef<AudioEncoder | null>(null);
+  const readerRef = useRef<ReadableStreamDefaultReader | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef(0);
+  const aacConfigRef = useRef<{
+    samplerate: number;
+    channels: number;
+    profile: number;
+  } | null>(null);
 
   const startTimer = () => {
     startTimeRef.current = Date.now();
@@ -50,38 +39,46 @@ export default function LiveStream() {
     setElapsed(0);
   };
 
+  const buildAdts = (frameSize: number): Uint8Array => {
+    const cfg = aacConfigRef.current!;
+    const profile = cfg.profile; // 2 = AAC-LC
+    const srIdx = cfg.samplerate;
+    const chanCfg = cfg.channels;
+    const fullLen = frameSize + 7;
+
+    const buf = new Uint8Array(7);
+    // Syncword 0xFFF
+    buf[0] = 0xFF;
+    buf[1] = 0xF0 | (0 << 3) | (0 << 1) | 1; // ID=0(MPEG4), layer=0, protection=1
+    buf[2] = (profile - 1) << 6 | (srIdx << 2) | (chanCfg >> 2);
+    buf[3] = (chanCfg & 3) << 6 | (fullLen >> 11);
+    buf[4] = (fullLen >> 3) & 0xFF;
+    buf[5] = ((fullLen & 7) << 5) | 0x1F;
+    buf[6] = 0xFC;
+    return buf;
+  };
+
   const cleanup = useCallback(() => {
-    // Close processor
-    if (processorRef.current && ctxRef.current) {
-      processorRef.current.disconnect();
+    if (readerRef.current) {
+      readerRef.current.cancel().catch(() => {});
+      readerRef.current = null;
     }
-    // Close audio context
-    if (ctxRef.current) {
-      ctxRef.current.close().catch(() => {});
-      ctxRef.current = null;
+    if (encoderRef.current) {
+      encoderRef.current.close();
+      encoderRef.current = null;
     }
-    // Stop tracks
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
-    // Flush encoder
-    if (encoderRef.current) {
-      const last = encoderRef.current.flush();
-      if (last.length > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(last);
-      }
-      encoderRef.current = null;
-    }
-    // Close WebSocket
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
     }
+    aacConfigRef.current = null;
   }, []);
 
   const startStreaming = async () => {
-    // 1. Screen share
     let mediaStream: MediaStream;
     try {
       mediaStream = await (navigator.mediaDevices as any).getDisplayMedia({
@@ -93,7 +90,6 @@ export default function LiveStream() {
       setStatus("Cancelled: " + err.message);
       return;
     }
-
     if (!mediaStream.getAudioTracks().length) {
       setStatus("No audio track");
       return;
@@ -102,73 +98,83 @@ export default function LiveStream() {
     setStatus("Connecting...");
     streamRef.current = mediaStream;
 
-    // 2. Connect WebSocket
+    // WebSocket
     const ws = new WebSocket(wsUrl());
     ws.binaryType = "arraybuffer";
-
     await new Promise<void>((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("WS timeout")), 5000);
       ws.onopen = () => { clearTimeout(t); resolve(); };
       ws.onerror = () => { clearTimeout(t); reject(new Error("WS error")); };
     });
-
     wsRef.current = ws;
 
-    // 3. Setup MP3 encoder
-    const Mp3Encoder = getMp3Encoder();
-    if (!Mp3Encoder) {
-      setStatus("lamejs not loaded");
-      cleanup();
-      return;
-    }
-    const encoder = new Mp3Encoder(CHANNELS, ctx.sampleRate, Kbps);
-    encoderRef.current = encoder;
+    // WebCodecs: get raw PCM track
+    const track = mediaStream.getAudioTracks()[0];
+    const processor = new (window as any).MediaStreamTrackProcessor({ track });
+    const reader = processor.readable.getReader();
+    readerRef.current = reader;
 
-    // 4. Audio pipeline — use default sample rate (matches source)
-    const ctx = new AudioContext();
-    ctxRef.current = ctx;
-
-    const source = ctx.createMediaStreamSource(mediaStream);
-    sourceRef.current = source;
-
-    const processor = ctx.createScriptProcessor(16384, CHANNELS, CHANNELS);
-    processorRef.current = processor;
-
-    // Mute output to prevent echo (graph must reach destination to process)
-    const mute = ctx.createGain();
-    mute.gain.value = 0;
-
-    processor.onaudioprocess = (event) => {
-      const input = event.inputBuffer;
-      const len = input.length;
-      const left = input.getChannelData(0);
-      const right = input.getChannelData(1);
-
-      const leftInt = new Int16Array(len);
-      const rightInt = new Int16Array(len);
-      for (let i = 0; i < len; i++) {
-        leftInt[i] = Math.max(-32768, Math.min(32767, left[i] * 32768));
-        rightInt[i] = Math.max(-32768, Math.min(32767, right[i] * 32768));
-      }
-
-      for (let i = 0; i < len; i += PCM_BLOCK) {
-        const end = Math.min(i + PCM_BLOCK, len);
-        const mp3 = encoder.encodeBuffer(
-          leftInt.subarray(i, end),
-          rightInt.subarray(i, end)
-        );
-        if (mp3.length > 0 && ws.readyState === WebSocket.OPEN) {
-          ws.send(mp3);
+    // AudioEncoder: encode to AAC
+    const encoder = new AudioEncoder({
+      output: (chunk: EncodedAudioChunk) => {
+        const cfg = aacConfigRef.current;
+        if (!cfg) return;
+        const adts = buildAdts(chunk.byteLength);
+        const aacData = new Uint8Array(chunk.byteLength + 7);
+        aacData.set(adts, 0);
+        chunk.copyTo(aacData.subarray(7));
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(aacData);
         }
-      }
+      },
+      error: (e: Error) => {
+        console.error("AudioEncoder error:", e);
+      },
+    });
+
+    const trackSettings = track.getSettings?.() || {};
+    const sampleRate = trackSettings.sampleRate || 48000;
+    const channels = trackSettings.channelCount || 2;
+
+    // Map sample rate to ADTS index
+    const srMap: Record<number, number> = {
+      96000: 0, 88200: 1, 64000: 2, 48000: 3, 44100: 4,
+      32000: 5, 24000: 6, 22050: 7, 16000: 8, 12000: 9,
+      11025: 10, 8000: 11, 7350: 12,
+    };
+    const srIdx = srMap[sampleRate] ?? 4;
+
+    aacConfigRef.current = {
+      samplerate: srIdx,
+      channels,
+      profile: 2, // AAC-LC
     };
 
-    source.connect(processor);
-    processor.connect(mute);
-    mute.connect(ctx.destination);
+    encoder.configure({
+      codec: "mp4a.40.2",
+      sampleRate,
+      numberOfChannels: channels,
+      bitrate: 320_000,
+    });
+    encoderRef.current = encoder;
 
     setStreaming(true);
-    setFormat(`MP3 ${Kbps}kbps ${ctx.sampleRate}Hz`);
+    setFormat(`AAC 320kbps ${sampleRate}Hz`);
+
+    // Read PCM frames and feed to encoder
+    const pump = async () => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          // value is AudioData (PCM)
+          encoder.encode(value);
+          value.close();
+        }
+      } catch {}
+    };
+    pump();
+
     setStatus("Streaming live");
     startTimer();
   };
@@ -187,9 +193,8 @@ export default function LiveStream() {
     <main className="max-w-xl mx-auto px-6 py-16 space-y-8">
       <h1 className="text-4xl font-black uppercase tracking-tight">Live Broadcast</h1>
       <p className="text-zinc-400">
-        Click "Start Streaming" and select a tab to share its audio. High quality, no cables.
+        Click "Start Streaming" and select a tab to share its audio. WebCodecs encode.
       </p>
-
       <div className="space-y-6 border-2 border-white p-6">
         <div className="flex gap-4">
           <button
@@ -208,7 +213,6 @@ export default function LiveStream() {
           </button>
         </div>
       </div>
-
       <div className="border-2 border-zinc-800 p-4 font-mono text-sm space-y-1">
         <div>
           Status:{" "}

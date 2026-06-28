@@ -7,7 +7,7 @@ settings.server.telnet.bind_addr := "0.0.0.0"
 # ============================================================
 # Live Input (recibe audio desde tu PC vía BUTT/FFmpeg/OBS)
 # ============================================================
-live_input = input.harbor("/live.mp3", port=8001)
+live_input = input.harbor("/live.mp3", port=8001, user="source", password="hackme")
 
 # Control de modo live vía telnet: var.set live_active = true|false
 live_active = interactive.bool("live_active", false)

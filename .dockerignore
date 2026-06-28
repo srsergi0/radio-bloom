@@ -1,0 +1,22 @@
+# Ignore node modules
+**/node_modules
+
+# Ignore git
+.git
+.github
+
+# Ignore local database and dynamic data
+**/data
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Ignore local build outputs that will be rebuilt inside docker
+web/dist
+
+# Ignore audio files/songs (these are mounted as volumes, no need to copy them to the image)
+music/
+songs/
+*.mp3
+*.wav

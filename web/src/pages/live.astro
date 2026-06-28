@@ -37,8 +37,7 @@ import Layout from "../layouts/Layout.astro";
 </Layout>
 
 <script>
-(() => {
-  const API_BASE = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+const API_BASE = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
     ? "http://localhost:9876"
     : "";
 
@@ -100,24 +99,16 @@ import Layout from "../layouts/Layout.astro";
     setStatus("Requesting microphone...", "text-yellow-400");
 
     try {
-      audioStream = await navigator.mediaDevices.getUserMedia({
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           deviceId: { exact: deviceSelect.value },
-          sampleRate: 48000,
-          channelCount: 2,
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
         },
       });
 
-      const mimeType = getSupportedMimeType();
-      if (!mimeType) {
-        setStatus("No supported audio codec in this browser", "text-red-400");
-        return;
-      }
-
-      audioFormat.textContent = mimeType;
+      audioFormat.textContent = "PCM f32le 48kHz";
       setStatus("Streaming live", "text-green-400");
       isStreaming = true;
       startBtn.disabled = true;
@@ -125,42 +116,60 @@ import Layout from "../layouts/Layout.astro";
       deviceSelect.disabled = true;
       startTimer();
 
-      mediaRecorder = new MediaRecorder(audioStream, { mimeType });
-      mediaRecorder.ondataavailable = async (event) => {
-        if (event.data.size > 0) {
-          try {
-            await fetch(`${API_BASE}/api/live/chunk`, {
-              method: "POST",
-              body: event.data,
-            });
-          } catch {
-            // Server might be unreachable, continue trying
+      // Use AudioContext to capture raw PCM
+      const audioCtx = new AudioContext({ sampleRate: 48000 });
+      const source = audioCtx.createMediaStreamSource(mediaStream);
+      const processor = audioCtx.createScriptProcessor(4096, 2, 2);
+
+      processor.onaudioprocess = (event) => {
+        const input = event.inputBuffer;
+        const channelData: Float32Array[] = [];
+        for (let ch = 0; ch < input.numberOfChannels; ch++) {
+          channelData.push(input.getChannelData(ch));
+        }
+
+        // Interleave channels and convert to Float32 buffer
+        const frameCount = input.length;
+        const numChannels = input.numberOfChannels;
+        const interleaved = new Float32Array(frameCount * numChannels);
+        for (let i = 0; i < frameCount; i++) {
+          for (let ch = 0; ch < numChannels; ch++) {
+            interleaved[i * numChannels + ch] = channelData[ch][i];
           }
         }
+
+        // Send raw PCM chunk
+        fetch(`${API_BASE}/api/live/chunk`, {
+          method: "POST",
+          headers: { "Content-Type": "audio/x-raw" },
+          body: interleaved.buffer,
+        }).catch(() => {});
       };
-      mediaRecorder.onstop = () => cleanup();
-      mediaRecorder.start(1000);
+
+      processor.connect(audioCtx.destination);
+      audioStream = mediaStream;
+
+      // Store for cleanup
+      (window as any).__audioCtx = audioCtx;
+      (window as any).__processor = processor;
     } catch (err) {
       setStatus("Error: " + err.message, "text-red-400");
     }
   }
 
   function stopStreaming() {
-    if (mediaRecorder && mediaRecorder.state !== "inactive") {
-      mediaRecorder.stop();
-    }
-    fetch(`${API_BASE}/api/live/stop`, { method: "POST" }).catch(() => {});
+    const audioCtx = (window as any).__audioCtx;
+    const processor = (window as any).__processor;
+    if (processor) processor.disconnect();
+    if (audioCtx) audioCtx.close();
     cleanup();
+    fetch(`${API_BASE}/api/live/stop`, { method: "POST" }).catch(() => {});
     setStatus("Stopped", "text-zinc-500");
   }
 
   function cleanup() {
     isStreaming = false;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-    if (mediaRecorder && mediaRecorder.state !== "inactive") {
-      try { mediaRecorder.stop(); } catch {}
-      mediaRecorder = null;
-    }
     if (audioStream) {
       for (const track of audioStream.getTracks()) track.stop();
       audioStream = null;
@@ -170,21 +179,6 @@ import Layout from "../layouts/Layout.astro";
     deviceSelect.disabled = false;
     streamTime.textContent = "—";
     startTime = null;
-  }
-
-  function getSupportedMimeType() {
-    const types = [
-      "audio/webm;codecs=opus",
-      "audio/webm;codecs=pcm",
-      "audio/webm",
-      "audio/ogg;codecs=opus",
-      "audio/mp4;codecs=mp4a.40.2",
-      "audio/mpeg",
-    ];
-    for (const t of types) {
-      if (MediaRecorder.isTypeSupported(t)) return t;
-    }
-    return null;
   }
 
   function setStatus(msg, className) {
@@ -203,11 +197,11 @@ import Layout from "../layouts/Layout.astro";
   }
 
   window.addEventListener("beforeunload", () => {
-    if (mediaRecorder && mediaRecorder.state !== "inactive") try { mediaRecorder.stop(); } catch {}
+    const audioCtx = (window as any).__audioCtx;
+    if (audioCtx) audioCtx.close();
     if (audioStream) for (const t of audioStream.getTracks()) t.stop();
   });
 
   loadDevices();
   navigator.mediaDevices.addEventListener("devicechange", loadDevices);
-})();
 </script>

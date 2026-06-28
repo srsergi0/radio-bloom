@@ -1,5 +1,7 @@
 import "./env";
 import { resolve } from "node:path";
+import { spawn } from "node:child_process";
+import { PassThrough } from "node:stream";
 import { createApiRouter } from "./api/router";
 import { DatabaseConnection } from "./infrastructure/database";
 import { FfprobeClient } from "./infrastructure/ffprobe.client";
@@ -189,33 +191,52 @@ class StreamBroadcaster {
 const broadcaster = new StreamBroadcaster();
 
 // ============================================================
-// 6. Live Chunk Receiver (recibe chunks vía HTTP POST y los
-//    reenvía al harbor como un solo PUT persistente)
+// 6. Live Chunk Receiver
 // ============================================================
 class LiveChunkReceiver {
-  private controller: ReadableStreamDefaultController | null = null;
-  private abortController: AbortController | null = null;
+  private ffmpeg: ReturnType<typeof spawn> | null = null;
+  private harbourAbort: AbortController | null = null;
   public isConnected = false;
   private chunkCount = 0;
 
   async start() {
-    if (this.controller) return;
-    this.abortController = new AbortController();
+    if (this.ffmpeg) {
+      console.log("[live] start() called but already running");
+      return;
+    }
+    console.log("[live] start() - spawning FFmpeg PCM→MP3...");
+    this.chunkCount = 0;
+    this.harbourAbort = new AbortController();
 
-    const body = new ReadableStream({
-      start: (c) => { this.controller = c; },
-      cancel: () => { this.stop(); },
+    // FFmpeg: convert raw PCM f32le 48kHz stereo to MP3
+    this.ffmpeg = spawn("ffmpeg", [
+      "-f", "f32le",
+      "-ar", "48000",
+      "-ac", "2",
+      "-i", "pipe:0",
+      "-f", "mp3",
+      "-b:a", "320k",
+      "pipe:1",
+    ], { stdio: ["pipe", "pipe", "pipe"] });
+
+    this.ffmpeg.stderr?.on("data", (d) => {
+      const msg = d.toString().trim();
+      if (msg) console.log("[live] FFmpeg:", msg);
     });
+
+    // Pipe FFmpeg stdout → PassThrough → harbor
+    const pt = new PassThrough();
+    this.ffmpeg.stdout?.pipe(pt);
 
     fetch(LIVE_HARBOUR_URL, {
       method: "PUT",
       headers: {
-        "Content-Type": "audio/webm;codecs=opus",
+        "Content-Type": "audio/mpeg",
         Authorization: LIVE_AUTH,
       },
-      body,
+      body: pt as any,
       duplex: "half",
-      signal: this.abortController.signal,
+      signal: this.harbourAbort.signal,
     }).then((res) => {
       console.log(`[live] Harbor PUT status: ${res.status}`);
       if (!res.ok) this.stop();
@@ -226,10 +247,9 @@ class LiveChunkReceiver {
       this.stop();
     });
 
-    // Small delay to let the connection establish
     await new Promise((r) => setTimeout(r, 500));
     this.isConnected = true;
-    console.log("[live] Chunk receiver started");
+    console.log("[live] Chunk receiver started (PCM→MP3 transcoding)");
   }
 
   pushChunk(data: Uint8Array) {
@@ -237,24 +257,23 @@ class LiveChunkReceiver {
     if (this.chunkCount % 10 === 0) {
       console.log(`[live] Received ${this.chunkCount} chunks`);
     }
-    if (this.controller) {
+    if (this.ffmpeg?.stdin?.writable) {
       try {
-        this.controller.enqueue(data);
-      } catch {
-        this.stop();
-      }
+        this.ffmpeg.stdin.write(Buffer.from(data));
+      } catch { this.stop(); }
     }
   }
 
   stop() {
     this.isConnected = false;
-    if (this.controller) {
-      try { this.controller.close(); } catch {}
-      this.controller = null;
+    if (this.ffmpeg) {
+      try { this.ffmpeg.stdin?.end(); } catch {}
+      setTimeout(() => { try { this.ffmpeg?.kill(); } catch {} }, 1000);
+      this.ffmpeg = null;
     }
-    if (this.abortController) {
-      try { this.abortController.abort(); } catch {}
-      this.abortController = null;
+    if (this.harbourAbort) {
+      try { this.harbourAbort.abort(); } catch {}
+      this.harbourAbort = null;
     }
     if (this.chunkCount > 0) {
       console.log(`[live] Chunk receiver stopped after ${this.chunkCount} chunks`);
@@ -302,12 +321,17 @@ const _server = Bun.serve({
 
     // POST /api/live/chunk: recibe chunks del navegador y los reenvía al harbor
     if (url.pathname === "/api/live/chunk" && req.method === "POST") {
-      const buf = await req.arrayBuffer();
-      if (!liveReceiver.isConnected) {
-        await liveReceiver.start();
+      try {
+        const buf = await req.arrayBuffer();
+        if (!liveReceiver.isConnected) {
+          await liveReceiver.start();
+        }
+        liveReceiver.pushChunk(new Uint8Array(buf));
+        return new Response("ok", { status: 200 });
+      } catch (err: any) {
+        console.error("[live] Chunk handler error:", err.message);
+        return new Response(err.message, { status: 500 });
       }
-      liveReceiver.pushChunk(new Uint8Array(buf));
-      return new Response("ok", { status: 200 });
     }
 
     // POST /api/live/stop: detiene el streaming del navegador

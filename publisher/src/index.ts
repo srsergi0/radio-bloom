@@ -1,6 +1,5 @@
 import "./env";
 import { resolve } from "node:path";
-import { spawn } from "node:child_process";
 import { createApiRouter } from "./api/router";
 import { DatabaseConnection } from "./infrastructure/database";
 import { FfprobeClient } from "./infrastructure/ffprobe.client";
@@ -28,7 +27,6 @@ const LIQUIDSOAP_TELNET_PORT = parseInt(process.env.LIQUIDSOAP_TELNET_PORT || "1
 const LIQUIDSOAP_HARBOUR_PORT = process.env.LIQUIDSOAP_HARBOUR_PORT || "8000";
 const STREAM_URL = `http://${LIQUIDSOAP_HOST}:${LIQUIDSOAP_HARBOUR_PORT}/radiobloom.mp3`;
 const LIVE_HARBOUR_URL = `http://${LIQUIDSOAP_HOST}:8001/live.mp3`;
-const LIVE_AUTH = `Basic ${Buffer.from("source:hackme").toString("base64")}`;
 
 const DIST_DIR =
   process.env.NODE_ENV === "production"
@@ -269,79 +267,12 @@ class StreamBroadcaster {
 const broadcaster = new StreamBroadcaster();
 
 // ============================================================
-// 6. Live Chunk Receiver (recibe MP3 del browser y lo reenvía
-//    al harbor como un solo PUT persistente)
-// ============================================================
-class LiveChunkReceiver {
-  private harbourAbort: AbortController | null = null;
-  private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
-  public isConnected = false;
-
-  async start() {
-    if (this.writer) return;
-    this.harbourAbort = new AbortController();
-
-    const pass = new TransformStream<Uint8Array>();
-    this.writer = pass.writable.getWriter();
-
-    fetch(LIVE_HARBOUR_URL, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "audio/mpeg",
-        Authorization: LIVE_AUTH,
-      },
-      body: pass.readable,
-      duplex: "half",
-      signal: this.harbourAbort.signal,
-    }).then((res) => {
-      console.log(`[live] Harbor MP3 PUT: ${res.status}`);
-      if (!res.ok) this.stop();
-    }).catch((err) => {
-      if (err.name !== "AbortError") {
-        console.error("[live] Harbor error:", err.message);
-      }
-      this.stop();
-    });
-
-    await new Promise((r) => setTimeout(r, 300));
-    this.isConnected = true;
-  }
-
-  pushChunk(data: Uint8Array) {
-    if (this.writer) {
-      try { this.writer.write(data); } catch { this.stop(); }
-    }
-  }
-
-  stop() {
-    this.isConnected = false;
-    if (this.writer) {
-      try { this.writer.close(); } catch {}
-      this.writer = null;
-    }
-    if (this.harbourAbort) {
-      try { this.harbourAbort.abort(); } catch {}
-      this.harbourAbort = null;
-    }
-  }
-}
-
-const liveReceiver = new LiveChunkReceiver();
-
-// ============================================================
-// 7. HTTP Server (Bun.serve)
+// 6. HTTP Server (Bun.serve)
 // ============================================================
 const _server = Bun.serve({
   port: PORT,
   async fetch(req, server) {
     const url = new URL(req.url);
-
-    // WebSocket for browser live streaming
-    if (url.pathname === "/ws/live") {
-      const upgraded = server.upgrade(req);
-      if (!upgraded) return new Response("WebSocket upgrade failed", { status: 400 });
-      return;
-    }
 
     // PUT /live.mp3: FFmpeg envía audio en vivo al harbor de Liquidsoap
     if (url.pathname === "/live.mp3" && req.method === "PUT") {
@@ -361,30 +292,6 @@ const _server = Bun.serve({
       } catch {
         return new Response("Live upstream not available", { status: 502 });
       }
-    }
-
-    // POST /api/live/chunk: recibe chunks del navegador y los reenvía al harbor
-    if (url.pathname === "/api/live/chunk" && req.method === "POST") {
-      try {
-        const buf = await req.arrayBuffer();
-        const isFirst = !liveReceiver.isConnected;
-        if (isFirst) {
-          await liveReceiver.start();
-        }
-        liveReceiver.pushChunk(new Uint8Array(buf));
-        // First chunk: wait a bit for FFmpeg to start producing MP3
-        if (isFirst) await new Promise((r) => setTimeout(r, 1000));
-        return new Response("ok", { status: 200 });
-      } catch (err: any) {
-        console.error("[live] Chunk handler error:", err.message);
-        return new Response(err.message, { status: 500 });
-      }
-    }
-
-    // POST /api/live/stop: detiene el streaming del navegador
-    if (url.pathname === "/api/live/stop" && req.method === "POST") {
-      liveReceiver.stop();
-      return new Response("ok", { status: 200 });
     }
 
     // Audio stream route (único endpoint /radiobloom.mp3)
@@ -416,68 +323,6 @@ const _server = Bun.serve({
 
     // Delegate REST, static files, and MCP to Hono
     return apiRouter.fetch(req);
-  },
-  websocket: {
-    idleTimeout: 0,
-    maxPayloadLength: 4 * 1024 * 1024,
-    open(ws) {
-      console.log("[ws/live] Browser connected (PCM→FFmpeg→MP3→Harbor)");
-
-      // FFmpeg: PCM f32le 48kHz stereo → MP3 320kbps
-      const ff = spawn("ffmpeg", [
-        "-f", "f32le", "-ar", "48000", "-ac", "2",
-        "-i", "pipe:0",
-        "-f", "mp3", "-b:a", "320k",
-        "pipe:1",
-      ], { stdio: ["pipe", "pipe", "pipe"] });
-
-      ff.stderr?.on("data", () => {}); // drain stderr
-
-      // ReadableStream from FFmpeg stdout
-      const body = new ReadableStream({
-        start(controller) {
-          ff.stdout?.on("data", (chunk: Buffer) => {
-            try { controller.enqueue(new Uint8Array(chunk)); } catch {}
-          });
-          ff.stdout?.on("end", () => {
-            try { controller.close(); } catch {}
-          });
-        },
-        cancel() {
-          try { ff.kill(); } catch {}
-          ws.close();
-        },
-      });
-
-      // Send to harbor
-      fetch(LIVE_HARBOUR_URL, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "audio/mpeg",
-          Authorization: LIVE_AUTH,
-        },
-        body,
-        duplex: "half",
-      }).then((res) => {
-        console.log(`[ws/live] Harbor: ${res.status}`);
-      }).catch((err) => {
-        console.error("[ws/live] Harbor error:", err.message);
-      });
-
-      ws.data = { ff };
-    },
-    message(ws, message) {
-      if (typeof message !== "string" && ws.data?.ff?.stdin?.writable) {
-        try { ws.data.ff.stdin.write(Buffer.from(message)); } catch {}
-      }
-    },
-    close(ws) {
-      console.log("[ws/live] Browser disconnected");
-      if (ws.data?.ff) {
-        try { ws.data.ff.stdin?.end(); } catch {}
-        setTimeout(() => { try { ws.data.ff.kill(); } catch {} }, 500);
-      }
-    },
   },
 });
 

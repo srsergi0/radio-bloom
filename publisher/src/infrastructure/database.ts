@@ -73,6 +73,18 @@ export class DatabaseConnection {
     `);
 
     this.client.exec(`
+      CREATE TABLE IF NOT EXISTS playback_state (
+        id TEXT PRIMARY KEY,
+        file TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        artist TEXT NOT NULL DEFAULT '',
+        elapsed REAL NOT NULL DEFAULT 0,
+        duration REAL NOT NULL DEFAULT 0,
+        saved_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+
+    this.client.exec(`
       CREATE TABLE IF NOT EXISTS playlists (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,

@@ -258,6 +258,15 @@ export class LiquidsoapService {
     }
   }
 
+  public async requestSeek(rid: string, position: number): Promise<boolean> {
+    try {
+      const lines = await this.sendCommand(`request.seek ${rid} ${position}`);
+      return lines.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
   public async reloadPlaylist(): Promise<void> {
     await this.sendCommand("reload");
   }

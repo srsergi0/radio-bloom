@@ -40,6 +40,16 @@ export const playlists = sqliteTable("playlists", {
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
 
+export const playbackState = sqliteTable("playback_state", {
+  id: text("id").primaryKey(),
+  file: text("file").notNull().default(""),
+  title: text("title").notNull().default(""),
+  artist: text("artist").notNull().default(""),
+  elapsed: real("elapsed").notNull().default(0),
+  duration: real("duration").notNull().default(0),
+  savedAt: text("saved_at").notNull().default(sql`(datetime('now'))`),
+});
+
 export const playlistTracks = sqliteTable("playlist_tracks", {
   id: text("id").primaryKey(),
   playlistId: text("playlist_id")

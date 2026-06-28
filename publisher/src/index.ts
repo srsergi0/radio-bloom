@@ -1,5 +1,6 @@
 import "./env";
 import { resolve } from "node:path";
+import { spawn } from "node:child_process";
 import { createApiRouter } from "./api/router";
 import { DatabaseConnection } from "./infrastructure/database";
 import { FfprobeClient } from "./infrastructure/ffprobe.client";
@@ -7,6 +8,7 @@ import { SpotiflacClient } from "./infrastructure/spotiflac.client";
 import { TelnetClient } from "./infrastructure/telnet.client";
 import { ConfigRepository } from "./repositories/sqlite/config.repo";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
+import { PlaybackStateRepository } from "./repositories/sqlite/playback-state.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { ConfigService } from "./services/config.service";
 import { DownloadService } from "./services/download.service";
@@ -49,6 +51,7 @@ const spotiflacClient = new SpotiflacClient(SONGS_DIR);
 const configRepo = new ConfigRepository(dbConnection);
 const libraryRepo = new LibraryRepository(dbConnection);
 const playlistRepo = new PlaylistRepository(dbConnection);
+const playbackStateRepo = new PlaybackStateRepository(dbConnection);
 
 // ============================================================
 // 3. Services & Use Cases Instantiation
@@ -84,6 +87,83 @@ setTimeout(() => {
     console.log(`[startup] Re-downloading ${results.length} missing tracks...`);
   }
 }, 5000);
+
+// ============================================================
+// Playback State Persistence & Restore
+// ============================================================
+
+// Restore playback state on startup (after Liquidsoap is likely ready)
+setTimeout(async () => {
+  const state = playbackStateRepo.get();
+  if (!state || !state.file) return;
+
+  console.log(`[restore] Previous track found: "${state.title}" by ${state.artist}`);
+
+  const savedAtMs = new Date(state.savedAt).getTime();
+  if (Number.isNaN(savedAtMs)) {
+    playbackStateRepo.clear();
+    return;
+  }
+
+  const secondsSinceSave = (Date.now() - savedAtMs) / 1000;
+  const currentElapsed = state.elapsed + secondsSinceSave;
+
+  if (state.duration > 0 && currentElapsed >= state.duration) {
+    console.log("[restore] Previous track would have ended. Starting fresh.");
+    playbackStateRepo.clear();
+    return;
+  }
+
+  // Retry loop waiting for Liquidsoap connection (up to 60s)
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if (liquidsoapService.isConnected()) {
+      console.log(`[restore] Resuming "${state.file}" at ~${Math.round(currentElapsed)}s`);
+
+      // Push to queue — queue has priority over background playlist
+      const rid = await liquidsoapService.queuePush(state.file);
+      if (!rid) {
+        console.log("[restore] Failed to push track to queue.");
+        return;
+      }
+
+      // Wait for it to be ready, then skip to it
+      await new Promise((r) => setTimeout(r, 1500));
+      await liquidsoapService.sendCommand("queue.skip");
+
+      // Wait for the track to start playing, then seek to position
+      await new Promise((r) => setTimeout(r, 1000));
+
+      const currentRid = await liquidsoapService.getCurrentRequestId();
+      if (currentRid) {
+        const seekPos = Math.max(0, currentElapsed);
+        const ok = await liquidsoapService.requestSeek(currentRid, seekPos);
+        console.log(`[restore] Seek to ${Math.round(seekPos)}s: ${ok ? "OK" : "failed, playing from start"}`);
+      }
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  console.log("[restore] Liquidsoap not available after 60s, skipping restore.");
+}, 8000);
+
+// Persist current playback state every 15 seconds
+setInterval(async () => {
+  try {
+    const status = await liquidsoapService.getStreamStatus();
+    if (!status.playing || !status.metadata) return;
+
+    const file = status.metadata.filename || status.metadata.initial_uri || "";
+    if (!file) return;
+
+    playbackStateRepo.save({
+      file,
+      title: status.title || "",
+      artist: status.artist || "",
+      elapsed: status.elapsed,
+      duration: status.duration,
+    });
+  } catch {}
+}, 15000);
 
 // ============================================================
 // 4. API & Static Router Instantiation
@@ -339,37 +419,63 @@ const _server = Bun.serve({
   },
   websocket: {
     idleTimeout: 0,
-    maxPayloadLength: 1024 * 1024,
+    maxPayloadLength: 4 * 1024 * 1024,
     open(ws) {
-      console.log("[ws/live] Browser connected");
-      const pass = new TransformStream<Uint8Array>();
-      const writer = pass.writable.getWriter();
-      ws.data = { writer };
+      console.log("[ws/live] Browser connected (PCM→FFmpeg→MP3→Harbor)");
 
+      // FFmpeg: PCM f32le 48kHz stereo → MP3 320kbps
+      const ff = spawn("ffmpeg", [
+        "-f", "f32le", "-ar", "48000", "-ac", "2",
+        "-i", "pipe:0",
+        "-f", "mp3", "-b:a", "320k",
+        "pipe:1",
+      ], { stdio: ["pipe", "pipe", "pipe"] });
+
+      ff.stderr?.on("data", () => {}); // drain stderr
+
+      // ReadableStream from FFmpeg stdout
+      const body = new ReadableStream({
+        start(controller) {
+          ff.stdout?.on("data", (chunk: Buffer) => {
+            try { controller.enqueue(new Uint8Array(chunk)); } catch {}
+          });
+          ff.stdout?.on("end", () => {
+            try { controller.close(); } catch {}
+          });
+        },
+        cancel() {
+          try { ff.kill(); } catch {}
+          ws.close();
+        },
+      });
+
+      // Send to harbor
       fetch(LIVE_HARBOUR_URL, {
         method: "PUT",
         headers: {
-          "Content-Type": "audio/aac",
+          "Content-Type": "audio/mpeg",
           Authorization: LIVE_AUTH,
         },
-        body: pass.readable,
+        body,
         duplex: "half",
       }).then((res) => {
         console.log(`[ws/live] Harbor: ${res.status}`);
       }).catch((err) => {
         console.error("[ws/live] Harbor error:", err.message);
-        ws.close();
       });
+
+      ws.data = { ff };
     },
     message(ws, message) {
-      if (typeof message !== "string" && ws.data?.writer) {
-        try { ws.data.writer.write(new Uint8Array(message)); } catch { ws.close(); }
+      if (typeof message !== "string" && ws.data?.ff?.stdin?.writable) {
+        try { ws.data.ff.stdin.write(Buffer.from(message)); } catch {}
       }
     },
     close(ws) {
       console.log("[ws/live] Browser disconnected");
-      if (ws.data?.writer) {
-        try { ws.data.writer.close(); } catch {}
+      if (ws.data?.ff) {
+        try { ws.data.ff.stdin?.end(); } catch {}
+        setTimeout(() => { try { ws.data.ff.kill(); } catch {} }, 500);
       }
     },
   },

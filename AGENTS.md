@@ -33,3 +33,15 @@ To keep compilation, linting, and type checking ultra-fast, follow these guideli
     - `bun run format`
     - `bun run check`
 
+# Git: No Auto-Commit or Push
+
+Never commit or push changes unless explicitly asked by the user. Even then, ask for double confirmation before executing:
+
+1. Show a summary of what will be committed (files and changes)
+2. Ask explicitly: "¿Confirmas el commit y push?"
+3. Only proceed after receiving explicit "yes" or "si"
+
+This applies to all situations including fixes, features, experiments, and WIP. No exceptions.
+
+If a commit was just made without permission, apologize and follow the rule going forward.
+

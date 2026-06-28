@@ -88,6 +88,7 @@ setTimeout(() => {
 // ============================================================
 const apiRouter = createApiRouter({
   configService,
+  libraryRepo,
   libraryService,
   liquidsoapService,
   downloadService,

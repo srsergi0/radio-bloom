@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
+import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import type { ConfigService } from "../services/config.service";
 import type { DownloadService } from "../services/download.service";
@@ -12,6 +13,7 @@ import type { McpService } from "../services/mcp.service";
 
 export interface ApiDependencies {
   configService: ConfigService;
+  libraryRepo: LibraryRepository;
   libraryService: LibraryService;
   liquidsoapService: LiquidsoapService;
   downloadService: DownloadService;

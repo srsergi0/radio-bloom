@@ -15,7 +15,7 @@ export class DatabaseConnection {
     }
 
     this.client = new Database(dbPath);
-    this.client.exec("PRAGMA journal_mode = WAL");
+    this.client.exec("PRAGMA journal_mode = DELETE");
     this.client.exec("PRAGMA foreign_keys = ON");
 
     this.createTables();

@@ -2,7 +2,8 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir SpotiFLAC
+# Usamos caché de BuildKit para acelerar pip install
+RUN --mount=type=cache,target=/root/.cache/pip pip install SpotiFLAC
 
 COPY server.py .
 

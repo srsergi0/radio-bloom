@@ -49,7 +49,7 @@ radio/
 ├── AGENTS.md                             # Reglas globales de comportamiento y control de herramientas para agentes IA
 │
 ├── downloader/                           # Microservicio de Descarga
-│   ├── Dockerfile                        # Dockerfile para compilar la imagen Python del downloader
+│   ├── Dockerfile                        # Dockerfile optimizado (BuildKit Cache) para la imagen Python del downloader
 │   └── server.py                         # Servidor web en Python que expone el endpoint de descarga vía SpotiFLAC
 │
 ├── ftp/                                  # Servidor FTP para subir canciones manualmente
@@ -64,7 +64,7 @@ radio/
 │   └── interludios/                      # Cuñas, anuncios o sonidos de transición entre pistas
 │
 ├── publisher/                            # Backend API (Bun + TypeScript + Drizzle)
-│   ├── Dockerfile                        # Configuración de compilación para producción con Bun
+│   ├── Dockerfile                        # Dockerfile optimizado (BuildKit Cache, prod-only deps) para producción con Bun
 │   ├── tsconfig.json                     # Configuración del compilador TypeScript
 │   ├── package.json                      # Dependencias de npm y scripts de Bun (dev, db:migrate, etc.)
 │   ├── drizzle.config.ts                 # Configuración de Drizzle ORM (schema, output, db path)

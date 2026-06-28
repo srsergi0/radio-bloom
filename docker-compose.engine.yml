@@ -10,23 +10,6 @@ services:
     networks:
       - radio-net
 
-  metadata-enricher:
-    build:
-      context: ./metadata-enricher
-      dockerfile: Dockerfile
-    container_name: radio-enricher
-    restart: unless-stopped
-    ports:
-      - "4001:4001"
-    environment:
-      - PORT=4001
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-    networks:
-      - radio-net
-
   ftp:
     image: stilliard/pure-ftpd:hardened
     container_name: radio-ftp

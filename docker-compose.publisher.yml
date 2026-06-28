@@ -12,7 +12,8 @@ services:
       - LIQUIDSOAP_TELNET_PORT=${LIQUIDSOAP_TELNET_PORT}
       - LIQUIDSOAP_HARBOUR_PORT=${LIQUIDSOAP_HARBOUR_PORT}
       - PORT=${PUBLISHER_PORT}
-      - ENRICHER_URL=http://radio-enricher:4001
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
     volumes:
       - ./music:/app/music
       - ./publisher/data:/app/data

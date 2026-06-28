@@ -1,4 +1,4 @@
-import { SpotifyFreeClient } from "../infrastructure/spotify-free.client";
+import { spotifySearch } from "../infrastructure/spotify.client";
 
 export interface EnrichmentResult {
   title: string;
@@ -10,16 +10,10 @@ export interface EnrichmentResult {
 }
 
 export class MetadataEnrichmentService {
-  private readonly spotifyFree: SpotifyFreeClient;
-
-  constructor() {
-    this.spotifyFree = new SpotifyFreeClient();
-  }
-
   async enrich(title: string, artist?: string): Promise<EnrichmentResult | null> {
     if (!title) return null;
 
-    const spotify = await this.spotifyFree.search(title + " " + (artist || ""));
+    const spotify = await spotifySearch(title + " " + (artist || ""));
     if (!spotify) return null;
 
     return {

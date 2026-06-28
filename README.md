@@ -92,10 +92,10 @@ Se divide en 2 stacks independientes que comparten una red Docker externa:
 
 | Stack | Compose | Servicios | Auto Deploy |
 |-------|---------|-----------|-------------|
-| **radio-engine** | `docker-compose.engine.yml` | liquidsoap, metadata-enricher, ftp | ❌ Manual |
+| **radio-engine** | `docker-compose.engine.yml` | liquidsoap, ftp | ❌ Manual |
 | **radio-publisher** | `docker-compose.publisher.yml` | publisher | ✅ ON |
 
-Los contenedores usan `container_name` fijo (`radio-liquidsoap`, `radio-enricher`, `radio-publisher`, `radio-ftp`) para que Docker DNS los resuelva correctamente entre stacks mediante la red externa `radio-net`.
+Los contenedores usan `container_name` fijo (`radio-liquidsoap`, `radio-publisher`, `radio-ftp`) para que Docker DNS los resuelva correctamente entre stacks mediante la red externa `radio-net`.
 
 ### Configuracion en Coolify
 
@@ -123,14 +123,10 @@ En un mismo proyecto de Coolify, crear **2 resources** apuntando al mismo reposi
 
 #### 3. Variables de entorno
 
-Configurar las mismas variables del `.env` en ambos resources de Coolify (seccion Environment Variables de cada resource):
+Configurar las variables del `.env` en ambos resources de Coolify:
 
+**radio-engine:**
 ```
-API_PORT=9876
-LIQUIDSOAP_HOST=radio-liquidsoap
-LIQUIDSOAP_TELNET_PORT=1234
-LIQUIDSOAP_HARBOUR_PORT=8000
-PUBLISHER_PORT=3000
 FTP_PUBLIC_HOST=<tu-dominio>
 FTP_PORT=21
 FTP_PASSIVE_MIN=30000
@@ -141,11 +137,22 @@ FTP_USER_HOME=/home/radio
 FTP_UMASK=133
 ```
 
-> **Importante:** `LIQUIDSOAP_HOST` debe ser `radio-liquidsoap` (el `container_name`), no `liquidsoap`. Igualmente `ENRICHER_URL` usa `http://radio-enricher:4001`.
+**radio-publisher:**
+```
+API_PORT=9876
+LIQUIDSOAP_HOST=radio-liquidsoap
+LIQUIDSOAP_TELNET_PORT=1234
+LIQUIDSOAP_HARBOUR_PORT=8000
+PUBLISHER_PORT=3000
+SPOTIFY_CLIENT_ID=<tu-client-id>
+SPOTIFY_CLIENT_SECRET=<tu-client-secret>
+```
+
+> **Importante:** `LIQUIDSOAP_HOST` debe ser `radio-liquidsoap` (el `container_name`), no `liquidsoap`. Los `SPOTIFY_CLIENT_ID` y `SPOTIFY_CLIENT_SECRET` se obtienen de [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
 
 #### 4. Despliegue inicial
 
-1. Deployear **radio-engine** primero (crea liquidsoap, enricher y ftp)
+1. Deployear **radio-engine** primero (crea liquidsoap y ftp)
 2. Deployear **radio-publisher** despues (conecta con engine via `radio-net`)
 
 ### Flujo de trabajo
@@ -153,8 +160,8 @@ FTP_UMASK=133
 | Que cambia | Que pasa |
 |------------|----------|
 | `web/`, `publisher/` | radio-publisher se redeployea solo. La radio **no se cae**. |
-| `liquidsoap/`, `metadata-enricher/` | Entras a Coolify y deployeas radio-engine manualmente. |
-| `.env` | Actualizar variables en ambos resources de Coolify. |
+| `liquidsoap/` | Entras a Coolify y deployeas radio-engine manualmente. |
+| Variables de entorno | Actualizar variables en ambos resources de Coolify. |
 
 ### Local (sin Coolify)
 

@@ -34,20 +34,13 @@ mkdir -p music/songs
 mkdir -p music/interludios
 ```
 
-### 3. Create the shared Docker network
+### 3. Start everything
 
 ```bash
-docker network create radio-net
+docker compose up -d
 ```
 
-### 4. Start everything
-
-```bash
-docker compose -f docker-compose.engine.yml up -d
-docker compose -f docker-compose.publisher.yml up -d
-```
-
-### 5. Open the control panel
+### 4. Open the control panel
 
 ```bash
 cd web
@@ -57,7 +50,7 @@ bun run dev
 
 Open http://localhost:3001
 
-### 6. Add music
+### 5. Add music
 
 - Pega un link de Spotify en el input del sidebar
 - Click descargar (o presiona Enter)
@@ -65,7 +58,7 @@ Open http://localhost:3001
 - La canción aparece en la biblioteca
 - Arrástrala al timeline
 
-### 7. Configure Cloudflare Tunnel
+### 6. Configure Cloudflare Tunnel
 
 Tu tunnel ya instalado debe apuntar a `localhost:8000`:
 
@@ -177,29 +170,13 @@ DOWNLOADER_URL=http://radio-downloader:4002
 
 ### Local (sin Coolify)
 
-Para desarrollo local, crea la misma estructura de directorios:
-
 ```bash
-# Crear estructura de directorios
-mkdir -p /data/radio/music/songs
-mkdir -p /data/radio/music/interludios
-mkdir -p /data/radio/config
-mkdir -p /data/radio/publisher-data
-
-# Copiar config de liquidsoap
-cp liquidsoap/radio.liq /data/radio/config/radio.liq
-
-# Copiar música existente (si tienes)
-cp -r music/songs/* /data/radio/music/songs/ 2>/dev/null || true
-cp -r music/interludios/* /data/radio/music/interludios/ 2>/dev/null || true
-
-# Crear red y levantar
-docker network create radio-net
-docker compose -f docker-compose.engine.yml up -d
-docker compose -f docker-compose.publisher.yml up -d
+cp .env.example .env
+mkdir -p music/songs music/interludios
+docker compose up -d
 ```
 
-> **Tip:** Si estás en Windows, usa `C:\data\radio\music` y ajusta los paths en los compose files.
+Eso es todo. El `docker-compose.yml` levanta todo junto con paths relativos.
 
 ## API
 
@@ -223,8 +200,9 @@ docker compose -f docker-compose.publisher.yml up -d
 
 ```
 radio/
-├── docker-compose.engine.yml        # liquidsoap + enricher + ftp
-├── docker-compose.publisher.yml     # publisher solo
+├── docker-compose.yml               # Local - todo en uno
+├── docker-compose.engine.yml        # Coolify - liquidsoap + ftp
+├── docker-compose.publisher.yml     # Coolify - publisher + downloader
 ├── .env
 ├── icecast/
 │   └── icecast.xml

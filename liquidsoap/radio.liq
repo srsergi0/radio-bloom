@@ -15,12 +15,6 @@ live_input = input.harbor(
   max=30.
 )
 
-# Monitoreo de conexión del live input
-live_connected = ref(false)
-thread.run.recurrent(delay=2., {
-  live_connected := source.is_ready(live_input)
-})
-
 # Control de modo live vía telnet
 live_active = ref(false)
 server.register(namespace="live", "active",
@@ -31,7 +25,7 @@ server.register(namespace="live", "active",
 server.register(namespace="live", "connected",
   "Check if live input is receiving data (read-only)",
   { fun (_) -> "read-only" },
-  { fun () -> string_of_bool(!live_connected) }
+  { fun () -> string_of_bool(source.is_ready(live_input)) }
 )
 
 # ============================================================
@@ -53,10 +47,12 @@ normal = fallback(track_sensitive=false, [queue, radio])
 
 # ============================================================
 # Live Switch: live solo cuando está activo Y hay conexión
-# Si no, siempre cae a modo normal
+# fallback interno: si live_input no recibe datos (desconectado),
+# cae automáticamente a normal sin silencio
 # ============================================================
+live_with_fallback = fallback(track_sensitive=false, [live_input, normal])
 main = switch(track_sensitive=false, [
-  ({ live_active and source.is_ready(live_input) }, live_input),
+  ({ live_active }, live_with_fallback),
   ({ true }, normal)
 ])
 

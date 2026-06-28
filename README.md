@@ -99,10 +99,21 @@ Los contenedores usan `container_name` fijo (`radio-liquidsoap`, `radio-publishe
 
 ### Configuracion en Coolify
 
-#### 1. Crear la red Docker (una sola vez en el servidor)
+#### 1. Crear la red Docker y directorios (una sola vez en el servidor)
 
 ```bash
 docker network create radio-net
+mkdir -p /data/radio/music/songs
+mkdir -p /data/radio/music/interludios
+mkdir -p /data/radio/config
+mkdir -p /data/radio/publisher-data
+```
+
+#### 2. Copiar archivos de configuración al servidor
+
+```bash
+# Copiar liquidsoap/radio.liq al servidor
+scp liquidsoap/radio.liq root@TU_SERVIDOR:/data/radio/config/radio.liq
 ```
 
 #### 2. Crear los dos resources en Coolify
@@ -166,11 +177,29 @@ DOWNLOADER_URL=http://radio-downloader:4002
 
 ### Local (sin Coolify)
 
+Para desarrollo local, crea la misma estructura de directorios:
+
 ```bash
-docker network create radio-net          # una vez
+# Crear estructura de directorios
+mkdir -p /data/radio/music/songs
+mkdir -p /data/radio/music/interludios
+mkdir -p /data/radio/config
+mkdir -p /data/radio/publisher-data
+
+# Copiar config de liquidsoap
+cp liquidsoap/radio.liq /data/radio/config/radio.liq
+
+# Copiar música existente (si tienes)
+cp -r music/songs/* /data/radio/music/songs/ 2>/dev/null || true
+cp -r music/interludios/* /data/radio/music/interludios/ 2>/dev/null || true
+
+# Crear red y levantar
+docker network create radio-net
 docker compose -f docker-compose.engine.yml up -d
 docker compose -f docker-compose.publisher.yml up -d
 ```
+
+> **Tip:** Si estás en Windows, usa `C:\data\radio\music` y ajusta los paths en los compose files.
 
 ## API
 

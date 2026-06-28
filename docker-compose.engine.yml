@@ -4,8 +4,8 @@ services:
     container_name: radio-liquidsoap
     restart: unless-stopped
     volumes:
-      - ./liquidsoap/radio.liq:/etc/liquidsoap/radio.liq
-      - ./music/songs:/music/songs
+      - /data/radio/config/radio.liq:/etc/liquidsoap/radio.liq
+      - /data/radio/music/songs:/music/songs
     command: /etc/liquidsoap/radio.liq
     networks:
       - radio-net
@@ -18,8 +18,8 @@ services:
       - "${FTP_PORT}:21"
       - "${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}:${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}"
     volumes:
-      - ./music/songs:/home/radio/music/songs
-      - ./music/interludios:/home/radio/music/interludios
+      - /data/radio/music/songs:/home/radio/music/songs
+      - /data/radio/music/interludios:/home/radio/music/interludios
     environment:
       - PUBLICHOST=${FTP_PUBLIC_HOST}
       - FTP_USER_NAME=${FTP_USER_NAME}

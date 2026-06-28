@@ -2,16 +2,16 @@ import "./env";
 import { resolve } from "node:path";
 import { createApiRouter } from "./api/router";
 import { DatabaseConnection } from "./infrastructure/database";
-import { ConfigRepository } from "./repositories/sqlite/config.repo";
-import { LibraryRepository } from "./repositories/sqlite/library.repo";
-import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { FfprobeClient } from "./infrastructure/ffprobe.client";
 import { SpotiflacClient } from "./infrastructure/spotiflac.client";
 import { TelnetClient } from "./infrastructure/telnet.client";
+import { ConfigRepository } from "./repositories/sqlite/config.repo";
+import { LibraryRepository } from "./repositories/sqlite/library.repo";
+import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { ConfigService } from "./services/config.service";
+import { DownloadService } from "./services/download.service";
 import { LibraryService } from "./services/library.service";
 import { LiquidsoapService } from "./services/liquidsoap.service";
-import { DownloadService } from "./services/download.service";
 import { McpService } from "./services/mcp.service";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -25,9 +25,10 @@ const LIQUIDSOAP_TELNET_PORT = parseInt(process.env.LIQUIDSOAP_TELNET_PORT || "1
 const LIQUIDSOAP_HARBOUR_PORT = process.env.LIQUIDSOAP_HARBOUR_PORT || "8000";
 const STREAM_URL = `http://${LIQUIDSOAP_HOST}:${LIQUIDSOAP_HARBOUR_PORT}/radiobloom.mp3`;
 
-const DIST_DIR = process.env.NODE_ENV === "production"
-  ? "/app/web/dist"
-  : resolve(import.meta.dirname || "", "../../web/dist");
+const DIST_DIR =
+  process.env.NODE_ENV === "production"
+    ? "/app/web/dist"
+    : resolve(import.meta.dirname || "", "../../web/dist");
 
 // ============================================================
 // 1. Infrastructure & Connections Instantiation
@@ -53,28 +54,13 @@ const configService = new ConfigService(configRepo);
 const liquidsoapService = new LiquidsoapService(telnetClient, ffprobeClient, MUSIC_MOUNT);
 
 // LibraryService deletes should clear the Liquidsoap queue
-const libraryService = new LibraryService(
-  libraryRepo,
-  ffprobeClient,
-  MUSIC_DIR,
-  async () => {
-    await liquidsoapService.queueClear();
-  }
-);
+const libraryService = new LibraryService(libraryRepo, ffprobeClient, MUSIC_DIR, async () => {
+  await liquidsoapService.queueClear();
+});
 
-const downloadService = new DownloadService(
-  libraryRepo,
-  spotiflacClient,
-  ffprobeClient,
-  SONGS_DIR
-);
+const downloadService = new DownloadService(libraryRepo, spotiflacClient, ffprobeClient, SONGS_DIR);
 
-const mcpService = new McpService(
-  libraryRepo,
-  playlistRepo,
-  libraryService,
-  liquidsoapService
-);
+const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liquidsoapService);
 
 // Initialize active services
 libraryService.init();

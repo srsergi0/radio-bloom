@@ -1,5 +1,5 @@
-import { ConfigRepository } from "../repositories/sqlite/config.repo";
-import { SystemConfig } from "../domain/types";
+import type { SystemConfig } from "../domain/types";
+import type { ConfigRepository } from "../repositories/sqlite/config.repo";
 
 export class ConfigService {
   constructor(private readonly configRepo: ConfigRepository) {}

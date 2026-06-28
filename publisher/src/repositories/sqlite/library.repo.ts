@@ -1,7 +1,7 @@
 import { and, desc, eq, like, or, sql } from "drizzle-orm";
-import { DatabaseConnection } from "../../infrastructure/database";
+import type { DownloadJob, LibraryStats, Track } from "../../domain/types";
+import type { DatabaseConnection } from "../../infrastructure/database";
 import * as schema from "./schema";
-import { DownloadJob, LibraryStats, Track } from "../../domain/types";
 
 function fileToId(file: string): string {
   let hash = 0;
@@ -20,7 +20,10 @@ export class LibraryRepository {
   public createDownload(url: string): DownloadJob {
     const id = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
-    this.db.drizzle.insert(schema.downloads).values({ id, url, status: "queued", startedAt: now }).run();
+    this.db.drizzle
+      .insert(schema.downloads)
+      .values({ id, url, status: "queued", startedAt: now })
+      .run();
     return { id, url, status: "queued", startedAt: now };
   }
 
@@ -48,18 +51,30 @@ export class LibraryRepository {
       setClause.resultSpotifyUrl = updates.result.spotifyUrl || "";
     }
     if (Object.keys(setClause).length > 0) {
-      this.db.drizzle.update(schema.downloads).set(setClause).where(eq(schema.downloads.id, id)).run();
+      this.db.drizzle
+        .update(schema.downloads)
+        .set(setClause)
+        .where(eq(schema.downloads.id, id))
+        .run();
     }
   }
 
   public getDownload(id: string): DownloadJob | null {
-    const row = this.db.drizzle.select().from(schema.downloads).where(eq(schema.downloads.id, id)).get();
+    const row = this.db.drizzle
+      .select()
+      .from(schema.downloads)
+      .where(eq(schema.downloads.id, id))
+      .get();
     if (!row) return null;
     return this.mapDownloadRow(row);
   }
 
   public getAllDownloads(): DownloadJob[] {
-    const rows = this.db.drizzle.select().from(schema.downloads).orderBy(desc(schema.downloads.startedAt)).all();
+    const rows = this.db.drizzle
+      .select()
+      .from(schema.downloads)
+      .orderBy(desc(schema.downloads.startedAt))
+      .all();
     return rows.map((r) => this.mapDownloadRow(r));
   }
 
@@ -153,7 +168,8 @@ export class LibraryRepository {
     size: number;
     mtime: string;
   }): void {
-    this.db.drizzle.insert(schema.libraryTracks)
+    this.db.drizzle
+      .insert(schema.libraryTracks)
       .values({
         file: track.file,
         type: track.type,
@@ -180,6 +196,14 @@ export class LibraryRepository {
           addedAt: sql`COALESCE((SELECT added_at FROM library_tracks WHERE file = ${track.file}), datetime('now'))`,
         },
       })
+      .run();
+  }
+
+  public updateSpotifyUrl(file: string, spotifyUrl: string): void {
+    this.db.drizzle
+      .update(schema.libraryTracks)
+      .set({ spotifyUrl })
+      .where(eq(schema.libraryTracks.file, file))
       .run();
   }
 

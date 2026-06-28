@@ -1,4 +1,4 @@
-import { createConnection, Socket } from "node:net";
+import { createConnection, type Socket } from "node:net";
 
 export class TelnetClient {
   private socket: Socket | null = null;

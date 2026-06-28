@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, watch } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
-import { LibraryRepository } from "../repositories/sqlite/library.repo";
-import { FfprobeClient } from "../infrastructure/ffprobe.client";
-import { LibraryStats, Track } from "../domain/types";
+import type { LibraryStats, Track } from "../domain/types";
+import type { FfprobeClient } from "../infrastructure/ffprobe.client";
+import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 
 const AUDIO_EXTENSIONS = /\.(mp3|wav|ogg|flac|m4a)$/i;
 
@@ -96,7 +96,9 @@ export class LibraryService {
     }
 
     const stats = this.libraryRepo.getStats();
-    console.log(`[LibraryService] Catalog indexed: ${stats.totalSongs} songs, ${stats.totalInterludios} interludios.`);
+    console.log(
+      `[LibraryService] Catalog indexed: ${stats.totalSongs} songs, ${stats.totalInterludios} interludios.`
+    );
     return stats;
   }
 
@@ -162,7 +164,9 @@ export class LibraryService {
           return;
         }
 
-        console.log(`[LibraryService] [Watcher] File change detected in ${type} folder: ${filename || "unknown"}. Triggering scan...`);
+        console.log(
+          `[LibraryService] [Watcher] File change detected in ${type} folder: ${filename || "unknown"}. Triggering scan...`
+        );
         this.triggerDebouncedScan();
       });
       this.watchers.push(watcher);
@@ -200,6 +204,13 @@ export class LibraryService {
 
   public getTrackByUrl(url: string): Track | null {
     return this.libraryRepo.getTrackByUrl(url);
+  }
+
+  public updateSpotifyUrl(file: string, spotifyUrl: string): boolean {
+    const track = this.libraryRepo.getTrack(file);
+    if (!track) return false;
+    this.libraryRepo.updateSpotifyUrl(file, spotifyUrl);
+    return true;
   }
 
   public deleteTrack(file: string): boolean {

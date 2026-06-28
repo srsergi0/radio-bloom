@@ -1,11 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { LibraryRepository } from "../repositories/sqlite/library.repo";
-import { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
-import { LibraryService } from "./library.service";
-import { LiquidsoapService } from "./liquidsoap.service";
+import type { LibraryRepository } from "../repositories/sqlite/library.repo";
+import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import { WebStandardStreamableHTTPServerTransport } from "../webStandardStreamableHttp.js";
+import type { LibraryService } from "./library.service";
+import type { LiquidsoapService } from "./liquidsoap.service";
 
 export class McpService {
   private readonly server: McpServer;

@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
-import { DatabaseConnection } from "../../infrastructure/database";
+import type { SystemConfig } from "../../domain/types";
+import type { DatabaseConnection } from "../../infrastructure/database";
 import * as schema from "./schema";
-import { SystemConfig } from "../../domain/types";
 
 const DEFAULT_CONFIG: SystemConfig = {
   streamBitrate: 320,

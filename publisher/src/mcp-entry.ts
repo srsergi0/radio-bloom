@@ -3,12 +3,12 @@ console.log = console.error;
 import "./env";
 import { resolve } from "node:path";
 import { DatabaseConnection } from "./infrastructure/database";
+import { FfprobeClient } from "./infrastructure/ffprobe.client";
+import { TelnetClient } from "./infrastructure/telnet.client";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
-import { TelnetClient } from "./infrastructure/telnet.client";
-import { FfprobeClient } from "./infrastructure/ffprobe.client";
-import { LiquidsoapService } from "./services/liquidsoap.service";
 import { LibraryService } from "./services/library.service";
+import { LiquidsoapService } from "./services/liquidsoap.service";
 import { McpService } from "./services/mcp.service";
 
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
@@ -28,21 +28,11 @@ const libraryRepo = new LibraryRepository(dbConnection);
 const playlistRepo = new PlaylistRepository(dbConnection);
 
 const liquidsoapService = new LiquidsoapService(telnetClient, ffprobeClient, MUSIC_MOUNT);
-const libraryService = new LibraryService(
-  libraryRepo,
-  ffprobeClient,
-  MUSIC_DIR,
-  async () => {
-    await liquidsoapService.queueClear();
-  }
-);
+const libraryService = new LibraryService(libraryRepo, ffprobeClient, MUSIC_DIR, async () => {
+  await liquidsoapService.queueClear();
+});
 
-const mcpService = new McpService(
-  libraryRepo,
-  playlistRepo,
-  libraryService,
-  liquidsoapService
-);
+const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liquidsoapService);
 
 // Initialize library service to scan files
 libraryService.init();

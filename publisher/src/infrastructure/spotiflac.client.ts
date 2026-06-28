@@ -1,5 +1,13 @@
-import { readdirSync, statSync, existsSync, mkdirSync, unlinkSync, renameSync, rmSync } from "node:fs";
-import { join, relative, basename, extname } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
+import { basename, extname, join, relative } from "node:path";
 import { FfprobeClient } from "./ffprobe.client";
 
 export interface SpotiflacDownloadResult {
@@ -46,22 +54,14 @@ export class SpotiflacClient {
       }
 
       // Priorities: tidal, deezer, soundcloud, youtube
-      const cmdArgs = [
-        url,
-        tempDir,
-        "--service",
-        "tidal",
-        "deezer",
-        "soundcloud",
-        "youtube"
-      ];
+      const cmdArgs = [url, tempDir, "--service", "tidal", "deezer", "soundcloud", "youtube"];
       console.log(`[SpotiflacClient] Spawning: spotiflac ${cmdArgs.join(" ")}`);
       const proc = Bun.spawn(["spotiflac", ...cmdArgs], {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
-          PYTHONIOENCODING: "utf-8"
-        }
+          PYTHONIOENCODING: "utf-8",
+        },
       });
 
       let stderr = "";
@@ -117,7 +117,6 @@ export class SpotiflacClient {
         filename: ingestedFiles[0],
         error: null,
       };
-
     } catch (err: any) {
       console.error(`[SpotiflacClient] Error during download execution:`, err.message);
       return {
@@ -132,7 +131,10 @@ export class SpotiflacClient {
           rmSync(tempDir, { recursive: true, force: true });
         }
       } catch (cleanupErr: any) {
-        console.error(`[SpotiflacClient] Failed to clean up temporary folder ${tempDir}:`, cleanupErr.message);
+        console.error(
+          `[SpotiflacClient] Failed to clean up temporary folder ${tempDir}:`,
+          cleanupErr.message
+        );
       }
     }
   }
@@ -187,7 +189,9 @@ export class SpotiflacClient {
 
         for (let i = 1; i < filesInGroup.length; i++) {
           const toDelete = filesInGroup[i];
-          console.log(`[SpotiflacClient] [Cleanup] Deleting lower-priority duplicate: ${toDelete} (keeping ${bestFile})`);
+          console.log(
+            `[SpotiflacClient] [Cleanup] Deleting lower-priority duplicate: ${toDelete} (keeping ${bestFile})`
+          );
           try {
             unlinkSync(toDelete);
           } catch {}
@@ -212,7 +216,10 @@ export class SpotiflacClient {
         renameSync(file, destPath);
         ingestedList.push(nameOnly);
       } catch (err: any) {
-        console.error(`[SpotiflacClient] Failed to ingest file ${nameOnly} to destination:`, err.message);
+        console.error(
+          `[SpotiflacClient] Failed to ingest file ${nameOnly} to destination:`,
+          err.message
+        );
       }
     }
 

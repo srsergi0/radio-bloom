@@ -1,7 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import { DatabaseConnection } from "../../infrastructure/database";
+import type { Playlist, PlaylistTrack } from "../../domain/types";
+import type { DatabaseConnection } from "../../infrastructure/database";
 import * as schema from "./schema";
-import { Playlist, PlaylistTrack } from "../../domain/types";
 
 export class PlaylistRepository {
   constructor(private readonly db: DatabaseConnection) {}
@@ -9,12 +9,19 @@ export class PlaylistRepository {
   public create(name: string): Playlist {
     const id = `pl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
-    this.db.drizzle.insert(schema.playlists).values({ id, name, createdAt: now, updatedAt: now }).run();
+    this.db.drizzle
+      .insert(schema.playlists)
+      .values({ id, name, createdAt: now, updatedAt: now })
+      .run();
     return { id, name, tracks: [], createdAt: now, updatedAt: now };
   }
 
   public list(): Playlist[] {
-    const rows = this.db.drizzle.select().from(schema.playlists).orderBy(desc(schema.playlists.updatedAt)).all();
+    const rows = this.db.drizzle
+      .select()
+      .from(schema.playlists)
+      .orderBy(desc(schema.playlists.updatedAt))
+      .all();
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
@@ -25,7 +32,11 @@ export class PlaylistRepository {
   }
 
   public get(id: string): Playlist | null {
-    const row = this.db.drizzle.select().from(schema.playlists).where(eq(schema.playlists.id, id)).get();
+    const row = this.db.drizzle
+      .select()
+      .from(schema.playlists)
+      .where(eq(schema.playlists.id, id))
+      .get();
     if (!row) return null;
 
     const tracks = this.db.drizzle
@@ -63,7 +74,8 @@ export class PlaylistRepository {
       .get();
     if (!exists) return false;
 
-    this.db.drizzle.update(schema.playlists)
+    this.db.drizzle
+      .update(schema.playlists)
       .set({ name, updatedAt: sql`datetime('now')` })
       .where(eq(schema.playlists.id, id))
       .run();
@@ -153,7 +165,10 @@ export class PlaylistRepository {
     this.db.drizzle.transaction((tx) => {
       tx.delete(schema.playlistTracks)
         .where(
-          and(eq(schema.playlistTracks.id, trackId), eq(schema.playlistTracks.playlistId, playlistId))
+          and(
+            eq(schema.playlistTracks.id, trackId),
+            eq(schema.playlistTracks.playlistId, playlistId)
+          )
         )
         .run();
       tx.update(schema.playlists)

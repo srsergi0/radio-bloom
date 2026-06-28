@@ -1,6 +1,6 @@
-import { TelnetClient } from "../infrastructure/telnet.client";
-import { FfprobeClient } from "../infrastructure/ffprobe.client";
-import { StreamStatus } from "../domain/types";
+import type { StreamStatus } from "../domain/types";
+import type { FfprobeClient } from "../infrastructure/ffprobe.client";
+import type { TelnetClient } from "../infrastructure/telnet.client";
 
 export class LiquidsoapService {
   private lastQueuedRid: string | null = null;

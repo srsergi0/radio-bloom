@@ -1,14 +1,14 @@
-import { Hono } from "hono";
-import { cors } from "hono/cors";
-import { serveStatic } from "hono/bun";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { ConfigService } from "../services/config.service";
-import { LibraryService } from "../services/library.service";
-import { LiquidsoapService } from "../services/liquidsoap.service";
-import { DownloadService } from "../services/download.service";
-import { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
-import { McpService } from "../services/mcp.service";
+import { Hono } from "hono";
+import { serveStatic } from "hono/bun";
+import { cors } from "hono/cors";
+import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
+import type { ConfigService } from "../services/config.service";
+import type { DownloadService } from "../services/download.service";
+import type { LibraryService } from "../services/library.service";
+import type { LiquidsoapService } from "../services/liquidsoap.service";
+import type { McpService } from "../services/mcp.service";
 
 export interface ApiDependencies {
   configService: ConfigService;
@@ -106,6 +106,39 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     return c.json({ ok: true, data: stats });
   });
 
+  app.put("/api/library/track/spotify-url", async (c) => {
+    const body = await c.req.json();
+    if (!body.file || !body.spotifyUrl) {
+      return c.json({ ok: false, error: "file and spotifyUrl are required" }, 400);
+    }
+    const ok = deps.libraryService.updateSpotifyUrl(body.file, body.spotifyUrl);
+    if (!ok) return c.json({ ok: false, error: "Track not found" }, 404);
+    return c.json({ ok: true, data: { file: body.file, spotifyUrl: body.spotifyUrl } });
+  });
+
+  app.get("/api/library/tracks-without-url", (c) => {
+    const songs = deps.libraryService.listSongs().filter((t) => !t.spotifyUrl);
+    const interludios = deps.libraryService.listInterludios().filter((t) => !t.spotifyUrl);
+    return c.json({ ok: true, data: { songs, interludios } });
+  });
+
+  app.post("/api/library/re-download/:file", (c) => {
+    const file = c.req.param("file");
+    const job = deps.downloadService.reDownload(file);
+    if (!job) return c.json({ ok: false, error: "Track not found or no Spotify URL" }, 404);
+    return c.json({ ok: true, data: job });
+  });
+
+  app.post("/api/library/re-download-missing", (c) => {
+    const results = deps.downloadService.reDownloadMissing();
+    return c.json({ ok: true, data: { results, count: results.length } });
+  });
+
+  app.get("/api/downloads", (c) => {
+    const jobs = deps.downloadService.getAllDownloads();
+    return c.json({ ok: true, data: jobs });
+  });
+
   app.get("/api/library/search", (c) => {
     const q = c.req.query("q");
     if (!q) return c.json({ ok: false, error: "q query param required" }, 400);
@@ -115,11 +148,14 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
   app.post("/api/library/:id/play", async (c) => {
     const id = c.req.param("id");
-    const allTracks = [...deps.libraryService.listSongs(), ...deps.libraryService.listInterludios()];
+    const allTracks = [
+      ...deps.libraryService.listSongs(),
+      ...deps.libraryService.listInterludios(),
+    ];
     console.log("[library/play] id:", id, "total tracks:", allTracks.length);
     const track = allTracks.find((t) => t.id === id);
     if (!track) return c.json({ ok: false, error: "Track not found" }, 404);
-    
+
     const filepath = `/music/${track.file}`;
     const ok = await deps.liquidsoapService.playFileNow(filepath);
     if (!ok) return c.json({ ok: false, error: "Failed to play track" }, 500);
@@ -388,13 +424,15 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     for (let i = 0; i < pending.length; i += BATCH) {
       const batch = pending.slice(i, i + BATCH);
       const downloads = batch.map((p) =>
-        deps.downloadService.downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
-          const rid = await deps.liquidsoapService.queuePush(`/music/${downloaded.file}`);
-          results.push({ title: downloaded.title, status: rid ? "queued" : "error" });
-        }).catch((err: any) => {
-          results.push({ title: p.track.title, status: "error", error: err.message });
-          return null;
-        })
+        deps.downloadService
+          .downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
+            const rid = await deps.liquidsoapService.queuePush(`/music/${downloaded.file}`);
+            results.push({ title: downloaded.title, status: rid ? "queued" : "error" });
+          })
+          .catch((err: any) => {
+            results.push({ title: p.track.title, status: "error", error: err.message });
+            return null;
+          })
       );
       await Promise.allSettled(downloads);
     }
@@ -438,13 +476,16 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   // STATIC FILES (Astro Landing Page)
   // ============================================================
 
-  app.use("/*", serveStatic({
-    root: deps.distDir,
-    rewriteRequestPath: (path) => {
-      if (path === "/en" || path === "/en/") return "/en/index.html";
-      return path;
-    }
-  }));
+  app.use(
+    "/*",
+    serveStatic({
+      root: deps.distDir,
+      rewriteRequestPath: (path) => {
+        if (path === "/en" || path === "/en/") return "/en/index.html";
+        return path;
+      },
+    })
+  );
 
   return app;
 }

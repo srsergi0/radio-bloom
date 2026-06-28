@@ -1,9 +1,9 @@
-import { SpotiflacClient } from "../infrastructure/spotiflac.client";
-import { LibraryRepository } from "../repositories/sqlite/library.repo";
-import { FfprobeClient } from "../infrastructure/ffprobe.client";
-import { DownloadJob, Track } from "../domain/types";
-import { join, basename, extname } from "node:path";
 import { statSync } from "node:fs";
+import { basename, extname, join } from "node:path";
+import type { DownloadJob, Track } from "../domain/types";
+import type { FfprobeClient } from "../infrastructure/ffprobe.client";
+import type { SpotiflacClient } from "../infrastructure/spotiflac.client";
+import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 
 export class DownloadService {
   private readonly onCompleteCallbacks = new Map<string, (track: Track) => Promise<void>>();
@@ -59,7 +59,9 @@ export class DownloadService {
     }
 
     this.processingCount++;
-    console.log(`[DownloadService] Processing job ${nextJob.id} from queue for URL: ${nextJob.url}`);
+    console.log(
+      `[DownloadService] Processing job ${nextJob.id} from queue for URL: ${nextJob.url}`
+    );
 
     try {
       // Mark it as downloading in the DB
@@ -148,15 +150,49 @@ export class DownloadService {
     return this.getDownloadJob(job.id);
   }
 
+  public reDownload(file: string): DownloadJob | null {
+    const track = this.libraryRepo.getTrack(file);
+    if (!track) return null;
+    if (!track.spotifyUrl) return null;
+    const job = this.libraryRepo.createDownload(track.spotifyUrl);
+    this.triggerQueueProcess();
+    return this.getDownloadJob(job.id);
+  }
+
+  public reDownloadMissing(): { file: string; job?: DownloadJob; error?: string }[] {
+    const tracks = this.libraryRepo.getAllTracks();
+    const results: { file: string; job?: DownloadJob; error?: string }[] = [];
+    for (const track of tracks) {
+      if (!track.spotifyUrl) continue;
+      const fullPath = join(this.songsDir, track.file.replace("songs/", ""));
+      try {
+        const exists = statSync(fullPath);
+        if (exists) continue;
+      } catch {
+        // file doesn't exist — re-download
+      }
+      try {
+        const job = this.libraryRepo.createDownload(track.spotifyUrl);
+        results.push({ file: track.file, job: this.getDownloadJob(job.id) });
+      } catch (err: any) {
+        results.push({ file: track.file, error: err.message });
+      }
+    }
+    this.triggerQueueProcess();
+    return results;
+  }
+
   public getDownloadJob(id: string): DownloadJob {
     const job = this.libraryRepo.getDownload(id);
-    return job || {
-      id,
-      url: "",
-      status: "error",
-      error: "Not found",
-      startedAt: new Date().toISOString(),
-    };
+    return (
+      job || {
+        id,
+        url: "",
+        status: "error",
+        error: "Not found",
+        startedAt: new Date().toISOString(),
+      }
+    );
   }
 
   public getAllDownloads(): DownloadJob[] {

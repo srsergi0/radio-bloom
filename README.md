@@ -37,7 +37,9 @@ mkdir -p music/interludios
 ### 3. Start everything
 
 ```bash
-docker compose up -d
+docker network create radio-net
+docker compose -f docker-compose.engine.yml up -d
+docker compose -f docker-compose.publisher.yml up -d
 ```
 
 ### 4. Open the control panel
@@ -176,10 +178,10 @@ DOWNLOADER_URL=http://radio-downloader:4002
 ```bash
 cp .env.example .env
 mkdir -p music/songs music/interludios
-docker compose up -d
+docker network create radio-net
+docker compose -f docker-compose.engine.yml up -d
+docker compose -f docker-compose.publisher.yml up -d
 ```
-
-Eso es todo. El `docker-compose.yml` levanta todo junto con paths relativos.
 
 ## API
 
@@ -203,9 +205,8 @@ Eso es todo. El `docker-compose.yml` levanta todo junto con paths relativos.
 
 ```
 radio/
-├── docker-compose.yml               # Local - todo en uno
-├── docker-compose.engine.yml        # Coolify - liquidsoap + ftp
-├── docker-compose.publisher.yml     # Coolify - publisher + downloader
+├── docker-compose.engine.yml        # liquidsoap + ftp
+├── docker-compose.publisher.yml     # publisher + downloader
 ├── .env
 ├── icecast/
 │   └── icecast.xml

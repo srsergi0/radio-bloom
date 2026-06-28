@@ -38,12 +38,8 @@ services:
 
 volumes:
   radio-music:
-    external: true
   radio-interludios:
-    external: true
   radio-publisher-data:
-    external: true
 
 networks:
   radio-net:
-    external: true

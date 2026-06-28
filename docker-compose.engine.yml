@@ -32,10 +32,7 @@ services:
 
 volumes:
   radio-music:
-    external: true
   radio-interludios:
-    external: true
 
 networks:
   radio-net:
-    external: true

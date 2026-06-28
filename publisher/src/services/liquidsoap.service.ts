@@ -263,32 +263,11 @@ export class LiquidsoapService {
   }
 
   // ============================================================
-  // Live Mode
+  // Live Status
   // ============================================================
-
-  public async setLiveMode(active: boolean): Promise<void> {
-    const val = active ? "true" : "false";
-    await this.sendCommand(`var.set live_active = ${val}`);
-  }
-
-  public async isLiveMode(): Promise<boolean> {
-    const lines = await this.sendCommand("var.get live_active");
-    return lines.join(" ").includes("true");
-  }
 
   public async isLiveInputConnected(): Promise<boolean> {
     const lines = await this.sendCommand("live.connected");
     return lines[0]?.trim() === "true";
-  }
-
-  public async getLiveStatus(): Promise<import("../domain/types").LiveStatus> {
-    const [activeLines, connectedLines] = await Promise.all([
-      this.sendCommand("var.get live_active"),
-      this.sendCommand("live.connected"),
-    ]);
-    return {
-      active: activeLines.join(" ").includes("true"),
-      connected: connectedLines[0]?.trim() === "true",
-    };
   }
 }

@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
@@ -10,6 +11,7 @@ sys.path.insert(0, "/app/site-packages")
 from SpotipyFree import Spotify
 
 sp = Spotify()
+_sp_lock = threading.Lock()
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -30,7 +32,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": "q param required"})
 
             try:
-                results = sp.search(q, limit=1)
+                with _sp_lock:
+                    results = sp.search(q, limit=1)
                 track = results.get("tracks", {}).get("items", [None])[0]
                 if not track:
                     return self._json(404, {"error": "not found"})

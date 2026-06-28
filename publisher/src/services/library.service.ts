@@ -12,6 +12,7 @@ export class LibraryService {
   private readonly interludiosDir: string;
   private watchers: any[] = [];
   private scanTimeout: Timer | null = null;
+  private enrichQueue = 0;
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
@@ -97,7 +98,8 @@ export class LibraryService {
       }
     }
 
-    console.log(`[LibraryService] Catalog indexed.`);
+    const pendingSongs = this.libraryRepo.getAllTracks("song").filter((t) => !t.spotifyUrl).length;
+    console.log(`[LibraryService] Catalog indexed. Pendientes de enriquecer: ${pendingSongs}`);
   }
 
   private scanAndUpsertFiles(files: string[], baseDir: string, type: "song" | "interludio"): void {
@@ -112,6 +114,10 @@ export class LibraryService {
         const existing = existingTracks.find((t) => t.file === key);
 
         if (existing && new Date(stat.mtime.toISOString()) <= new Date(existing.addedAt)) {
+          if (!existing.spotifyUrl && type === "song" && this.metadataEnrichment) {
+            console.log(`[LibraryService][debug] ${key} → spotify_url vacío (existente), encolando enriquecimiento...`);
+            this.enrichTrackAfterScan(key, existing.title, existing.artist);
+          }
           continue;
         }
 
@@ -131,13 +137,13 @@ export class LibraryService {
           mtime: stat.mtime.toISOString(),
         });
 
-        if (
-          !meta.spotifyUrl &&
-          !existing?.spotifyUrl &&
-          this.metadataEnrichment &&
-          type === "song"
-        ) {
-          this.enrichTrackAfterScan(key, meta.title || name, meta.artist);
+        if (!meta.spotifyUrl && type === "song") {
+          if (existing?.spotifyUrl) {
+            console.log(`[LibraryService][debug] ${key} → ya tiene spotify_url, se salta`);
+          } else if (this.metadataEnrichment) {
+            console.log(`[LibraryService][debug] ${key} → spotify_url vacío, encolando enriquecimiento...`);
+            this.enrichTrackAfterScan(key, meta.title || name, meta.artist);
+          }
         }
       } catch (err: any) {
         console.error(`[LibraryService] Failed to index file ${filePath}:`, err.message);
@@ -146,16 +152,23 @@ export class LibraryService {
   }
 
   private async enrichTrackAfterScan(file: string, title: string, artist: string): Promise<void> {
+    const order = ++this.enrichQueue;
+    const delay = order * 1500;
+    console.log(`[LibraryService][debug] [#${order}] Encolado "${title}" (${artist}), esperando ${delay}ms...`);
+    await new Promise((r) => setTimeout(r, delay));
+    console.log(`[LibraryService][debug] [#${order}] Enriching "${title}" (${artist})...`);
     try {
       const result = await this.metadataEnrichment!.enrich(title, artist);
       if (result?.spotifyUrl) {
         const spotifyId = this.libraryRepo.updateSpotifyUrl(file, result.spotifyUrl);
         console.log(
-          `[LibraryService] Auto-enriched ${file} → Spotify ID: ${spotifyId} (${result.spotifyUrl})`
+          `[LibraryService] [#${order}] ✅ Auto-enriched ${file} → ${result.spotifyUrl}`
         );
+      } else {
+        console.log(`[LibraryService][debug] [#${order}] ${file} → no se encontró en Spotify`);
       }
     } catch (err: any) {
-      console.error(`[LibraryService] Failed to enrich ${file}:`, err.message);
+      console.error(`[LibraryService][debug] [#${order}] ${file} → error: ${err.message}`);
     }
   }
 

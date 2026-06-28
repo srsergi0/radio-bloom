@@ -14,7 +14,7 @@ export class SpotifyFreeClient {
   async search(query: string): Promise<SpotifyFreeTrack | null> {
     try {
       const res = await fetch(`${ENRICHER_URL}/search?q=${encodeURIComponent(query)}`, {
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(180_000),
       });
       if (!res.ok) return null;
       const data: any = await res.json();

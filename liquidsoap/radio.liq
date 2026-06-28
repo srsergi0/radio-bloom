@@ -13,9 +13,6 @@ server.register(namespace="live", "connected",
   fun (_) -> if source.is_ready(live_input) then "true" else "false" end
 )
 
-# Mantener harbor activo siempre
-live_safe = mksafe(live_input)
-
 # ============================================================
 # Background playlist
 # ============================================================
@@ -46,9 +43,6 @@ main = fallback(track_sensitive=false, [live_input, normal])
 main = normalize(target=-14.0, threshold=-45.0, main)
 main = compress(main, attack=5.0, gain=3.0, ratio=2.5, release=150.0, threshold=-16.0)
 main = limit(main, threshold=-1.0)
-
-# Mantener harbor activo (mezclado a volumen 0)
-main = audio.add([(1., main), (0., live_safe)])
 
 # ============================================================
 # Output (único endpoint /radiobloom.mp3)

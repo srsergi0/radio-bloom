@@ -7,25 +7,12 @@ settings.server.telnet.bind_addr := "0.0.0.0"
 # ============================================================
 # Live Input (recibe audio desde tu PC vía BUTT/FFmpeg/OBS)
 # ============================================================
-live_input = input.harbor(
-  id="live_input",
-  port=8001,
-  mount="/live.mp3",
-  format="mp3",
-  max=30.
-)
+live_input = input.harbor("/live.mp3", port=8001)
 
-# Control de modo live vía telnet
-live_active = ref(false)
-server.register(namespace="live", "active",
-  "Get/set live mode (true=live on, false=queue+playlist)",
-  { fun (s) -> live_active := bool_of_string(s) },
-  { fun () -> string_of_bool(!live_active) }
-)
+# Control de modo live vía telnet: var.set live_active = true|false
+live_active = interactive.bool("live_active", false)
 server.register(namespace="live", "connected",
-  "Check if live input is receiving data (read-only)",
-  { fun (_) -> "read-only" },
-  { fun () -> string_of_bool(source.is_ready(live_input)) }
+  fun (_) -> if source.is_ready(live_input) then "true" else "false" end
 )
 
 # ============================================================
@@ -46,13 +33,11 @@ queue = request.queue(id="queue")
 normal = fallback(track_sensitive=false, [queue, radio])
 
 # ============================================================
-# Live Switch: live solo cuando está activo Y hay conexión
-# fallback interno: si live_input no recibe datos (desconectado),
-# cae automáticamente a normal sin silencio
+# Live Switch: cuando live_active está en true, se usa el live_input
+# con fallback a normal (por si no hay nadie conectado)
 # ============================================================
-live_with_fallback = fallback(track_sensitive=false, [live_input, normal])
 main = switch(track_sensitive=false, [
-  ({ live_active }, live_with_fallback),
+  (live_active, fallback(track_sensitive=false, [live_input, normal])),
   ({ true }, normal)
 ])
 

@@ -268,12 +268,12 @@ export class LiquidsoapService {
 
   public async setLiveMode(active: boolean): Promise<void> {
     const val = active ? "true" : "false";
-    await this.sendCommand(`live.active ${val}`);
+    await this.sendCommand(`var.set live_active = ${val}`);
   }
 
   public async isLiveMode(): Promise<boolean> {
-    const lines = await this.sendCommand("live.active");
-    return lines[0]?.trim() === "true";
+    const lines = await this.sendCommand("var.get live_active");
+    return lines.join(" ").includes("true");
   }
 
   public async isLiveInputConnected(): Promise<boolean> {
@@ -283,11 +283,11 @@ export class LiquidsoapService {
 
   public async getLiveStatus(): Promise<import("../domain/types").LiveStatus> {
     const [activeLines, connectedLines] = await Promise.all([
-      this.sendCommand("live.active"),
+      this.sendCommand("var.get live_active"),
       this.sendCommand("live.connected"),
     ]);
     return {
-      active: activeLines[0]?.trim() === "true",
+      active: activeLines.join(" ").includes("true"),
       connected: connectedLines[0]?.trim() === "true",
     };
   }

@@ -339,45 +339,35 @@ const _server = Bun.serve({
   },
   websocket: {
     open(ws) {
-      console.log("[ws/live] Browser connected for live streaming");
-      let streamController: ReadableStreamDefaultController | null = null;
-
-      const body = new ReadableStream({
-        start(c) { streamController = c; },
-        cancel() { ws.close(); },
-      });
-
-      ws.data = { streamController };
+      console.log("[ws/live] Browser connected (MP3)");
+      const pass = new TransformStream<Uint8Array>();
+      const writer = pass.writable.getWriter();
+      ws.data = { writer };
 
       fetch(LIVE_HARBOUR_URL, {
         method: "PUT",
         headers: {
-          "Content-Type": "audio/webm;codecs=opus",
+          "Content-Type": "audio/mpeg",
           Authorization: LIVE_AUTH,
         },
-        body,
+        body: pass.readable,
         duplex: "half",
       }).then((res) => {
-        console.log(`[ws/live] Harbor responded: ${res.status}`);
+        console.log(`[ws/live] Harbor: ${res.status}`);
       }).catch((err) => {
         console.error("[ws/live] Harbor error:", err.message);
         ws.close();
       });
     },
     message(ws, message) {
-      if (typeof message === "string") return;
-      if (ws.data?.streamController) {
-        try {
-          ws.data.streamController.enqueue(message);
-        } catch {
-          ws.close();
-        }
+      if (typeof message !== "string" && ws.data?.writer) {
+        try { ws.data.writer.write(new Uint8Array(message)); } catch { ws.close(); }
       }
     },
     close(ws) {
       console.log("[ws/live] Browser disconnected");
-      if (ws.data?.streamController) {
-        try { ws.data.streamController.close(); } catch {}
+      if (ws.data?.writer) {
+        try { ws.data.writer.close(); } catch {}
       }
     },
   },

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, watch } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
 import type { Track } from "../domain/types";
 import type { FfprobeClient } from "../infrastructure/ffprobe.client";
@@ -10,8 +10,6 @@ const AUDIO_EXTENSIONS = /\.(mp3|wav|ogg|flac|m4a)$/i;
 export class LibraryService {
   private readonly songsDir: string;
   private readonly interludiosDir: string;
-  private watchers: any[] = [];
-  private scanTimeout: Timer | null = null;
   private enrichQueue = 0;
 
   constructor(
@@ -27,8 +25,6 @@ export class LibraryService {
 
   public async init(): Promise<void> {
     this.ensureDirs();
-    await this.scan();
-    this.watchDirectories();
   }
 
   private ensureDirs(): void {
@@ -180,40 +176,9 @@ export class LibraryService {
     }
   }
 
-  private triggerDebouncedScan(): void {
-    if (this.scanTimeout) {
-      clearTimeout(this.scanTimeout);
-    }
-    this.scanTimeout = setTimeout(() => {
-      this.scan().catch((err: any) => {
-        console.error("[LibraryService] Error running debounced scan:", err.message);
-      });
-    }, 2000);
-  }
-
-  private watchDirectories(): void {
-    this.watchDir(this.songsDir, "song");
-    this.watchDir(this.interludiosDir, "interludio");
-  }
-
-  private watchDir(dir: string, type: "song" | "interludio") {
-    try {
-      const watcher = watch(dir, { recursive: true }, (_event: string, filename: string | null) => {
-        // Skip scanning if the change is a temporary download folder or file
-        if (filename && (filename.startsWith("tmp_download_") || filename.includes(".tmp"))) {
-          return;
-        }
-
-        console.log(
-          `[LibraryService] [Watcher] File change detected in ${type} folder: ${filename || "unknown"}. Triggering scan...`
-        );
-        this.triggerDebouncedScan();
-      });
-      this.watchers.push(watcher);
-      console.log(`[LibraryService] Watching directory recursively: ${dir}`);
-    } catch (err: any) {
-      console.error(`[LibraryService] Failed to set watch on ${dir}:`, err.message);
-    }
+  public async rescan(): Promise<string> {
+    await this.scan();
+    return "ok";
   }
 
   public listSongs(): Track[] {
@@ -275,11 +240,5 @@ export class LibraryService {
   }
 
   public shutdown(): void {
-    for (const w of this.watchers) {
-      try {
-        w.close();
-      } catch {}
-    }
-    this.watchers = [];
   }
 }

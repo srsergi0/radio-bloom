@@ -99,6 +99,15 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     return c.json({ ok: true, data: { deleted: id } });
   });
 
+  app.get("/api/library/rescan", async (c) => {
+    try {
+      await deps.libraryService.rescan();
+      return c.json({ ok: true, data: { rescanned: true } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
   app.get("/api/library/search", (c) => {
     const q = c.req.query("q");
     if (!q) return c.json({ ok: false, error: "q query param required" }, 400);

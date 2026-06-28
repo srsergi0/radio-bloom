@@ -20,6 +20,10 @@ services:
       - "4001:4001"
     environment:
       - PORT=4001
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     networks:
       - radio-net
 

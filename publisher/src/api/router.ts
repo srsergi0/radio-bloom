@@ -294,19 +294,6 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   });
 
   // ============================================================
-  // LIVE STATUS (solo lectura — el switch es automático en Liquidsoap)
-  // ============================================================
-
-  app.get("/api/live/status", async (c) => {
-    try {
-      const connected = await deps.liquidsoapService.isLiveInputConnected();
-      return c.json({ ok: true, data: { connected } });
-    } catch (err: any) {
-      return c.json({ ok: false, error: err.message }, 500);
-    }
-  });
-
-  // ============================================================
   // PLAYLISTS
   // ============================================================
 

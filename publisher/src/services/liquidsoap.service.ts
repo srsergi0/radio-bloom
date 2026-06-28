@@ -258,6 +258,10 @@ export class LiquidsoapService {
     }
   }
 
+  public async reloadPlaylist(): Promise<void> {
+    await this.sendCommand("reload");
+  }
+
   public async requestSeek(rid: string, position: number): Promise<boolean> {
     try {
       const lines = await this.sendCommand(`request.seek ${rid} ${position}`);
@@ -265,18 +269,5 @@ export class LiquidsoapService {
     } catch {
       return false;
     }
-  }
-
-  public async reloadPlaylist(): Promise<void> {
-    await this.sendCommand("reload");
-  }
-
-  // ============================================================
-  // Live Status
-  // ============================================================
-
-  public async isLiveInputConnected(): Promise<boolean> {
-    const lines = await this.sendCommand("live.connected");
-    return lines[0]?.trim() === "true";
   }
 }

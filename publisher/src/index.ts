@@ -7,8 +7,8 @@ import { SpotiflacClient } from "./infrastructure/spotiflac.client";
 import { TelnetClient } from "./infrastructure/telnet.client";
 import { ConfigRepository } from "./repositories/sqlite/config.repo";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
-import { PlaybackStateRepository } from "./repositories/sqlite/playback-state.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
+import { PlaybackStateRepository } from "./repositories/sqlite/playback-state.repo";
 import { ConfigService } from "./services/config.service";
 import { DownloadService } from "./services/download.service";
 import { LibraryService } from "./services/library.service";
@@ -26,8 +26,6 @@ const LIQUIDSOAP_HOST = process.env.LIQUIDSOAP_HOST || "liquidsoap";
 const LIQUIDSOAP_TELNET_PORT = parseInt(process.env.LIQUIDSOAP_TELNET_PORT || "1234", 10);
 const LIQUIDSOAP_HARBOUR_PORT = process.env.LIQUIDSOAP_HARBOUR_PORT || "8000";
 const STREAM_URL = `http://${LIQUIDSOAP_HOST}:${LIQUIDSOAP_HARBOUR_PORT}/radiobloom.mp3`;
-const LIVE_HARBOUR_URL = `http://${LIQUIDSOAP_HOST}:8001/live.mp3`;
-const LIVE_AUTH = `Basic ${Buffer.from("source:hackme").toString("base64")}`;
 
 const DIST_DIR =
   process.env.NODE_ENV === "production"
@@ -268,69 +266,14 @@ class StreamBroadcaster {
 const broadcaster = new StreamBroadcaster();
 
 // ============================================================
-// 6. Live Stream Persistente (mantiene conexión al harbor)
-// ============================================================
-class PersistentLiveWriter {
-  private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
-
-  async ensureConnected() {
-    if (this.writer) return;
-    const pass = new TransformStream<Uint8Array>();
-    this.writer = pass.writable.getWriter();
-
-    fetch(LIVE_HARBOUR_URL, {
-      method: "PUT",
-      headers: { "Content-Type": "audio/mpeg", Authorization: LIVE_AUTH },
-      body: pass.readable,
-      duplex: "half",
-    }).catch(() => { this.writer = null; });
-  }
-
-  write(data: Uint8Array) {
-    if (this.writer) {
-      try { this.writer.write(data); } catch { this.writer = null; }
-    }
-  }
-
-  close() {
-    if (this.writer) {
-      try { this.writer.close(); } catch {}
-      this.writer = null;
-    }
-  }
-
-  get connected(): boolean {
-    return this.writer !== null;
-  }
-}
-
-const liveWriter = new PersistentLiveWriter();
-
-// ============================================================
-// 7. HTTP Server (Bun.serve)
+// 6. HTTP Server (Bun.serve)
 // ============================================================
 const _server = Bun.serve({
   port: PORT,
-  async fetch(req, server) {
+  async fetch(req) {
     const url = new URL(req.url);
 
-    // PUT /live.mp3: recibe stream y lo reenvía al harbor (conexión persistente)
-    if (url.pathname === "/live.mp3" && req.method === "PUT" && req.body) {
-      await liveWriter.ensureConnected();
-      const reader = req.body.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          liveWriter.write(value);
-        }
-      } catch {
-        // Conexión cortada (Cloudflare timeout), harbor sigue vivo
-      }
-      return new Response("ok", { status: 200 });
-    }
-
-    // Audio stream route (único endpoint /radiobloom.mp3)
+    // Audio stream route
     if (url.pathname === "/radiobloom.mp3") {
       let clientController: ReadableStreamDefaultController | null = null;
       const stream = new ReadableStream({

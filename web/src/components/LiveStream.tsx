@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 
-// Mp3Encoder de lamejs (cargado via /scripts/lame.all.js)
-declare const Mp3Encoder: any;
+// Mp3Encoder from lame.all.js (global via script tag)
+const getMp3Encoder = () => (window as any).lamejs?.Mp3Encoder;
 
 const SAMPLE_RATE = 48000;
 const CHANNELS = 2;
@@ -23,7 +23,7 @@ export default function LiveStream() {
 
   const streamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const encoderRef = useRef<Mp3Encoder | null>(null);
+  const encoderRef = useRef<any>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -137,6 +137,11 @@ export default function LiveStream() {
     const source = audioCtx.createMediaStreamSource(mediaStream);
     sourceRef.current = source;
 
+    const Mp3Encoder = getMp3Encoder();
+    if (!Mp3Encoder) {
+      setStatus("lamejs not loaded yet, retry");
+      return;
+    }
     const encoder = new Mp3Encoder(CHANNELS, SAMPLE_RATE, Kbps);
     encoderRef.current = encoder;
 

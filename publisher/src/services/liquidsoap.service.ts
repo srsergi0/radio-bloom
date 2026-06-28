@@ -261,4 +261,34 @@ export class LiquidsoapService {
   public async reloadPlaylist(): Promise<void> {
     await this.sendCommand("reload");
   }
+
+  // ============================================================
+  // Live Mode
+  // ============================================================
+
+  public async setLiveMode(active: boolean): Promise<void> {
+    const val = active ? "true" : "false";
+    await this.sendCommand(`live.active ${val}`);
+  }
+
+  public async isLiveMode(): Promise<boolean> {
+    const lines = await this.sendCommand("live.active");
+    return lines[0]?.trim() === "true";
+  }
+
+  public async isLiveInputConnected(): Promise<boolean> {
+    const lines = await this.sendCommand("live.connected");
+    return lines[0]?.trim() === "true";
+  }
+
+  public async getLiveStatus(): Promise<import("../domain/types").LiveStatus> {
+    const [activeLines, connectedLines] = await Promise.all([
+      this.sendCommand("live.active"),
+      this.sendCommand("live.connected"),
+    ]);
+    return {
+      active: activeLines[0]?.trim() === "true",
+      connected: connectedLines[0]?.trim() === "true",
+    };
+  }
 }

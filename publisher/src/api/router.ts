@@ -294,6 +294,37 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   });
 
   // ============================================================
+  // LIVE MODE
+  // ============================================================
+
+  app.post("/api/live/start", async (c) => {
+    try {
+      await deps.liquidsoapService.setLiveMode(true);
+      return c.json({ ok: true, data: { active: true } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  app.post("/api/live/stop", async (c) => {
+    try {
+      await deps.liquidsoapService.setLiveMode(false);
+      return c.json({ ok: true, data: { active: false } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  app.get("/api/live/status", async (c) => {
+    try {
+      const status = await deps.liquidsoapService.getLiveStatus();
+      return c.json({ ok: true, data: status });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  // ============================================================
   // PLAYLISTS
   // ============================================================
 

@@ -187,7 +187,50 @@ class StreamBroadcaster {
 const broadcaster = new StreamBroadcaster();
 
 // ============================================================
-// 6. HTTP Server (Bun.serve)
+// 6. Live Mode Guardrail
+//    Auto-desactiva live mode si no recibe audio por 2 minutos
+// ============================================================
+{
+  let liveModeActivatedAt: number | null = null;
+  let lastLiveInputAt: number | null = null;
+  const LIVE_TIMEOUT_MS = 120_000;
+
+  setInterval(async () => {
+    try {
+      const status = await liquidsoapService.getLiveStatus();
+
+      if (status.active) {
+        if (liveModeActivatedAt === null) {
+          liveModeActivatedAt = Date.now();
+        }
+
+        if (status.connected) {
+          lastLiveInputAt = Date.now();
+        }
+
+        const reference = lastLiveInputAt ?? liveModeActivatedAt;
+        const elapsed = Date.now() - reference;
+
+        if (elapsed >= LIVE_TIMEOUT_MS) {
+          console.log(
+            `[live] Auto-disabling live mode: no input for ${(elapsed / 1000).toFixed(0)}s`
+          );
+          await liquidsoapService.setLiveMode(false);
+          liveModeActivatedAt = null;
+          lastLiveInputAt = null;
+        }
+      } else {
+        liveModeActivatedAt = null;
+        lastLiveInputAt = null;
+      }
+    } catch (err: any) {
+      console.error("[live] Guardrail error:", err.message);
+    }
+  }, 10_000);
+}
+
+// ============================================================
+// 7. HTTP Server (Bun.serve)
 // ============================================================
 const _server = Bun.serve({
   port: PORT,

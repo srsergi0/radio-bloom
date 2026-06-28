@@ -60,6 +60,11 @@ export interface PlaylistTrack {
   addedAt: string;
 }
 
+export interface LiveStatus {
+  active: boolean;
+  connected: boolean;
+}
+
 export interface ApiResponse<T = any> {
   ok: boolean;
   data?: T;

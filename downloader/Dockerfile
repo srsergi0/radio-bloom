@@ -2,6 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# ffmpeg/ffprobe son necesarios para la validación de archivos de SpotiFLAC
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Usamos caché de BuildKit para acelerar pip install
 RUN --mount=type=cache,target=/root/.cache/pip pip install SpotiFLAC
 

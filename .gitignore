@@ -5,6 +5,8 @@ music/
 *.ogg
 *.flac
 *.m4a
+*.part
+*.webm
 
 
 # Environment

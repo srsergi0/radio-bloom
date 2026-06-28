@@ -42,10 +42,6 @@ import Layout from "../layouts/Layout.astro";
     ? "http://localhost:9876"
     : "";
 
-  const WS_BASE = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-    ? "ws://localhost:9876"
-    : `wss://${window.location.hostname}`;
-
   const deviceSelect = document.getElementById("deviceSelect");
   const refreshBtn = document.getElementById("refreshDevices");
   const startBtn = document.getElementById("startBtn");
@@ -55,23 +51,21 @@ import Layout from "../layouts/Layout.astro";
   const audioFormat = document.getElementById("audioFormat");
 
   let mediaRecorder = null;
-  let ws = null;
-  let stream = null;
+  let audioStream = null;
+  let fetchController = null;
+  let fetchAbort = null;
   let startTime = null;
   let timerInterval = null;
   let isStreaming = false;
 
   async function loadDevices() {
     try {
-      // Request permission first to get device labels
       let permStream = null;
       try {
         permStream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         });
-      } catch {
-        // Permission denied or no device — list what we can
-      }
+      } catch {}
 
       const devices = await navigator.mediaDevices.enumerateDevices();
       const audioInputs = devices.filter((d) => d.kind === "audioinput");
@@ -83,7 +77,6 @@ import Layout from "../layouts/Layout.astro";
         deviceSelect.appendChild(opt);
       }
 
-      // Release temp stream
       if (permStream) for (const t of permStream.getTracks()) t.stop();
 
       if (audioInputs.length === 0) {
@@ -101,20 +94,17 @@ import Layout from "../layouts/Layout.astro";
   });
 
   refreshBtn.addEventListener("click", loadDevices);
-
   startBtn.addEventListener("click", startStreaming);
   stopBtn.addEventListener("click", stopStreaming);
 
   async function startStreaming() {
-    const deviceId = deviceSelect.value;
-    if (!deviceId) return;
-
+    if (!deviceSelect.value) return;
     setStatus("Requesting microphone...", "text-yellow-400");
 
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
+      audioStream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          deviceId: { exact: deviceId },
+          deviceId: { exact: deviceSelect.value },
           sampleRate: 48000,
           channelCount: 2,
           echoCancellation: false,
@@ -132,45 +122,73 @@ import Layout from "../layouts/Layout.astro";
       audioFormat.textContent = mimeType;
       setStatus("Connecting to server...", "text-yellow-400");
 
-      // Connect WebSocket
-      ws = new WebSocket(`${WS_BASE}/ws/live`);
-      ws.binaryType = "arraybuffer";
+      // Create a ReadableStream and feed it with MediaRecorder chunks
+      fetchAbort = new AbortController();
+      fetchController = null;
 
-      ws.onopen = () => {
-        setStatus("Streaming live", "text-green-400");
-        isStreaming = true;
-        startBtn.disabled = true;
-        stopBtn.disabled = false;
-        deviceSelect.disabled = true;
-        startTimer();
+      const body = new ReadableStream({
+        start(c) { fetchController = c; },
+        cancel() { cleanup(); },
+      });
 
-        mediaRecorder = new MediaRecorder(stream, { mimeType });
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0 && ws?.readyState === WebSocket.OPEN) {
-            ws.send(event.data);
-          }
-        };
-        mediaRecorder.onstop = () => cleanup();
-        mediaRecorder.start(1000);
-      };
-
-      ws.onerror = () => {
-        setStatus("WebSocket connection error", "text-red-400");
-        cleanup();
-      };
-
-      ws.onclose = () => {
-        if (isStreaming) {
-          setStatus("Connection lost", "text-red-400");
+      // Start HTTP PUT request (works through Cloudflare Tunnel)
+      const putUrl = `${API_BASE}/live.mp3`;
+      fetch(putUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": mimeType,
+        },
+        body,
+        duplex: "half",
+        signal: fetchAbort.signal,
+      }).then((res) => {
+        if (!res.ok) {
+          setStatus(`Server error: ${res.status}`, "text-red-400");
           cleanup();
         }
+      }).catch((err) => {
+        if (err.name !== "AbortError") {
+          setStatus("Connection error: " + err.message, "text-red-400");
+          cleanup();
+        }
+      });
+
+      // Wait a tick for the fetch to establish, then start MediaRecorder
+      await new Promise((r) => setTimeout(r, 500));
+
+      setStatus("Streaming live", "text-green-400");
+      isStreaming = true;
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      deviceSelect.disabled = true;
+      startTimer();
+
+      mediaRecorder = new MediaRecorder(audioStream, { mimeType });
+      mediaRecorder.ondataavailable = async (event) => {
+        if (event.data.size > 0 && fetchController) {
+          try {
+            const buf = await event.data.arrayBuffer();
+            fetchController.enqueue(new Uint8Array(buf));
+          } catch {
+            // Stream closed or cancelled
+          }
+        }
       };
+      mediaRecorder.onstop = () => cleanup();
+      mediaRecorder.start(1000);
     } catch (err) {
       setStatus("Error: " + err.message, "text-red-400");
     }
   }
 
   function stopStreaming() {
+    if (fetchController) {
+      try { fetchController.close(); } catch {}
+      fetchController = null;
+    }
+    if (fetchAbort) {
+      try { fetchAbort.abort(); } catch {}
+    }
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
       mediaRecorder.stop();
     }
@@ -181,13 +199,15 @@ import Layout from "../layouts/Layout.astro";
   function cleanup() {
     isStreaming = false;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    fetchController = null;
+    fetchAbort = null;
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
       try { mediaRecorder.stop(); } catch {}
+      mediaRecorder = null;
     }
-    if (ws) { try { ws.close(); } catch {} ws = null; }
-    if (stream) {
-      for (const track of stream.getTracks()) track.stop();
-      stream = null;
+    if (audioStream) {
+      for (const track of audioStream.getTracks()) track.stop();
+      audioStream = null;
     }
     startBtn.disabled = !deviceSelect.value;
     stopBtn.disabled = true;
@@ -226,17 +246,13 @@ import Layout from "../layouts/Layout.astro";
     }, 1000);
   }
 
-  // Handle page close
   window.addEventListener("beforeunload", () => {
-    if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
-    if (ws) ws.close();
-    if (stream) for (const t of stream.getTracks()) t.stop();
+    if (fetchController) try { fetchController.close(); } catch {}
+    if (mediaRecorder && mediaRecorder.state !== "inactive") try { mediaRecorder.stop(); } catch {}
+    if (audioStream) for (const t of audioStream.getTracks()) t.stop();
   });
 
-  // Initial load
   loadDevices();
-
-  // Reload devices when new ones appear
   navigator.mediaDevices.addEventListener("devicechange", loadDevices);
 })();
 </script>

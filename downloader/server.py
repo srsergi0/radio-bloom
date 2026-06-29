@@ -287,87 +287,75 @@ class Handler(BaseHTTPRequestHandler):
                 with _download_lock:
                     yt_downloaded = False
 
-                    # FIRST: try yt-dlp (faster, no rate limits)
-                    if title or artist:
-                        send_event("log", {"message": "Trying yt-dlp first (YouTube Music)"})
-                        print("[downloader] Trying yt-dlp first", flush=True)
-                        yt_file, yt_error = _download_with_ytdlp(url, title, artist, temp_dir, send_event)
-                        if yt_file and yt_error is None:
-                            yt_downloaded = True
-                            print("[downloader] yt-dlp succeeded", flush=True)
-                        else:
-                            send_event("log", {"message": f"yt-dlp failed, trying SpotiFLAC: {yt_error}"})
-                            print(f"[downloader] yt-dlp failed: {yt_error}, trying SpotiFLAC", flush=True)
+                    # SpotiFLAC con servicios prioritarios
+                    with _lock:
+                        services = list(SERVICE_PRIORITY)
+                    cmd = [
+                        "spotiflac", url, temp_dir,
+                        "--service", *services,
+                        "--quality", quality,
+                        "--no-lyrics",
+                        "--no-enrich",
+                        "--retries", "2",
+                        "--timeout", "300",
+                    ]
 
-                    # SECOND: try SpotiFLAC (if yt-dlp didn't work, or no metadata)
-                    spotiflac_output = ""
-                    spotiflac_timed_out = False
-                    if not yt_downloaded:
-                        with _lock:
-                            services = list(SERVICE_PRIORITY)
-                        cmd = [
-                            "spotiflac", url, temp_dir,
-                            "--service", *services,
-                            "--quality", quality,
-                            "--no-lyrics",
-                            "--no-enrich",
-                            "--retries", "2",
-                            "--timeout", "300",
-                        ]
+                    send_event("log", {"message": f"Running spotiflac: {' '.join(cmd)}"})
 
-                        send_event("log", {"message": f"Running spotiflac: {' '.join(cmd)}"})
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                        env={**os.environ, "PYTHONIOENCODING": "utf-8"}
+                    )
 
-                        process = subprocess.Popen(
-                            cmd,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            bufsize=1,
-                            env={**os.environ, "PYTHONIOENCODING": "utf-8"}
-                        )
+                    timeout_seconds = 270
+                    timer = threading.Timer(
+                        timeout_seconds,
+                        lambda: process.kill() if process.poll() is None else None
+                    )
+                    timer.start()
 
-                        timeout_seconds = 270
-                        timer = threading.Timer(
-                            timeout_seconds,
-                            lambda: process.kill() if process.poll() is None else None
-                        )
-                        timer.start()
+                    output_lines = []
+                    try:
+                        while True:
+                            line = process.stdout.readline()
+                            if not line and process.poll() is not None:
+                                break
+                            if line:
+                                trimmed = line.strip()
+                                output_lines.append(trimmed.lower())
+                                send_event("log", {"message": trimmed})
+                    finally:
+                        timer.cancel()
 
-                        output_lines = []
-                        try:
-                            while True:
-                                line = process.stdout.readline()
-                                if not line and process.poll() is not None:
-                                    break
-                                if line:
-                                    trimmed = line.strip()
-                                    output_lines.append(trimmed.lower())
-                                    send_event("log", {"message": trimmed})
-                        finally:
-                            timer.cancel()
+                    process.wait()
+                    spotiflac_output = " ".join(output_lines)
+                    spotiflac_timed_out = process.returncode in (-9, -15)
 
-                        process.wait()
-                        spotiflac_output = " ".join(output_lines)
-                        spotiflac_timed_out = process.returncode in (-9, -15)
+                    if process.returncode != 0 and _tidal_blocked_in_output(spotiflac_output):
+                        _rebalance_services(success=False)
 
-                        if process.returncode != 0 and _tidal_blocked_in_output(spotiflac_output):
-                            _rebalance_services(success=False)
+                    if "tidal" in spotiflac_output and "trying" in spotiflac_output and "✓" in spotiflac_output:
+                        _rebalance_services(success=True)
 
-                        if "tidal" in spotiflac_output and "trying" in spotiflac_output and "✓" in spotiflac_output:
-                            _rebalance_services(success=True)
-
-                    # Collect downloaded files
                     temp_path = Path(temp_dir)
                     files = [f for f in temp_path.rglob("*") if f.is_file() and f.suffix.lower() in VALID_AUDIO_EXTENSIONS]
+
+                    # Fallback: si spotiflac no dejó archivos, reintentar sin --no-enrich
+                    if not files and (title or artist):
+                        send_event("log", {"message": "SpotiFLAC no produjo archivos — reintentando con yt-dlp"})
+                        yt_file, yt_err = _download_with_ytdlp(url, title, artist, temp_dir, send_event)
+                        if yt_file:
+                            files = [yt_file]
+
                     if not files:
-                        if yt_downloaded:
-                            send_event("error", {"message": "yt-dlp downloaded but no valid audio file found"})
-                        elif spotiflac_timed_out:
-                            send_event("error", {"message": "spotiflac timed out"})
-                        elif spotiflac_output:
-                            send_event("error", {"message": "No audio files downloaded"})
-                        else:
-                            send_event("error", {"message": "No audio files downloaded"})
+                        if _tidal_blocked_in_output(spotiflac_output):
+                            _rebalance_services(success=False)
+                        msg = "spotiflac timed out" if spotiflac_timed_out else "No audio files downloaded"
+                        send_event("error", {"message": msg})
                         return
 
                     ingested = []

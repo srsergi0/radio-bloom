@@ -13,7 +13,7 @@ export class MetadataEnrichmentService {
   async enrich(title: string, artist?: string): Promise<EnrichmentResult | null> {
     if (!title) return null;
 
-    const spotify = await spotifySearch(title + " " + (artist || ""));
+    const spotify = await spotifySearch(`${title} ${artist || ""}`);
     if (!spotify) return null;
 
     return {

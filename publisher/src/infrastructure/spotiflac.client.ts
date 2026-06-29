@@ -6,7 +6,7 @@ export interface SpotiflacDownloadResult {
 }
 
 export class SpotiflacClient {
-  constructor(private readonly songsDir: string) {}
+  constructor(readonly _songsDir: string) {}
 
   public async download(
     url: string,

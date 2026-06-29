@@ -166,7 +166,7 @@ export class LibraryService {
     try {
       const result = await this.metadataEnrichment!.enrich(title, artist);
       if (result?.spotifyUrl) {
-        const spotifyId = this.libraryRepo.updateSpotifyUrl(file, result.spotifyUrl);
+        const _spotifyId = this.libraryRepo.updateSpotifyUrl(file, result.spotifyUrl);
         console.log(`[LibraryService] [#${order}] ✅ Auto-enriched ${file} → ${result.spotifyUrl}`);
       } else {
         console.log(`[LibraryService][debug] [#${order}] ${file} → no se encontró en Spotify`);

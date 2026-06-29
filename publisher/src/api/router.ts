@@ -554,21 +554,16 @@ export function createApiRouter(deps: ApiDependencies): Hono {
       }
     }
 
-    const BATCH = 2;
-    for (let i = 0; i < pending.length; i += BATCH) {
-      const batch = pending.slice(i, i + BATCH);
-      const downloads = batch.map((p) =>
-        deps.downloadService
-          .downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
-            const rid = await deps.liquidsoapService.queuePush(`/music/${downloaded.file}`);
-            results.push({ title: downloaded.title, status: rid ? "queued" : "error" });
-          })
-          .catch((err: any) => {
-            results.push({ title: p.track.title, status: "error", error: err.message });
-            return null;
-          })
-      );
-      await Promise.allSettled(downloads);
+    for (const p of pending) {
+      deps.downloadService
+        .downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
+          const rid = await deps.liquidsoapService.queuePush(`/music/${downloaded.file}`);
+          results.push({ title: downloaded.title, status: rid ? "queued" : "error" });
+        })
+        .catch((err: any) => {
+          results.push({ title: p.track.title, status: "error", error: err.message });
+          return null;
+        });
     }
 
     const queue = await deps.liquidsoapService.queueList();

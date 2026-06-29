@@ -25,6 +25,7 @@ DEFAULT_PRIORITY = os.environ.get(
 SERVICE_PRIORITY = list(DEFAULT_PRIORITY)
 _tidal_blocked_until = 0.0
 _lock = threading.Lock()
+_download_lock = threading.Lock()
 
 
 def _tidal_blocked_in_output(output: str) -> bool:
@@ -75,48 +76,49 @@ def _rebalance_services(success: bool):
 
 
 def run_download(url: str, dest_dir: str, quality: str = "LOSSLESS") -> dict:
-    try:
-        with _lock:
-            services = list(SERVICE_PRIORITY)
-        cmd = [
-            "spotiflac", url, dest_dir,
-            "--service", *services,
-            "--quality", quality,
-            "--no-lyrics",
-            "--retries", "2",
-            "--timeout", "300",
-        ]
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=400,
-            env={**os.environ, "PYTHONIOENCODING": "utf-8"}
-        )
+    with _download_lock:
+        try:
+            with _lock:
+                services = list(SERVICE_PRIORITY)
+            cmd = [
+                "spotiflac", url, dest_dir,
+                "--service", *services,
+                "--quality", quality,
+                "--no-lyrics",
+                "--retries", "2",
+                "--timeout", "300",
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=400,
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"}
+            )
 
-        output = (result.stdout + " " + result.stderr).lower()
+            output = (result.stdout + " " + result.stderr).lower()
 
-        if result.returncode != 0:
-            if _tidal_blocked_in_output(output):
-                _rebalance_services(success=False)
-            return {"error": result.stderr.strip() or f"Exit code {result.returncode}"}
+            if result.returncode != 0:
+                if _tidal_blocked_in_output(output):
+                    _rebalance_services(success=False)
+                return {"error": result.stderr.strip() or f"Exit code {result.returncode}"}
 
-        dest_path = Path(dest_dir)
-        files = [f for f in dest_path.rglob("*") if f.is_file() and f.suffix.lower() in VALID_AUDIO_EXTENSIONS]
-        if not files:
-            if _tidal_blocked_in_output(output):
-                _rebalance_services(success=False)
-            return {"error": "No audio files downloaded"}
+            dest_path = Path(dest_dir)
+            files = [f for f in dest_path.rglob("*") if f.is_file() and f.suffix.lower() in VALID_AUDIO_EXTENSIONS]
+            if not files:
+                if _tidal_blocked_in_output(output):
+                    _rebalance_services(success=False)
+                return {"error": "No audio files downloaded"}
 
-        if "tidal" in output and "trying" in output and "✓" in output:
-            _rebalance_services(success=True)
+            if "tidal" in output and "trying" in output and "✓" in output:
+                _rebalance_services(success=True)
 
-        return {"filename": files[0].name}
+            return {"filename": files[0].name}
 
-    except subprocess.TimeoutExpired:
-        return {"error": "Download timed out (400s)"}
-    except Exception as e:
-        return {"error": str(e)}
+        except subprocess.TimeoutExpired:
+            return {"error": "Download timed out (400s)"}
+        except Exception as e:
+            return {"error": str(e)}
 
 
 class Handler(BaseHTTPRequestHandler):

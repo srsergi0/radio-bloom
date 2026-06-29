@@ -61,7 +61,7 @@ services:
     environment:
       - PORT=4002
       - SONGS_DIR=/music/songs
-      - DOWNLOAD_SERVICES=${DOWNLOAD_SERVICES:-youtube,tidal,deezer,amazon,apple,qobuz}
+      - DOWNLOAD_SERVICES=${DOWNLOAD_SERVICES}
     volumes:
       - radio-music:/music/songs
 

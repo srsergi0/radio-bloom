@@ -17,10 +17,9 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 SONGS_DIR = os.environ.get("SONGS_DIR", "/music/songs")
 VALID_AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".ogg", ".wav", ".opus"}
-DEFAULT_PRIORITY = os.environ.get(
-    "DOWNLOAD_SERVICES",
-    "tidal,youtube,deezer,apple,amazon,qobuz"
-).split(",")
+DEFAULT_PRIORITY = os.environ.get("DOWNLOAD_SERVICES", "").split(",")
+if not DEFAULT_PRIORITY or DEFAULT_PRIORITY == [""]:
+    raise RuntimeError("DOWNLOAD_SERVICES env var is required")
 
 SERVICE_PRIORITY = list(DEFAULT_PRIORITY)
 _tidal_blocked_until = 0.0

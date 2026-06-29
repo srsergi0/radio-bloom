@@ -40,10 +40,18 @@ export class DownloadService {
         this.libraryRepo.updateDownload(jobId, { status: "downloading" });
 
         try {
-          const result = await this.spotiflacClient.download(url, async (line) => {
-            console.log(`[DownloadService] [spotiflac-log] ${line}`);
-            await job.log(line).catch(() => {});
-          });
+          // Fetch metadata from Spotify BEFORE download (needed for yt-dlp fallback)
+          const spotifyTrack = await spotifyGetTrack(url);
+
+          const result = await this.spotiflacClient.download(
+            url,
+            spotifyTrack?.title,
+            spotifyTrack?.artist,
+            async (line) => {
+              console.log(`[DownloadService] [spotiflac-log] ${line}`);
+              await job.log(line).catch(() => {});
+            }
+          );
 
           if (result.error || !result.filename) {
             throw new Error(result.error || "No filename returned from spotiflac");
@@ -52,9 +60,6 @@ export class DownloadService {
           const latestFile = result.filename;
           const filePath = join(this.songsDir, latestFile);
           const fileStat = statSync(filePath);
-
-          // Metadata from Spotify API
-          const spotifyTrack = await spotifyGetTrack(url);
 
           const track: Track = {
             id: `lib_${Date.now()}`,

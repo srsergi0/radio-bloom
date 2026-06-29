@@ -9,7 +9,11 @@ from pathlib import Path
 import hashlib
 import time
 import threading
-import uuid
+import re
+
+import yt_dlp
+import requests
+
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -81,6 +85,78 @@ def _rebalance_services(success: bool):
         services.append("tidal")
         SERVICE_PRIORITY = services
         print(f"[downloader] Tidal BLOCKED for 3h — new priority: {SERVICE_PRIORITY}", flush=True)
+
+
+def _sanitize_filename(name: str) -> str:
+    name = re.sub(r'[<>:"/\\|?*]', "_", name)
+    return name.strip()[:200]
+
+
+def _download_with_ytdlp(url: str, title: str, artist: str, temp_dir: str, send_event):
+    """
+    Fallback: download best audio from YouTube Music using yt-dlp as Python library.
+    No auth, no cookies, no PO token needed for audio-only formats.
+    Returns (filename: str | None, error: str | None)
+    """
+    search_query = f"ytsearch:{title} {artist}" if artist else f"ytsearch:{title}"
+    send_event("log", {"message": f"[yt-dlp] Searching: {search_query}"})
+    print(f"[yt-dlp] Searching: {search_query}", flush=True)
+
+    ydl_opts = {
+        "format": "bestaudio[acodec=opus]/bestaudio/best",
+        "outtmpl": str(Path(temp_dir) / "%(title)s.%(ext)s"),
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "retries": 3,
+        "fragment_retries": 3,
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "opus",
+            }
+        ],
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(search_query, download=True)
+
+        if info is None:
+            return None, "yt-dlp returned no info"
+
+        # Info can be a playlist with entries or a single video
+        entries = []
+        if "entries" in info and info["entries"]:
+            entries = info["entries"]
+        else:
+            entries = [info]
+
+        if not entries:
+            return None, "No results from yt-dlp"
+
+        entry = entries[0]
+        filename = entry.get("title", title)
+
+        # Find the downloaded file in temp_dir
+        temp_path = Path(temp_dir)
+        files = [f for f in temp_path.rglob("*") if f.is_file() and f.suffix.lower() in VALID_AUDIO_EXTENSIONS]
+        if not files:
+            return None, "yt-dlp downloaded but no audio file found in temp dir"
+
+        best = max(files, key=lambda f: f.stat().st_size)
+        # Rename to a clean filename
+        safe_name = _sanitize_filename(filename) + best.suffix
+        final = best.rename(temp_path / safe_name)
+        send_event("log", {"message": f"[yt-dlp] Downloaded: {safe_name} ({final.stat().st_size / 1024:.0f} KB)"})
+        print(f"[yt-dlp] Downloaded: {safe_name} ({final.stat().st_size / 1024:.0f} KB)", flush=True)
+        return final, None
+
+    except Exception as e:
+        error_msg = f"yt-dlp failed: {str(e)[:200]}"
+        send_event("log", {"message": error_msg})
+        print(f"[yt-dlp] Error: {error_msg}", flush=True)
+        return None, error_msg
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -184,6 +260,8 @@ class Handler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(content_length))
             url = body.get("url")
+            title = body.get("title")
+            artist = body.get("artist")
             quality = body.get("quality", "LOSSLESS")
 
             if not url:
@@ -258,26 +336,53 @@ class Handler(BaseHTTPRequestHandler):
                     process.wait()
                     output = " ".join(output_lines)
 
-                    if process.returncode != 0:
+                    spotiflac_failed = process.returncode != 0
+
+                    if spotiflac_failed:
                         if _tidal_blocked_in_output(output):
                             _rebalance_services(success=False)
-                        
-                        # Check if process was terminated due to timeout (SIGKILL is -9, SIGTERM is -15)
-                        if process.returncode in (-9, -15):
-                            error_msg = f"spotiflac process timed out and was killed after {timeout_seconds} seconds"
+
+                        # Try yt-dlp fallback if we have title+artist metadata
+                        if title or artist:
+                            send_event("log", {"message": "Spotiflac failed — falling back to yt-dlp (YouTube Music)"})
+                            print("[downloader] Spotiflac failed — trying yt-dlp fallback", flush=True)
+                            yt_file, yt_error = _download_with_ytdlp(url, title, artist, temp_dir, send_event)
+                            if yt_file and yt_error is None:
+                                # yt-dlp succeeded — continue to ingestion
+                                pass
+                            else:
+                                # Both failed
+                                error_msg = f"spotiflac exited with code {process.returncode}, yt-dlp: {yt_error}"
+                                if process.returncode in (-9, -15):
+                                    error_msg = f"spotiflac timed out, yt-dlp: {yt_error}"
+                                send_event("error", {"message": error_msg})
+                                return
                         else:
-                            error_msg = f"spotiflac process exited with code {process.returncode}"
-                        
-                        send_event("error", {"message": error_msg})
-                        return
+                            # No fallback metadata — report spotiflac error
+                            if process.returncode in (-9, -15):
+                                error_msg = f"spotiflac process timed out and was killed after {timeout_seconds} seconds"
+                            else:
+                                error_msg = f"spotiflac process exited with code {process.returncode}"
+                            send_event("error", {"message": error_msg})
+                            return
 
                     temp_path = Path(temp_dir)
                     files = [f for f in temp_path.rglob("*") if f.is_file() and f.suffix.lower() in VALID_AUDIO_EXTENSIONS]
                     if not files:
                         if _tidal_blocked_in_output(output):
                             _rebalance_services(success=False)
-                        send_event("error", {"message": "No audio files downloaded"})
-                        return
+                        # Try yt-dlp fallback as last resort
+                        if title or artist:
+                            send_event("log", {"message": "No files from spotiflac — falling back to yt-dlp"})
+                            yt_file, yt_error = _download_with_ytdlp(url, title, artist, temp_dir, send_event)
+                            if yt_file and yt_error is None:
+                                files = [yt_file]
+                            else:
+                                send_event("error", {"message": f"No audio files: {yt_error}"})
+                                return
+                        else:
+                            send_event("error", {"message": "No audio files downloaded"})
+                            return
 
                     if "tidal" in output and "trying" in output and "✓" in output:
                         _rebalance_services(success=True)

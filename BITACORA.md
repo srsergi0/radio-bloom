@@ -78,7 +78,6 @@ radio/
 │   ├── tsconfig.json                     # Configuración del compilador TypeScript
 │   ├── package.json                      # Dependencias de npm y scripts de Bun (dev, db:migrate, etc.)
 │   ├── drizzle.config.ts                 # Configuración de Drizzle ORM (schema, output, db path)
-│   ├── check_db.ts                       # Script de utilidad rápida para verificar la base de datos
 │   ├── test/                             # Tests unitarios y de integración
 │   │   ├── api.test.ts                   # Tests de endpoints de la API
 │   │   ├── download.service.test.ts      # Tests del servicio de descargas
@@ -119,7 +118,11 @@ radio/
 │           ├── liquidsoap.service.ts     # Sincronización y órdenes sobre el reproductor (incluye playFilesNow)
 │           └── mcp.service.ts            # Herramientas MCP: radio_playlist_create, radio_playlist_add_track, radio_queue_add_url, etc.
 │
-│       └── scripts/                      # Scripts de utilidad y mantenimiento (carpeta actualmente vacía)
+│       └── scripts/                      # Scripts de utilidad y mantenimiento
+│           ├── test-isrc-youtube.ts       # Resolución ISRC → YouTube (ytsearch:ISRC)
+│           ├── test-youtube-premium.ts    # Prueba calidad YouTube Premium con PO Token
+│           ├── test-write-metadata.ts     # Prueba de escritura de metadatos vía downloader
+│           └── check_db.ts               # Utilidad para inspeccionar la base de datos
 │
 └── web/                                  # Interfaz Frontend (Astro)
     ├── .astro/                           # Cache de compilación de Astro (generado automáticamente)
@@ -266,6 +269,7 @@ El sistema de playlists permite crear, gestionar y reproducir listas de reproduc
 - **Auto-rescan deshabilitado**: Se eliminó el watcher de archivos (`watchDirectories`) del `LibraryService`. Ya no se reescribe la carpeta automáticamente. Para activar el rescan manual: `GET /api/library/rescan`.
 - **Optimización de velocidad FTP (Puertos pasivos)**: Se corrigió la configuración del contenedor FTP agregando el flag `-p $FTP_PASSIVE_MIN:$FTP_PASSIVE_MAX` en su comando de inicio y exponiendo estas variables en el entorno de `docker-compose.yml`. Anteriormente, el demonio FTP elegía puertos pasivos aleatorios fuera del rango mapeado por Docker, provocando bloqueos de conexión, reintentos y extrema lentitud al transferir múltiples archivos.
 - **Validación de tracks en herramientas MCP**: Se agregó verificación con `libraryRepo.getTrackByFile()` en `radio_queue_add`, `radio_queue_insert` y `radio_play_now` para evitar encolar/reproducir archivos que no existen en la biblioteca. Ahora devuelven error descriptivo si el archivo no está registrado.
+- **Fallback yt-dlp (YouTube Music) en el downloader**: Se agregó una función `_download_with_ytdlp()` en `downloader/server.py` que usa yt-dlp como librería Python para descargar el mejor audio disponible (Opus, formato 251) desde YouTube Music **sin cookies, sin auth, sin PO Token**. Se activa automáticamente cuando SpotiFLAC falla (rate-limit/timeout) y el publisher provee `title`+`artist`. En el publisher, `download.service.ts` ahora obtiene metadata de Spotify ANTES de la descarga y la pasa al downloader mediante `spotiflac.client.ts`. Esto garantiza que nunca se bloquee la cola de descargas — si todos los servicios de pago fallan, cae en YouTube Music.
 - **Descargas estrictamente secuenciales (uno a uno)**: Se implementó un lock de exclusión mutua global (`_download_lock`) en el servidor Python `downloader/server.py` para evitar la ejecución paralela de múltiples subprocesos de SpotiFLAC. Asimismo, se simplificó el endpoint `/api/playlists/:id/queue` en `router.ts` eliminando el bucle por lotes `BATCH = 2` y la espera artificial redundante, derivando todo al flujo asíncrono y secuencial del `DownloadService` de la base de datos.
 - **Migración a arquitectura de colas con BullMQ y Redis (QueueManager)**: Se sustituyó el sondeo y procesamiento manual de colas en SQLite por una infraestructura profesional y desacoplada basada en la clase genérica `QueueManager` (en `src/infrastructure/queue.manager.ts`) y un contenedor de Redis (con límite estricto de 50MB y política LRU). La lógica de descargas de `DownloadService` se desacopló de BullMQ inyectando esta nueva abstracción. El procesamiento de tareas sincroniza de manera híbrida los estados en SQLite para mantener compatibilidad total con endpoints y herramientas de la radio. Asimismo, se integró el panel visual **Bull Board** montado en Hono (ruta `/admin/queues`), corrigiendo el problema de carga de recursos ("Loading..." infinito) mediante la configuración adecuada de `setBasePath` y el middleware de archivos estáticos.
 - **Robustez de la Cola (Reintentos, Backoff y Timeouts)**: Se configuró la cola de descargas con auto-reintentos (hasta 3 intentos), retroceso exponencial (delay de 5 segundos de inicio) y límite de ejecución (timeout de 5 minutos por canción). Esto permite al sistema reintentar descargas que fallen por problemas temporales de red y continuar con la siguiente canción si alguna se queda colgada. En SQLite, el estado se mantiene en cola y detalla el intento fallido (ej. `Attempt 1/3 failed`), pasando a `"error"` de forma permanente solo al agotar los intentos.

@@ -10,16 +10,22 @@ export class SpotiflacClient {
 
   public async download(
     url: string,
+    title?: string,
+    artist?: string,
     onLog?: (line: string) => Promise<void> | void
   ): Promise<SpotiflacDownloadResult> {
     console.log(`[SpotiflacClient] Requesting download from downloader service...`);
     if (onLog) await onLog(`Sending download request to ${DOWNLOADER_URL}`);
 
     try {
+      const body: Record<string, string> = { url };
+      if (title) body.title = title;
+      if (artist) body.artist = artist;
+
       const res = await fetch(`${DOWNLOADER_URL}/download`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(300_000), // 5 min timeout
       });
 

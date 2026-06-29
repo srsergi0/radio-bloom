@@ -72,6 +72,7 @@ radio/
 ├── downloads-test/                       # Carpeta de pruebas de descargas (archivos FLAC de ejemplo)
 │
 ├── publisher/                            # Backend API (Bun + TypeScript + Drizzle)
+│   ├── AGENTS.md                         # Reglas específicas del backend (build commands, arquitectura, convenciones)
 │   ├── Dockerfile                        # Dockerfile optimizado (BuildKit Cache, prod-only deps) para producción con Bun
 │   ├── biome.json                        # Configuración de Biome (linting y formateo ultra-rápido)
 │   ├── tsconfig.json                     # Configuración del compilador TypeScript

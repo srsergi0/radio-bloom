@@ -25,9 +25,15 @@ live = input.harbor(
 # Fallback: live takes priority, then queue, then radio
 main = fallback(track_sensitive=false, [live, queue, radio])
 
-# Audio Processing Pipeline (Broadcasting DSP)
+# Audio Processing Pipeline (Broadcasting DSP - Commercial FM Sound)
 main = normalize(target=-14.0, threshold=-45.0, main)
-main = compress(main, attack=5.0, gain=3.0, ratio=2.5, release=150.0, threshold=-16.0)
+
+main = compress.multiband(main, [
+  {frequency=200., attack=10.0, release=100.0, ratio=3.5, threshold=-16.0, gain=3.0},
+  {frequency=3000., attack=5.0, release=70.0, ratio=2.5, threshold=-18.0, gain=2.0},
+  {frequency=20000., attack=2.0, release=50.0, ratio=3.0, threshold=-12.0, gain=1.5}
+])
+
 main = limit(main, threshold=-1.0)
 
 output.harbor(

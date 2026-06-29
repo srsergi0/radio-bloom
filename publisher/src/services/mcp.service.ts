@@ -7,6 +7,7 @@ import { WebStandardStreamableHTTPServerTransport } from "../webStandardStreamab
 import type { DownloadService } from "./download.service";
 import type { LibraryService } from "./library.service";
 import type { LiquidsoapService } from "./liquidsoap.service";
+import { spotifySearch } from "../infrastructure/spotify.client";
 
 export class McpService {
   private readonly server: McpServer;
@@ -105,6 +106,40 @@ export class McpService {
             },
           ],
         };
+      }
+    );
+
+    server.tool(
+      "radio_spotify_search",
+      "Buscar canciones en Spotify por nombre, artista o álbum",
+      {
+        query: z.string().describe("Término de búsqueda"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .default(10)
+          .describe("Número máximo de resultados (default: 10)"),
+      },
+      async ({ query, limit }) => {
+        try {
+          const results = await spotifySearch(query, limit);
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  results.length === 0
+                    ? "No se encontraron resultados en Spotify"
+                    : JSON.stringify({ total: results.length, items: results }, null, 2),
+              },
+            ],
+          };
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        }
       }
     );
 

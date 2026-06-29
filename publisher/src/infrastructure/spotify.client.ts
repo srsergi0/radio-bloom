@@ -99,15 +99,15 @@ function extractTrackId(url: string): string | null {
   return match?.[1] || null;
 }
 
-export async function spotifySearch(query: string): Promise<SpotifyTrack | null> {
+export async function spotifySearch(query: string, limit = 10): Promise<SpotifyTrack[]> {
   if (!CLIENT_ID || !CLIENT_SECRET) {
     console.error("[Spotify] Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET");
-    return null;
+    return [];
   }
 
   try {
     const token = await getAccessToken();
-    const url = `${SEARCH_URL}?q=${encodeURIComponent(query)}&type=track&limit=1`;
+    const url = `${SEARCH_URL}?q=${encodeURIComponent(query)}&type=track&limit=${limit}`;
 
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
@@ -116,27 +116,27 @@ export async function spotifySearch(query: string): Promise<SpotifyTrack | null>
 
     if (!res.ok) {
       console.error(`[Spotify] Search failed: ${res.status}`);
-      return null;
+      return [];
     }
 
     const data: any = await res.json();
-    const track = data?.tracks?.items?.[0];
-    if (!track) return null;
+    const items: any[] = data?.tracks?.items || [];
 
-    const images = track.album?.images || [];
-    const albumArt = images.length > 0 ? images[0].url : "";
-
-    return {
-      id: track.id,
-      title: track.name,
-      artist: track.artists?.[0]?.name || "",
-      album: track.album?.name || "",
-      albumArt,
-      duration: Math.round((track.duration_ms || 0) / 1000),
-      spotifyUrl: `https://open.spotify.com/track/${track.id}`,
-    };
+    return items.map((track: any) => {
+      const images = track.album?.images || [];
+      const albumArt = images.length > 0 ? images[0].url : "";
+      return {
+        id: track.id,
+        title: track.name,
+        artist: track.artists?.[0]?.name || "",
+        album: track.album?.name || "",
+        albumArt,
+        duration: Math.round((track.duration_ms || 0) / 1000),
+        spotifyUrl: `https://open.spotify.com/track/${track.id}`,
+      };
+    });
   } catch (err: any) {
     console.error(`[Spotify] Search error: ${err.message}`);
-    return null;
+    return [];
   }
 }

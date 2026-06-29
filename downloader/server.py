@@ -285,102 +285,90 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 with _download_lock:
-                    with _lock:
-                        services = list(SERVICE_PRIORITY)
-                    cmd = [
-                        "spotiflac", url, temp_dir,
-                        "--service", *services,
-                        "--quality", quality,
-                        "--no-lyrics",
-                        "--no-enrich",
-                        "--retries", "2",
-                        "--timeout", "300",
-                    ]
+                    yt_downloaded = False
 
-                    send_event("log", {"message": f"Running command: {' '.join(cmd)}"})
+                    # FIRST: try yt-dlp (faster, no rate limits)
+                    if title or artist:
+                        send_event("log", {"message": "Trying yt-dlp first (YouTube Music)"})
+                        print("[downloader] Trying yt-dlp first", flush=True)
+                        yt_file, yt_error = _download_with_ytdlp(url, title, artist, temp_dir, send_event)
+                        if yt_file and yt_error is None:
+                            yt_downloaded = True
+                            print("[downloader] yt-dlp succeeded", flush=True)
+                        else:
+                            send_event("log", {"message": f"yt-dlp failed, trying SpotiFLAC: {yt_error}"})
+                            print(f"[downloader] yt-dlp failed: {yt_error}, trying SpotiFLAC", flush=True)
 
-                    process = subprocess.Popen(
-                        cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1,
-                        env={**os.environ, "PYTHONIOENCODING": "utf-8"}
-                    )
+                    # SECOND: try SpotiFLAC (if yt-dlp didn't work, or no metadata)
+                    spotiflac_output = ""
+                    spotiflac_timed_out = False
+                    if not yt_downloaded:
+                        with _lock:
+                            services = list(SERVICE_PRIORITY)
+                        cmd = [
+                            "spotiflac", url, temp_dir,
+                            "--service", *services,
+                            "--quality", quality,
+                            "--no-lyrics",
+                            "--no-enrich",
+                            "--retries", "2",
+                            "--timeout", "300",
+                        ]
 
-                    # Enforce a hard process-level timeout of 270 seconds (4.5 minutes)
-                    # to prevent hanging processes from locking the downloader queue.
-                    timeout_seconds = 270
-                    timer = threading.Timer(
-                        timeout_seconds,
-                        lambda: process.kill() if process.poll() is None else None
-                    )
-                    timer.start()
+                        send_event("log", {"message": f"Running spotiflac: {' '.join(cmd)}"})
 
-                    output_lines = []
-                    try:
-                        while True:
-                            line = process.stdout.readline()
-                            if not line and process.poll() is not None:
-                                break
-                            if line:
-                                trimmed = line.strip()
-                                output_lines.append(trimmed.lower())
-                                send_event("log", {"message": trimmed})
-                    finally:
-                        timer.cancel()
+                        process = subprocess.Popen(
+                            cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            bufsize=1,
+                            env={**os.environ, "PYTHONIOENCODING": "utf-8"}
+                        )
 
-                    process.wait()
-                    output = " ".join(output_lines)
+                        timeout_seconds = 270
+                        timer = threading.Timer(
+                            timeout_seconds,
+                            lambda: process.kill() if process.poll() is None else None
+                        )
+                        timer.start()
 
-                    spotiflac_failed = process.returncode != 0
+                        output_lines = []
+                        try:
+                            while True:
+                                line = process.stdout.readline()
+                                if not line and process.poll() is not None:
+                                    break
+                                if line:
+                                    trimmed = line.strip()
+                                    output_lines.append(trimmed.lower())
+                                    send_event("log", {"message": trimmed})
+                        finally:
+                            timer.cancel()
 
-                    if spotiflac_failed:
-                        if _tidal_blocked_in_output(output):
+                        process.wait()
+                        spotiflac_output = " ".join(output_lines)
+                        spotiflac_timed_out = process.returncode in (-9, -15)
+
+                        if process.returncode != 0 and _tidal_blocked_in_output(spotiflac_output):
                             _rebalance_services(success=False)
 
-                        # Try yt-dlp fallback if we have title+artist metadata
-                        if title or artist:
-                            send_event("log", {"message": "Spotiflac failed — falling back to yt-dlp"})
-                            print("[downloader] Spotiflac failed — trying yt-dlp fallback", flush=True)
-                            yt_file, yt_error = _download_with_ytdlp(url, title, artist, temp_dir, send_event)
-                            if yt_file and yt_error is None:
-                                pass
-                            else:
-                                error_msg = f"spotiflac exited with code {process.returncode}, yt-dlp: {yt_error}"
-                                if process.returncode in (-9, -15):
-                                    error_msg = f"spotiflac timed out, yt-dlp: {yt_error}"
-                                send_event("error", {"message": error_msg})
-                                return
-                        else:
-                            # No fallback metadata — report spotiflac error
-                            if process.returncode in (-9, -15):
-                                error_msg = f"spotiflac process timed out and was killed after {timeout_seconds} seconds"
-                            else:
-                                error_msg = f"spotiflac process exited with code {process.returncode}"
-                            send_event("error", {"message": error_msg})
-                            return
+                        if "tidal" in spotiflac_output and "trying" in spotiflac_output and "✓" in spotiflac_output:
+                            _rebalance_services(success=True)
 
+                    # Collect downloaded files
                     temp_path = Path(temp_dir)
                     files = [f for f in temp_path.rglob("*") if f.is_file() and f.suffix.lower() in VALID_AUDIO_EXTENSIONS]
                     if not files:
-                        if _tidal_blocked_in_output(output):
-                            _rebalance_services(success=False)
-                        # Try yt-dlp fallback as last resort
-                        if title or artist:
-                            send_event("log", {"message": "No files from spotiflac — falling back to yt-dlp"})
-                            yt_file, yt_error = _download_with_ytdlp(url, title, artist, temp_dir, send_event)
-                            if yt_file and yt_error is None:
-                                files = [yt_file]
-                            else:
-                                send_event("error", {"message": f"No audio files: {yt_error}"})
-                                return
+                        if yt_downloaded:
+                            send_event("error", {"message": "yt-dlp downloaded but no valid audio file found"})
+                        elif spotiflac_timed_out:
+                            send_event("error", {"message": "spotiflac timed out"})
+                        elif spotiflac_output:
+                            send_event("error", {"message": "No audio files downloaded"})
                         else:
                             send_event("error", {"message": "No audio files downloaded"})
-                            return
-
-                    if "tidal" in output and "trying" in output and "✓" in output:
-                        _rebalance_services(success=True)
+                        return
 
                     ingested = []
                     for f in files:

@@ -15,23 +15,24 @@ export class MetadataEnrichmentService {
 
     // First search: title + artist only (more accurate)
     const queryBasic = artist ? `${title} ${artist}` : title;
-    let spotify = await spotifySearch(queryBasic);
+    let results = await spotifySearch(queryBasic);
     
     // If no result, try with album
-    if (!spotify && album) {
+    if (results.length === 0 && album) {
       const queryWithAlbum = `${title} ${artist || ""} ${album}`;
-      spotify = await spotifySearch(queryWithAlbum);
+      results = await spotifySearch(queryWithAlbum);
     }
     
-    if (!spotify) return null;
+    if (results.length === 0) return null;
 
+    const track = results[0];
     return {
-      title: spotify.title,
-      artist: spotify.artist,
-      album: spotify.album || null,
-      duration: spotify.duration,
-      spotifyUrl: spotify.spotifyUrl,
-      albumArt: spotify.albumArt || null,
+      title: track.title,
+      artist: track.artist,
+      album: track.album || null,
+      duration: track.duration,
+      spotifyUrl: track.spotifyUrl,
+      albumArt: track.albumArt || null,
     };
   }
 }

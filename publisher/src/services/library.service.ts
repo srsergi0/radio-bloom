@@ -129,28 +129,29 @@ export class LibraryService {
         if (type === "song" && !spotifyUrl) {
           // First search: title + artist only (more accurate)
           const queryBasic = artist ? `${title} ${artist}` : title;
-          let spotifyTrack = await spotifySearch(queryBasic);
+          let results = await spotifySearch(queryBasic);
           
           // If no result or album mismatch, try with album
-          if (!spotifyTrack && album) {
+          if (results.length === 0 && album) {
             const queryWithAlbum = `${title} ${artist} ${album}`;
-            spotifyTrack = await spotifySearch(queryWithAlbum);
+            results = await spotifySearch(queryWithAlbum);
           }
           
-          if (spotifyTrack) {
+          if (results.length > 0) {
+            const track = results[0];
             // Verify album match if we have album metadata from file
-            if (album && spotifyTrack.album) {
+            if (album && track.album) {
               const fileAlbum = album.toLowerCase().trim();
-              const spotifyAlbum = spotifyTrack.album.toLowerCase().trim();
+              const spotifyAlbum = track.album.toLowerCase().trim();
               if (fileAlbum !== spotifyAlbum) {
-                console.log(`[LibraryService] ⚠️ Album mismatch: file="${album}" vs spotify="${spotifyTrack.album}"`);
+                console.log(`[LibraryService] ⚠️ Album mismatch: file="${album}" vs spotify="${track.album}"`);
               }
             }
-            title = spotifyTrack.title;
-            artist = spotifyTrack.artist;
-            album = spotifyTrack.album;
-            duration = spotifyTrack.duration;
-            spotifyUrl = spotifyTrack.spotifyUrl;
+            title = track.title;
+            artist = track.artist;
+            album = track.album;
+            duration = track.duration;
+            spotifyUrl = track.spotifyUrl;
             console.log(`[LibraryService] ✅ Spotify found: ${title} — ${artist} (${album})`);
           } else {
             console.log(`[LibraryService] ⚠️ Spotify not found: ${queryBasic}`);

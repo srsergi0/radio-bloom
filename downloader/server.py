@@ -75,53 +75,13 @@ def _rebalance_services(success: bool):
         print(f"[downloader] Tidal BLOCKED for 3h — new priority: {SERVICE_PRIORITY}", flush=True)
 
 
-def run_download(url: str, dest_dir: str, quality: str = "LOSSLESS") -> dict:
-    with _download_lock:
-        try:
-            with _lock:
-                services = list(SERVICE_PRIORITY)
-            cmd = [
-                "spotiflac", url, dest_dir,
-                "--service", *services,
-                "--quality", quality,
-                "--no-lyrics",
-                "--retries", "2",
-                "--timeout", "300",
-            ]
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=400,
-                env={**os.environ, "PYTHONIOENCODING": "utf-8"}
-            )
-
-            output = (result.stdout + " " + result.stderr).lower()
-
-            if result.returncode != 0:
-                if _tidal_blocked_in_output(output):
-                    _rebalance_services(success=False)
-                return {"error": result.stderr.strip() or f"Exit code {result.returncode}"}
-
-            dest_path = Path(dest_dir)
-            files = [f for f in dest_path.rglob("*") if f.is_file() and f.suffix.lower() in VALID_AUDIO_EXTENSIONS]
-            if not files:
-                if _tidal_blocked_in_output(output):
-                    _rebalance_services(success=False)
-                return {"error": "No audio files downloaded"}
-
-            if "tidal" in output and "trying" in output and "✓" in output:
-                _rebalance_services(success=True)
-
-            return {"filename": files[0].name}
-
-        except subprocess.TimeoutExpired:
-            return {"error": "Download timed out (400s)"}
-        except Exception as e:
-            return {"error": str(e)}
-
-
 class Handler(BaseHTTPRequestHandler):
+    def _json(self, status: int, data: dict):
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode("utf-8"))
+
     def do_POST(self):
         parsed = urlparse(self.path)
 
@@ -134,44 +94,108 @@ class Handler(BaseHTTPRequestHandler):
             if not url:
                 return self._json(400, {"error": "url required"})
 
+            # Set up Server-Sent Events (SSE) response stream
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+
+            def send_event(event_type: str, data: dict):
+                try:
+                    payload = f"data: {json.dumps({'type': event_type, **data})}\n\n"
+                    self.wfile.write(payload.encode("utf-8"))
+                    self.wfile.flush()
+                except Exception as e:
+                    print(f"[downloader] Error sending event: {e}", flush=True)
+
             uid = f"{int(time.time())}_{hashlib.md5(url.encode()).hexdigest()[:6]}"
             temp_dir = os.path.join(SONGS_DIR, ".tmp", f"download_{uid}")
             os.makedirs(temp_dir, exist_ok=True)
 
             try:
-                result = run_download(url, temp_dir, quality)
+                with _download_lock:
+                    with _lock:
+                        services = list(SERVICE_PRIORITY)
+                    cmd = [
+                        "spotiflac", url, temp_dir,
+                        "--service", *services,
+                        "--quality", quality,
+                        "--no-lyrics",
+                        "--retries", "2",
+                        "--timeout", "300",
+                    ]
 
-                if result.get("error"):
-                    return self._json(500, {"error": result["error"]})
+                    send_event("log", {"message": f"Running command: {' '.join(cmd)}"})
 
-                temp_path = Path(temp_dir)
-                files = [f for f in temp_path.rglob("*") if f.is_file() and f.suffix.lower() in VALID_AUDIO_EXTENSIONS]
-                ingested = []
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                        env={**os.environ, "PYTHONIOENCODING": "utf-8"}
+                    )
 
-                for f in files:
-                    dest = Path(SONGS_DIR) / f.name
-                    if dest.exists():
-                        base = dest.stem
-                        ext = dest.suffix
-                        counter = 1
-                        while dest.exists():
-                            dest = Path(SONGS_DIR) / f"{base}_{counter}{ext}"
-                            counter += 1
-                    f.rename(dest)
-                    ingested.append(dest.name)
+                    output_lines = []
+                    while True:
+                        line = process.stdout.readline()
+                        if not line and process.poll() is not None:
+                            break
+                        if line:
+                            trimmed = line.strip()
+                            output_lines.append(trimmed.lower())
+                            send_event("log", {"message": trimmed})
 
-                if not ingested:
-                    return self._json(500, {"error": "No valid files after download"})
+                    process.wait()
+                    output = " ".join(output_lines)
 
-                return self._json(200, {"filename": ingested[0], "quality": quality})
+                    if process.returncode != 0:
+                        if _tidal_blocked_in_output(output):
+                            _rebalance_services(success=False)
+                        error_msg = f"spotiflac process exited with code {process.returncode}"
+                        send_event("error", {"message": error_msg})
+                        return
 
+                    temp_path = Path(temp_dir)
+                    files = [f for f in temp_path.rglob("*") if f.is_file() and f.suffix.lower() in VALID_AUDIO_EXTENSIONS]
+                    if not files:
+                        if _tidal_blocked_in_output(output):
+                            _rebalance_services(success=False)
+                        send_event("error", {"message": "No audio files downloaded"})
+                        return
+
+                    if "tidal" in output and "trying" in output and "✓" in output:
+                        _rebalance_services(success=True)
+
+                    ingested = []
+                    for f in files:
+                        dest = Path(SONGS_DIR) / f.name
+                        if dest.exists():
+                            base = dest.stem
+                            ext = dest.suffix
+                            counter = 1
+                            while dest.exists():
+                                dest = Path(SONGS_DIR) / f"{base}_{counter}{ext}"
+                                counter += 1
+                        f.rename(dest)
+                        ingested.append(dest.name)
+
+                    if not ingested:
+                        send_event("error", {"message": "No valid files after download"})
+                        return
+
+                    send_event("complete", {"filename": ingested[0]})
+
+            except Exception as e:
+                send_event("error", {"message": str(e)})
             finally:
                 try:
                     shutil.rmtree(temp_dir, ignore_errors=True)
                 except:
                     pass
-
-        return self._json(404, {"error": "not found"})
+            return
 
     def do_GET(self):
         parsed = urlparse(self.path)

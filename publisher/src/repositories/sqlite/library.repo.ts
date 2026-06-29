@@ -181,26 +181,29 @@ export class LibraryRepository {
     size: number;
     mtime: string;
   }): string {
-    const id = generateId(track.spotify_url);
-    this.db.drizzle
-      .insert(schema.libraryTracks)
-      .values({
-        id,
-        file: track.file,
-        type: track.type,
-        title: track.title,
-        artist: track.artist || "",
-        album: track.album || "",
-        duration: track.duration,
-        spotifyUrl: track.spotify_url || "",
-        size: track.size,
-        mtime: track.mtime,
-        addedAt: sql`COALESCE((SELECT added_at FROM library_tracks WHERE file = ${track.file}), datetime('now'))`,
-      })
-      .onConflictDoUpdate({
-        target: schema.libraryTracks.file,
-        set: {
-          id,
+    const existingByFile = this.db.client
+      .query("SELECT id FROM library_tracks WHERE file = $file")
+      .get({ $file: track.file }) as { id: string } | undefined;
+
+    let id = existingByFile?.id;
+    const spotifyId = track.spotify_url ? generateId(track.spotify_url) : null;
+
+    if (!id && spotifyId) {
+      const existingById = this.db.client
+        .query("SELECT id FROM library_tracks WHERE id = $id")
+        .get({ $id: spotifyId }) as { id: string } | undefined;
+      if (existingById) {
+        id = spotifyId;
+      }
+    }
+
+    const now = new Date().toISOString();
+
+    if (id) {
+      this.db.drizzle
+        .update(schema.libraryTracks)
+        .set({
+          file: track.file,
           type: track.type,
           title: track.title,
           artist: track.artist || "",
@@ -209,10 +212,29 @@ export class LibraryRepository {
           spotifyUrl: track.spotify_url || "",
           size: track.size,
           mtime: track.mtime,
-          addedAt: sql`COALESCE((SELECT added_at FROM library_tracks WHERE file = ${track.file}), datetime('now'))`,
-        },
-      })
-      .run();
+        })
+        .where(eq(schema.libraryTracks.id, id))
+        .run();
+    } else {
+      id = spotifyId || generateId();
+      this.db.drizzle
+        .insert(schema.libraryTracks)
+        .values({
+          id,
+          file: track.file,
+          type: track.type,
+          title: track.title,
+          artist: track.artist || "",
+          album: track.album || "",
+          duration: track.duration,
+          spotifyUrl: track.spotify_url || "",
+          size: track.size,
+          mtime: track.mtime,
+          addedAt: now,
+        })
+        .run();
+    }
+
     return id;
   }
 

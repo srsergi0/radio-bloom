@@ -14,7 +14,7 @@ services:
       - radio-interludios:/music/interludios
     command: /etc/liquidsoap/radio.liq
     healthcheck:
-      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/localhost/8000' || exit 1"]
+      test: [ "CMD-SHELL", "timeout 3 bash -c '</dev/tcp/localhost/8000' || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -38,6 +38,8 @@ services:
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
       - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
       - DOWNLOADER_URL=http://downloader:4002
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     volumes:
       - radio-music:/app/music/songs
       - radio-interludios:/app/music/interludios
@@ -45,6 +47,8 @@ services:
     depends_on:
       liquidsoap:
         condition: service_healthy
+      redis:
+        condition: service_started
 
   # ──────────────────────────────────────────────
   # Downloader - SpotiFLAC
@@ -57,9 +61,19 @@ services:
     environment:
       - PORT=4002
       - SONGS_DIR=/music/songs
-      - DOWNLOAD_SERVICES=${DOWNLOAD_SERVICES:-qobuz,tidal,deezer,amazon,apple,youtube}
+      - DOWNLOAD_SERVICES=${DOWNLOAD_SERVICES:-youtube,tidal,deezer,amazon,apple,qobuz}
     volumes:
       - radio-music:/music/songs
+
+  # ──────────────────────────────────────────────
+  # Redis - Cache & Queue Broker
+  # ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 50mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
 
   # ──────────────────────────────────────────────
   # FTP - Song Upload Server

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { createApiRouter } from "./api/router";
 import { DatabaseConnection } from "./infrastructure/database";
 import { FfprobeClient } from "./infrastructure/ffprobe.client";
+import { QueueManager } from "./infrastructure/queue.manager";
 import { SpotiflacClient } from "./infrastructure/spotiflac.client";
 import { TelnetClient } from "./infrastructure/telnet.client";
 import { ConfigRepository } from "./repositories/sqlite/config.repo";
@@ -15,6 +16,8 @@ import { LibraryService } from "./services/library.service";
 import { LiquidsoapService } from "./services/liquidsoap.service";
 import { McpService } from "./services/mcp.service";
 import { MetadataEnrichmentService } from "./services/metadata-enrichment.service";
+
+const queueManager = new QueueManager();
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
@@ -69,7 +72,13 @@ const libraryService = new LibraryService(
   }
 );
 
-const downloadService = new DownloadService(libraryRepo, spotiflacClient, ffprobeClient, SONGS_DIR);
+const downloadService = new DownloadService(
+  libraryRepo,
+  spotiflacClient,
+  ffprobeClient,
+  SONGS_DIR,
+  queueManager
+);
 
 const mcpService = new McpService(
   libraryRepo,
@@ -184,6 +193,7 @@ const apiRouter = createApiRouter({
   downloadService,
   playlistRepo,
   mcpService,
+  queueManager,
   musicDir: MUSIC_DIR,
   distDir: DIST_DIR,
 });
@@ -322,3 +332,16 @@ console.log(`[server] Stream: http://localhost:${PORT}/radiobloom.mp3`);
 console.log(`[server] API:    http://localhost:${PORT}/api/`);
 console.log(`[server] MCP:    http://localhost:${PORT}/mcp`);
 console.log(`[server] Radio Bloom Composition Root ready`);
+
+// Clean shutdown handlers
+process.on("SIGINT", async () => {
+  console.log("[server] Shutting down cleanly...");
+  await queueManager.close();
+  process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+  console.log("[server] Shutting down cleanly...");
+  await queueManager.close();
+  process.exit(0);
+});

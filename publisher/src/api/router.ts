@@ -1,8 +1,12 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { createBullBoard } from "@bull-board/api";
+import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
+import { HonoAdapter } from "@bull-board/hono";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
+import type { QueueManager } from "../infrastructure/queue.manager";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import type { ConfigService } from "../services/config.service";
@@ -19,12 +23,22 @@ export interface ApiDependencies {
   downloadService: DownloadService;
   playlistRepo: PlaylistRepository;
   mcpService: McpService;
+  queueManager: QueueManager;
   musicDir: string;
   distDir: string;
 }
 
 export function createApiRouter(deps: ApiDependencies): Hono {
   const app = new Hono();
+
+  // Set up Bull Board dashboard for queue monitoring
+  const serverAdapter = new HonoAdapter(serveStatic);
+  serverAdapter.setBasePath("/admin/queues");
+  createBullBoard({
+    queues: [new BullMQAdapter(deps.queueManager.getQueue("downloads"))],
+    serverAdapter,
+  });
+  app.route("/admin/queues", serverAdapter.registerPlugin());
 
   // CORS middleware configuration
   app.use(

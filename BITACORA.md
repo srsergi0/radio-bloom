@@ -6,7 +6,7 @@ Radio Bloom es una estación de radio por internet automatizada y autogestionada
 
 ## 🗺️ Arquitectura General y Conexiones
 
-El sistema está compuesto por 4 microservicios principales que se ejecutan en contenedores Docker compartiendo la red `radio-net`:
+El sistema está compuesto por 6 microservicios principales que se ejecutan en contenedores Docker compartiendo la red `radio-net`:
 
 1. **`web` (Astro UI)**:
    - **Puerto**: `3000` (despliegue) / `3001` (desarrollo).
@@ -19,6 +19,7 @@ El sistema está compuesto por 4 microservicios principales que se ejecutan en c
      - **Hacia `liquidsoap`**: Se conecta vía **Telnet** (puerto `1234`) para saltar canciones (`skip`) u obtener metadatos activos.
      - **Hacia `downloader`**: Envía solicitudes de descarga de canciones de Spotify vía REST HTTP (puerto `4002`).
      - **Hacia `music/songs`**: Escanea y enriquece la base de datos leyendo los archivos físicos en el disco.
+     - **Hacia `redis`**: Se conecta al puerto `6379` para gestionar y persistir las colas de tareas con BullMQ.
 
 3. **`downloader` (SpotiFLAC Python)**:
    - **Puerto**: `4002`.
@@ -31,6 +32,10 @@ El sistema está compuesto por 4 microservicios principales que se ejecutan en c
 5. **`liquidsoap` (Streaming Engine)**:
    - **Puerto**: `8000` (Harbor) / `1234` (Telnet).
    - **Conexión**: Lee continuamente los archivos de audio en `music/songs/` e `music/interludios/`. Emite el flujo continuo (stream) de audio en formato MP3/FLAC hacia el puerto `8000`. Es controlado por el `publisher` mediante comandos Telnet.
+
+6. **`redis` (Broker de Colas)**:
+   - **Puerto**: `6379`.
+   - **Conexión**: Almacena el estado y gestiona las tareas de descarga del `publisher` usando **BullMQ** de forma ultra-eficiente con memoria limitada.
 
 ---
 
@@ -245,4 +250,8 @@ El sistema de playlists permite crear, gestionar y reproducir listas de reproduc
 - **Optimización de velocidad FTP (Puertos pasivos)**: Se corrigió la configuración del contenedor FTP agregando el flag `-p $FTP_PASSIVE_MIN:$FTP_PASSIVE_MAX` en su comando de inicio y exponiendo estas variables en el entorno de `docker-compose.yml`. Anteriormente, el demonio FTP elegía puertos pasivos aleatorios fuera del rango mapeado por Docker, provocando bloqueos de conexión, reintentos y extrema lentitud al transferir múltiples archivos.
 - **Validación de tracks en herramientas MCP**: Se agregó verificación con `libraryRepo.getTrackByFile()` en `radio_queue_add`, `radio_queue_insert` y `radio_play_now` para evitar encolar/reproducir archivos que no existen en la biblioteca. Ahora devuelven error descriptivo si el archivo no está registrado.
 - **Descargas estrictamente secuenciales (uno a uno)**: Se implementó un lock de exclusión mutua global (`_download_lock`) en el servidor Python `downloader/server.py` para evitar la ejecución paralela de múltiples subprocesos de SpotiFLAC. Asimismo, se simplificó el endpoint `/api/playlists/:id/queue` en `router.ts` eliminando el bucle por lotes `BATCH = 2` y la espera artificial redundante, derivando todo al flujo asíncrono y secuencial del `DownloadService` de la base de datos.
+- **Migración a arquitectura de colas con BullMQ y Redis (QueueManager)**: Se sustituyó el sondeo y procesamiento manual de colas en SQLite por una infraestructura profesional y desacoplada basada en la clase genérica `QueueManager` (en `src/infrastructure/queue.manager.ts`) y un contenedor de Redis (con límite estricto de 50MB y política LRU). La lógica de descargas de `DownloadService` se desacopló de BullMQ inyectando esta nueva abstracción. El procesamiento de tareas sincroniza de manera híbrida los estados en SQLite para mantener compatibilidad total con endpoints y herramientas de la radio. Asimismo, se integró el panel visual **Bull Board** montado en Hono (ruta `/admin/queues`), corrigiendo el problema de carga de recursos ("Loading..." infinito) mediante la configuración adecuada de `setBasePath` y el middleware de archivos estáticos.
+- **Robustez de la Cola (Reintentos, Backoff y Timeouts)**: Se configuró la cola de descargas con auto-reintentos (hasta 3 intentos), retroceso exponencial (delay de 5 segundos de inicio) y límite de ejecución (timeout de 5 minutos por canción). Esto permite al sistema reintentar descargas que fallen por problemas temporales de red y continuar con la siguiente canción si alguna se queda colgada. En SQLite, el estado se mantiene en cola y detalla el intento fallido (ej. `Attempt 1/3 failed`), pasando a `"error"` de forma permanente solo al agotar los intentos.
+- **Stream de Logs en Tiempo Real en Bull Board**: Se rediseñó el endpoint de descargas `/download` en `downloader/server.py` para transmitir la salida estándar (stdout y stderr) de SpotiFLAC en tiempo real a través de Server-Sent Events (SSE). El cliente `SpotiflacClient` lee el stream y lo inyecta línea por línea en el registro del trabajo de BullMQ (`job.log(line)`). Esto permite ver el progreso exacto y detallado de cada descarga directamente en la pestaña **Logs** del panel de Bull Board.
+- **Manejo de conflictos de clave primaria en base de datos**: Se reestructuró `upsertTrack` en `library.repo.ts` utilizando una comprobación previa mediante `SELECT` por `file` y por `id` (Spotify ID), separando explícitamente las operaciones de `UPDATE` e `INSERT`. Esto previene fallos por `UNIQUE constraint failed: library_tracks.id` cuando el sistema procesa descargas duplicadas de la misma canción que resuelven en archivos físicos diferentes en disco, garantizando una consistencia perfecta y libre de errores.
 

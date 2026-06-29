@@ -10,10 +10,10 @@ export class SpotiflacClient {
 
   public async download(
     url: string,
-    onLog?: (line: string) => void
+    onLog?: (line: string) => Promise<void> | void
   ): Promise<SpotiflacDownloadResult> {
     console.log(`[SpotiflacClient] Requesting download from downloader service...`);
-    if (onLog) onLog(`Sending download request to ${DOWNLOADER_URL}`);
+    if (onLog) await onLog(`Sending download request to ${DOWNLOADER_URL}`);
 
     try {
       const res = await fetch(`${DOWNLOADER_URL}/download`, {
@@ -23,17 +23,63 @@ export class SpotiflacClient {
         signal: AbortSignal.timeout(300_000), // 5 min timeout
       });
 
-      const data: any = await res.json();
-
-      if (!res.ok || data.error) {
+      if (!res.ok) {
         return {
           filename: null,
-          error: data.error || `Downloader returned status ${res.status}`,
+          error: `Downloader returned status ${res.status}`,
         };
       }
 
-      if (onLog) onLog(`Download complete: ${data.filename}`);
-      return { filename: data.filename, error: null };
+      const reader = res.body?.getReader();
+      if (!reader) {
+        return {
+          filename: null,
+          error: "Response body is not readable",
+        };
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let filename: string | null = null;
+      let error: string | null = null;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ")) continue;
+
+          try {
+            const data = JSON.parse(trimmed.slice(6));
+            if (data.type === "log" && onLog) {
+              await onLog(data.message);
+            } else if (data.type === "complete") {
+              filename = data.filename;
+            } else if (data.type === "error") {
+              error = data.message;
+            }
+          } catch (_e) {
+            // Ignore parse errors
+          }
+        }
+      }
+
+      if (error) {
+        return { filename: null, error };
+      }
+
+      if (!filename) {
+        return { filename: null, error: "Download finished but no filename was received" };
+      }
+
+      if (onLog) await onLog(`Download complete: ${filename}`);
+      return { filename, error: null };
     } catch (err: any) {
       console.error(`[SpotiflacClient] Error calling downloader:`, err.message);
       return { filename: null, error: err.message };

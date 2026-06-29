@@ -1,25 +1,124 @@
 import { statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
+import type { Queue } from "bullmq";
 import type { DownloadJob, Track } from "../domain/types";
 import type { FfprobeClient } from "../infrastructure/ffprobe.client";
+import type { QueueManager } from "../infrastructure/queue.manager";
 import type { SpotiflacClient } from "../infrastructure/spotiflac.client";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 
 export class DownloadService {
   private readonly onCompleteCallbacks = new Map<string, (track: Track) => Promise<void>>();
-  private processingCount = 0;
-  private readonly maxConcurrency = 1;
+  public readonly queue: Queue;
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
     private readonly spotiflacClient: SpotiflacClient,
     private readonly ffprobeClient: FfprobeClient,
-    private readonly songsDir: string
-  ) {}
+    private readonly songsDir: string,
+    private readonly queueManager: QueueManager
+  ) {
+    // 1. Get BullMQ Queue from QueueManager
+    this.queue = this.queueManager.getQueue("downloads");
+  }
 
-  public init(): void {
+  public async init(): Promise<void> {
     console.log("[DownloadService] Initializing queue service...");
-    // Find downloads that were left in "downloading" status (stuck due to previous process crash) and mark them as error
+
+    // 2. Register BullMQ Worker via QueueManager with concurrency = 1
+    this.worker = this.queueManager.registerWorker(
+      "downloads",
+      async (job) => {
+        const { url, jobId } = job.data;
+        const attemptsMade = job.attemptsMade ?? 0;
+        const maxAttempts = job.opts.attempts ?? 1;
+
+        console.log(
+          `[DownloadService] Processing job ${jobId} (Attempt ${attemptsMade + 1}/${maxAttempts}) from Redis queue for URL: ${url}`
+        );
+
+        // Sync SQLite status to "downloading"
+        this.libraryRepo.updateDownload(jobId, { status: "downloading" });
+
+        try {
+          const result = await this.spotiflacClient.download(url, async (line) => {
+            console.log(`[DownloadService] [spotiflac-log] ${line}`);
+            await job.log(line).catch(() => {});
+          });
+
+          if (result.error || !result.filename) {
+            throw new Error(result.error || "No filename returned from spotiflac");
+          }
+
+          const latestFile = result.filename;
+          const filePath = join(this.songsDir, latestFile);
+          const name = basename(latestFile, extname(latestFile));
+          const fileStat = statSync(filePath);
+
+          const meta = await this.ffprobeClient.extractMetadata(filePath);
+
+          const track: Track = {
+            id: `lib_${Date.now()}`,
+            type: "song",
+            file: `songs/${latestFile}`,
+            title: meta.title || name,
+            artist: meta.artist || undefined,
+            album: meta.album || undefined,
+            duration: meta.duration || Math.floor(fileStat.size / ((192 * 1000) / 8)),
+            spotifyUrl: url,
+            addedAt: new Date().toISOString(),
+          };
+
+          this.libraryRepo.upsertTrack({
+            file: track.file,
+            type: "song",
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            duration: track.duration,
+            spotify_url: url,
+            size: fileStat.size,
+            mtime: fileStat.mtime.toISOString(),
+          });
+
+          // Sync SQLite status to "done"
+          this.libraryRepo.updateDownload(jobId, {
+            status: "done",
+            result: track,
+            completedAt: new Date().toISOString(),
+          });
+
+          console.log(`[DownloadService] Spotify download job ${jobId} done: ${track.title}`);
+
+          const cb = this.onCompleteCallbacks.get(jobId);
+          if (cb) {
+            this.onCompleteCallbacks.delete(jobId);
+            await cb(track);
+          }
+        } catch (err: any) {
+          const isLastAttempt = attemptsMade + 1 >= maxAttempts;
+          console.error(
+            `[DownloadService] Spotify download job ${jobId} failed (Attempt ${attemptsMade + 1}/${maxAttempts}):`,
+            err.message
+          );
+
+          // Sync SQLite status: mark as error only on final attempt, otherwise keep in queued status
+          this.libraryRepo.updateDownload(jobId, {
+            status: isLastAttempt ? "error" : "queued",
+            error: `Attempt ${attemptsMade + 1}/${maxAttempts} failed: ${err.message}`,
+            completedAt: isLastAttempt ? new Date().toISOString() : undefined,
+          });
+
+          throw err; // Propagate to BullMQ so it marks the job as failed and schedules a retry
+        }
+      },
+      {
+        concurrency: 1,
+      }
+    );
+
+    // 3. Find downloads left in "downloading" status (server crash) and mark them as error,
+    // and restore any "queued" downloads from SQLite into Redis queue.
     try {
       const downloads = this.libraryRepo.getAllDownloads();
       for (const job of downloads) {
@@ -30,106 +129,32 @@ export class DownloadService {
             error: "Interrupted by server restart",
             completedAt: new Date().toISOString(),
           });
+        } else if (job.status === "queued") {
+          console.log(`[DownloadService] Restoring queued job to Redis queue: ${job.id}`);
+          await this.queue
+            .add(
+              "download",
+              { url: job.url, jobId: job.id },
+              {
+                jobId: job.id,
+                attempts: 3,
+                backoff: {
+                  type: "exponential",
+                  delay: 5000,
+                },
+                timeout: 300_000,
+              }
+            )
+            .catch((err) => {
+              console.error(
+                `[DownloadService] Failed to restore job ${job.id} to Redis:`,
+                err.message
+              );
+            });
         }
       }
     } catch (err: any) {
-      console.error("[DownloadService] Error cleaning up stuck downloads:", err.message);
-    }
-
-    // Trigger queue processing on startup to resume any remaining queued tasks
-    this.triggerQueueProcess();
-  }
-
-  private triggerQueueProcess(): void {
-    setTimeout(() => {
-      this.processQueue().catch((err) => {
-        console.error("[DownloadService] Error in processQueue loop:", err.message);
-      });
-    }, 0);
-  }
-
-  private async processQueue(): Promise<void> {
-    if (this.processingCount >= this.maxConcurrency) {
-      return;
-    }
-
-    const nextJob = this.libraryRepo.getNextQueuedDownload();
-    if (!nextJob) {
-      return;
-    }
-
-    this.processingCount++;
-    console.log(
-      `[DownloadService] Processing job ${nextJob.id} from queue for URL: ${nextJob.url}`
-    );
-
-    try {
-      // Mark it as downloading in the DB
-      this.libraryRepo.updateDownload(nextJob.id, { status: "downloading" });
-
-      const result = await this.spotiflacClient.download(nextJob.url, (line) => {
-        console.log(`[DownloadService] [spotiflac-log] ${line}`);
-      });
-
-      if (result.error || !result.filename) {
-        throw new Error(result.error || "No filename returned from spotiflac");
-      }
-
-      const latestFile = result.filename;
-      const filePath = join(this.songsDir, latestFile);
-      const name = basename(latestFile, extname(latestFile));
-      const fileStat = statSync(filePath);
-
-      const meta = await this.ffprobeClient.extractMetadata(filePath);
-
-      const track: Track = {
-        id: `lib_${Date.now()}`,
-        type: "song",
-        file: `songs/${latestFile}`,
-        title: meta.title || name,
-        artist: meta.artist || undefined,
-        album: meta.album || undefined,
-        duration: meta.duration || Math.floor(fileStat.size / ((192 * 1000) / 8)),
-        spotifyUrl: nextJob.url,
-        addedAt: new Date().toISOString(),
-      };
-
-      this.libraryRepo.upsertTrack({
-        file: track.file,
-        type: "song",
-        title: track.title,
-        artist: track.artist,
-        album: track.album,
-        duration: track.duration,
-        spotify_url: nextJob.url,
-        size: fileStat.size,
-        mtime: fileStat.mtime.toISOString(),
-      });
-
-      this.libraryRepo.updateDownload(nextJob.id, {
-        status: "done",
-        result: track,
-        completedAt: new Date().toISOString(),
-      });
-
-      console.log(`[DownloadService] Spotify download job ${nextJob.id} done: ${track.title}`);
-
-      const cb = this.onCompleteCallbacks.get(nextJob.id);
-      if (cb) {
-        this.onCompleteCallbacks.delete(nextJob.id);
-        await cb(track);
-      }
-    } catch (err: any) {
-      console.error(`[DownloadService] Spotify download job ${nextJob.id} failed:`, err.message);
-      this.libraryRepo.updateDownload(nextJob.id, {
-        status: "error",
-        error: err.message,
-        completedAt: new Date().toISOString(),
-      });
-    } finally {
-      this.processingCount--;
-      // Always trigger another loop in case there are more queued items
-      this.triggerQueueProcess();
+      console.error("[DownloadService] Error cleaning up/restoring downloads:", err.message);
     }
   }
 
@@ -137,6 +162,7 @@ export class DownloadService {
     url: string,
     onComplete?: (track: Track) => Promise<void>
   ): Promise<DownloadJob> {
+    // 1. Persist to SQLite DB
     const job = this.libraryRepo.createDownload(url);
     if (onComplete) {
       this.onCompleteCallbacks.set(job.id, onComplete);
@@ -144,17 +170,30 @@ export class DownloadService {
 
     console.log(`[DownloadService] Enqueued Spotify download job ${job.id} for: ${url}`);
 
-    // Trigger queue processing asynchronously
-    this.triggerQueueProcess();
+    // 2. Enqueue in BullMQ Redis queue with robustness options
+    await this.queue.add(
+      "download",
+      { url, jobId: job.id },
+      {
+        jobId: job.id,
+        attempts: 3, // Retry up to 3 times
+        backoff: {
+          type: "exponential",
+          delay: 5000, // Wait 5s, then 10s, then 20s...
+        },
+        timeout: 300_000, // Cancel and retry/fail if it hangs for more than 5 minutes
+      }
+    );
 
     return this.getDownloadJob(job.id);
   }
 
   public async downloadAndWait(url: string): Promise<Track> {
+    // We register the job and return a promise waiting for the complete callback
     const job = this.libraryRepo.createDownload(url);
     console.log(`[DownloadService] downloadAndWait job ${job.id} for: ${url}`);
 
-    return new Promise<Track>((resolve, reject) => {
+    const promise = new Promise<Track>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.onCompleteCallbacks.delete(job.id);
         reject(new Error(`Download timeout for ${url}`));
@@ -165,21 +204,34 @@ export class DownloadService {
         this.onCompleteCallbacks.delete(job.id);
         resolve(track);
       });
-
-      this.triggerQueueProcess();
     });
+
+    // Enqueue in BullMQ with robustness options
+    await this.queue.add(
+      "download",
+      { url, jobId: job.id },
+      {
+        jobId: job.id,
+        attempts: 3,
+        backoff: {
+          type: "exponential",
+          delay: 5000,
+        },
+        timeout: 300_000, // Timeout after 5 minutes
+      }
+    );
+
+    return promise;
   }
 
-  public reDownload(file: string): DownloadJob | null {
+  public async reDownload(file: string): Promise<DownloadJob | null> {
     const track = this.libraryRepo.getTrackByFile(file);
     if (!track) return null;
     if (!track.spotifyUrl) return null;
-    const job = this.libraryRepo.createDownload(track.spotifyUrl);
-    this.triggerQueueProcess();
-    return this.getDownloadJob(job.id);
+    return this.downloadFromSpotify(track.spotifyUrl);
   }
 
-  public reDownloadMissing(): { file: string; job?: DownloadJob; error?: string }[] {
+  public async reDownloadMissing(): Promise<{ file: string; job?: DownloadJob; error?: string }[]> {
     const tracks = this.libraryRepo.getAllTracks();
     const results: { file: string; job?: DownloadJob; error?: string }[] = [];
     for (const track of tracks) {
@@ -192,13 +244,12 @@ export class DownloadService {
         // file doesn't exist — re-download
       }
       try {
-        const job = this.libraryRepo.createDownload(track.spotifyUrl);
-        results.push({ file: track.file, job: this.getDownloadJob(job.id) });
+        const job = await this.downloadFromSpotify(track.spotifyUrl);
+        results.push({ file: track.file, job });
       } catch (err: any) {
         results.push({ file: track.file, error: err.message });
       }
     }
-    this.triggerQueueProcess();
     return results;
   }
 
@@ -219,7 +270,10 @@ export class DownloadService {
     return this.libraryRepo.getAllDownloads();
   }
 
-  public clearDownloads(): void {
+  public async clearDownloads(): Promise<void> {
     this.libraryRepo.clearDownloads();
+    await this.queue.drain().catch(() => {});
+    await this.queue.clean(0, 1000, "completed").catch(() => {});
+    await this.queue.clean(0, 1000, "failed").catch(() => {});
   }
 }

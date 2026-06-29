@@ -1,7 +1,42 @@
 import { describe, expect, test, mock, beforeEach, afterAll } from "bun:test";
+
+// Mock BullMQ to prevent needing a Redis server during unit tests
+mock.module("bullmq", () => {
+  let activeProcessor: any = null;
+  return {
+    Queue: class MockQueue {
+      constructor() {}
+      on() {}
+      async add(name: string, data: any, opts?: any) {
+        if (activeProcessor) {
+          setTimeout(() => {
+            activeProcessor({
+              data,
+              attemptsMade: (opts?.attempts ?? 1) - 1, // Simulate final attempt so failure tests expect final error status
+              opts: opts || { attempts: 1 },
+            }).catch(() => {});
+          }, 10);
+        }
+        return { id: data.jobId || "mock-job-id" };
+      }
+      async drain() {}
+      async clean() {}
+      async close() {}
+    },
+    Worker: class MockWorker {
+      constructor(name: string, processor: any) {
+        activeProcessor = processor;
+      }
+      on() {}
+      async close() {}
+    }
+  };
+});
+
 import { DownloadService } from "../src/services/download.service";
 import { LibraryRepository } from "../src/repositories/sqlite/library.repo";
 import { DatabaseConnection } from "../src/infrastructure/database";
+import { QueueManager } from "../src/infrastructure/queue.manager";
 import { join } from "node:path";
 import { writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 
@@ -52,11 +87,13 @@ describe("DownloadService SQLite Queue", () => {
     // Create some dummy file to read size/stat in tests
     writeFileSync(join(songsDir, "track_downloaded.mp3"), "dummy audio");
 
+    const queueManager = new QueueManager();
     downloadService = new DownloadService(
       libraryRepo,
       mockSpotiflacClient,
       mockFfprobeClient,
-      songsDir
+      songsDir,
+      queueManager
     );
   });
 
@@ -105,7 +142,7 @@ describe("DownloadService SQLite Queue", () => {
     const succeedingJob = downloads.find(d => d.url === "https://spotify.com/track/2");
 
     expect(failingJob?.status).toBe("error");
-    expect(failingJob?.error).toBe("Download failed");
+    expect(failingJob?.error).toBe("Attempt 3/3 failed: Download failed");
     expect(succeedingJob?.status).toBe("done");
   });
 

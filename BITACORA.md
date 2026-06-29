@@ -69,12 +69,20 @@ radio/
 │   ├── songs/                            # Canciones descargadas o subidas (formatos MP3, FLAC, M4A, OGG)
 │   └── interludios/                      # Cuñas, anuncios o sonidos de transición entre pistas
 │
+├── downloads-test/                       # Carpeta de pruebas de descargas (archivos FLAC de ejemplo)
+│
 ├── publisher/                            # Backend API (Bun + TypeScript + Drizzle)
 │   ├── Dockerfile                        # Dockerfile optimizado (BuildKit Cache, prod-only deps) para producción con Bun
+│   ├── biome.json                        # Configuración de Biome (linting y formateo ultra-rápido)
 │   ├── tsconfig.json                     # Configuración del compilador TypeScript
 │   ├── package.json                      # Dependencias de npm y scripts de Bun (dev, db:migrate, etc.)
 │   ├── drizzle.config.ts                 # Configuración de Drizzle ORM (schema, output, db path)
 │   ├── check_db.ts                       # Script de utilidad rápida para verificar la base de datos
+│   ├── test/                             # Tests unitarios y de integración
+│   │   ├── api.test.ts                   # Tests de endpoints de la API
+│   │   ├── download.service.test.ts      # Tests del servicio de descargas
+│   │   ├── integration.test.ts           # Tests de integración completa
+│   │   └── temp_integration/             # Datos temporales para tests de integración
 │   └── src/                              # Código fuente del Backend
 │       ├── index.ts                      # Servidor principal (Elysia, inicialización de servicios)
 │       ├── env.ts                        # Tipado y validación de variables de entorno
@@ -90,6 +98,7 @@ radio/
 │       ├── infrastructure/               # Clientes y conectores externos
 │       │   ├── database.ts               # Inicializador de Drizzle con SQLite (Drizzle / SQLite-Bun)
 │       │   ├── ffprobe.client.ts         # Cliente para extraer metadatos de audio físicos mediante `ffprobe`
+│       │   ├── queue.manager.ts          # Gestor genérico de colas con BullMQ (reintentos, backoff, timeouts)
 │       │   ├── spotify.client.ts         # Cliente oficial de la API de Spotify
 │       │   ├── spotiflac.client.ts       # Cliente HTTP hacia el contenedor `downloader`
 │       │   └── telnet.client.ts          # Cliente de conexión Telnet hacia `liquidsoap`
@@ -110,13 +119,21 @@ radio/
 │           ├── mcp.service.ts            # Herramientas MCP: radio_playlist_create, radio_playlist_add_track, radio_queue_add_url, etc.
 │           └── metadata-enrichment.service.ts # Servicio para completar metadatos faltantes mediante Spotify
 │
+│       └── scripts/                      # Scripts de utilidad y mantenimiento (carpeta actualmente vacía)
+│
 └── web/                                  # Interfaz Frontend (Astro)
+    ├── .astro/                           # Cache de compilación de Astro (generado automáticamente)
+    ├── .vscode/                          # Configuración del editor VSCode (extensions.json, launch.json)
     ├── package.json                      # Dependencias npm para la UI web
     ├── tsconfig.json                     # Configuración TypeScript del Frontend
     ├── astro.config.mjs                  # Configuración del framework Astro (SSR, Tailwind/estilos, etc.)
     ├── AGENTS.md                         # Reglas específicas para el desarrollo en el frontend Astro
     ├── CLAUDE.md                         # Duplicado/Guía complementaria de reglas de la web Astro
     ├── README.md                         # Guía de la UI de Astro
+    ├── public/                           # Archivos estáticos servidos directamente
+    │   ├── favicon.ico                   # Icono de la pestaña del navegador
+    │   ├── favicon.svg                   # Icono SVG de la radio
+    │   └── images/                       # Imágenes estáticas del sitio
     └── src/
         ├── layouts/
         │   └── Layout.astro              # Plantilla HTML global para todas las páginas

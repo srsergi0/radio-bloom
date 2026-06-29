@@ -9,6 +9,7 @@ from pathlib import Path
 import hashlib
 import time
 import threading
+import uuid
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -17,6 +18,14 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 SONGS_DIR = os.environ.get("SONGS_DIR", "/music/songs")
 VALID_AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".ogg", ".wav", ".opus"}
+EXT_TO_FORMAT = {
+    ".flac": "flac",
+    ".mp3": "mp3",
+    ".m4a": "ipod",
+    ".ogg": "ogg",
+    ".opus": "opus",
+    ".wav": "wav",
+}
 DEFAULT_PRIORITY = os.environ.get("DOWNLOAD_SERVICES", "").split(",")
 if not DEFAULT_PRIORITY or DEFAULT_PRIORITY == [""]:
     raise RuntimeError("DOWNLOAD_SERVICES env var is required")
@@ -83,6 +92,93 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+
+        if parsed.path == "/write-metadata":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length))
+            
+            file_path = body.get("file")
+            title = body.get("title")
+            artist = body.get("artist")
+            album = body.get("album")
+            year = body.get("year")
+            genre = body.get("genre")
+            track = body.get("track")
+            disc = body.get("disc")
+
+            if not file_path:
+                return self._json(400, {"error": "file required"})
+
+            # Resolve full path
+            full_path = Path(SONGS_DIR) / file_path if not os.path.isabs(file_path) else Path(file_path)
+            
+            if not full_path.exists():
+                return self._json(404, {"error": f"File not found: {file_path}"})
+
+            ext = full_path.suffix.lower()
+            format = EXT_TO_FORMAT.get(ext)
+            if not format:
+                return self._json(400, {"error": f"Unsupported format: {ext}"})
+
+            try:
+                # Build ffmpeg args
+                meta_args = []
+                if title:
+                    meta_args.extend(["-metadata", f"title={title}"])
+                if artist:
+                    meta_args.extend(["-metadata", f"artist={artist}"])
+                if album:
+                    meta_args.extend(["-metadata", f"album={album}"])
+                if year:
+                    meta_args.extend(["-metadata", f"date={year}"])
+                if genre:
+                    meta_args.extend(["-metadata", f"genre={genre}"])
+                if track:
+                    meta_args.extend(["-metadata", f"track={track}"])
+                if disc:
+                    meta_args.extend(["-metadata", f"disc={disc}"])
+
+                tmp_file = str(full_path) + ".tmp"
+
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", str(full_path),
+                    *meta_args,
+                    "-codec", "copy",
+                    "-f", format,
+                    tmp_file,
+                ]
+
+                print(f"[downloader] write-metadata: {' '.join(cmd)}", flush=True)
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+
+                if result.returncode != 0:
+                    # Cleanup tmp file
+                    try:
+                        os.unlink(tmp_file)
+                    except:
+                        pass
+                    return self._json(500, {"error": f"ffmpeg failed: {result.stderr[:500]}"})
+
+                # Replace original
+                os.replace(tmp_file, str(full_path))
+
+                print(f"[downloader] ✅ Metadata written to {file_path}", flush=True)
+                return self._json(200, {"ok": True, "file": file_path})
+
+            except Exception as e:
+                # Cleanup tmp file
+                try:
+                    os.unlink(str(full_path) + ".tmp")
+                except:
+                    pass
+                return self._json(500, {"error": str(e)})
 
         if parsed.path == "/download":
             content_length = int(self.headers.get("Content-Length", 0))

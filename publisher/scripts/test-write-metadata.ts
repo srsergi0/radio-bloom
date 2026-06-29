@@ -18,9 +18,11 @@ if (existsSync(envPath)) {
 
 // Dynamic imports AFTER loading .env
 const { AudioMetadataClient } = await import("./src/infrastructure/audio-metadata.client");
+const { DownloaderMetadataClient } = await import("./src/infrastructure/downloader-metadata.client");
 const { MetadataEnrichmentService } = await import("./src/services/metadata-enrichment.service");
 
 const audioClient = new AudioMetadataClient();
+const downloaderClient = new DownloaderMetadataClient();
 const enrichmentService = new MetadataEnrichmentService();
 
 const filePath = process.argv[2];
@@ -63,41 +65,19 @@ if (!spotifyResult) {
 
 console.log(`   ✅ Found: ${spotifyResult.title} — ${spotifyResult.artist} (${spotifyResult.album})`);
 
-// 3. Download album art
-let coverData: Buffer | undefined;
-if (spotifyResult.albumArt) {
-  console.log("\n3. Downloading album art...");
-  try {
-    const res = await fetch(spotifyResult.albumArt);
-    if (res.ok) {
-      coverData = Buffer.from(await res.arrayBuffer());
-      console.log(`   ✅ Downloaded: ${coverData.length} bytes`);
-    }
-  } catch (err: any) {
-    console.log(`   ⚠️ Failed to download cover: ${err.message}`);
-  }
-}
-
-// 4. Write metadata to file
-console.log("\n4. Writing metadata to file...");
-const success = await audioClient.writeMetadata(filePath, {
+// 3. Write metadata via downloader (ffmpeg in Docker)
+console.log("\n3. Writing metadata via downloader service...");
+const success = await downloaderClient.writeMetadata(filePath, {
   title: spotifyResult.title,
   artist: spotifyResult.artist,
   album: spotifyResult.album || undefined,
-  year: undefined, // Spotify doesn't always have year
-  picture: coverData ? [{
-    format: "image/jpeg",
-    data: coverData,
-    type: "Cover (front)",
-    description: "Album cover",
-  }] : undefined,
 });
 
 if (success) {
   console.log("\n✅ Metadata injected successfully!");
   
   // Verify by reading again
-  console.log("\n5. Verifying...");
+  console.log("\n4. Verifying...");
   const newMeta = await audioClient.extractMetadata(filePath);
   console.log(`   Title: ${newMeta.title}`);
   console.log(`   Artist: ${newMeta.artist}`);

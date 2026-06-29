@@ -111,7 +111,7 @@ class Handler(BaseHTTPRequestHandler):
                     print(f"[downloader] Error sending event: {e}", flush=True)
 
             uid = f"{int(time.time())}_{hashlib.md5(url.encode()).hexdigest()[:6]}"
-            temp_dir = os.path.join(SONGS_DIR, ".tmp", f"download_{uid}")
+            temp_dir = f"/tmp/download_{uid}"
             os.makedirs(temp_dir, exist_ok=True)
 
             try:
@@ -179,7 +179,12 @@ class Handler(BaseHTTPRequestHandler):
                             while dest.exists():
                                 dest = Path(SONGS_DIR) / f"{base}_{counter}{ext}"
                                 counter += 1
-                        f.rename(dest)
+                        
+                        # Copy to a temporary extension on the target volume first,
+                        # then rename atomically to prevent Liquidsoap from scanning a partial copy.
+                        temp_dest = dest.with_suffix(dest.suffix + ".tmp")
+                        shutil.move(str(f), str(temp_dest))
+                        temp_dest.rename(dest)
                         ingested.append(dest.name)
 
                     if not ingested:
@@ -231,17 +236,18 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def cleanup_orphan_temp_dirs():
-    tmp_root = os.path.join(SONGS_DIR, ".tmp")
+    tmp_root = "/tmp"
     if not os.path.isdir(tmp_root):
         return
     for entry in os.listdir(tmp_root):
-        entry_path = os.path.join(tmp_root, entry)
-        if os.path.isdir(entry_path):
-            try:
-                shutil.rmtree(entry_path, ignore_errors=True)
-                print(f"[downloader] Cleaned orphan temp dir: {entry}", flush=True)
-            except:
-                pass
+        if entry.startswith("download_"):
+            entry_path = os.path.join(tmp_root, entry)
+            if os.path.isdir(entry_path):
+                try:
+                    shutil.rmtree(entry_path, ignore_errors=True)
+                    print(f"[downloader] Cleaned orphan temp dir: {entry}", flush=True)
+                except:
+                    pass
 
 
 if __name__ == "__main__":

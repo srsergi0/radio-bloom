@@ -296,8 +296,8 @@ class Handler(BaseHTTPRequestHandler):
                         "--quality", quality,
                         "--no-lyrics",
                         "--no-enrich",
-                        "--retries", "2",
-                        "--timeout", "300",
+                        "--retries", "0",
+                        "--timeout", "120",
                     ]
 
                     send_event("log", {"message": f"Running spotiflac: {' '.join(cmd)}"})
@@ -311,7 +311,7 @@ class Handler(BaseHTTPRequestHandler):
                         env={**os.environ, "PYTHONIOENCODING": "utf-8"}
                     )
 
-                    timeout_seconds = 270
+                    timeout_seconds = 150
                     timer = threading.Timer(
                         timeout_seconds,
                         lambda: process.kill() if process.poll() is None else None

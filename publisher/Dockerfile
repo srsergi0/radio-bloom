@@ -4,7 +4,7 @@ WORKDIR /app/web
 
 COPY web/package.json web/bun.lock* ./
 # Usamos caché de BuildKit para la instalación de paquetes de Bun
-RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile 2>/dev/null || bun install
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install 2>&1
 
 COPY web/ .
 RUN bun run build
@@ -16,7 +16,7 @@ WORKDIR /app/publisher
 
 COPY publisher/package.json publisher/bun.lock* ./
 # Usamos caché de BuildKit e instalamos SOLO dependencias de producción para aligerar la imagen
-RUN --mount=type=cache,target=/root/.bun/install/cache bun install --production --frozen-lockfile 2>/dev/null || bun install --production
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install --production 2>&1
 
 COPY publisher/ .
 

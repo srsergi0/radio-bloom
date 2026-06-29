@@ -24,8 +24,8 @@ El sistema está compuesto por 4 microservicios principales que se ejecutan en c
    - **Conexión**: Permite la carga directa de canciones vía cliente FTP. Los archivos subidos se guardan en el volumen compartido `music/songs/` o `music/interludios/`. El publisher detecta automáticamente los cambios y los indexa.
 
 4. **`liquidsoap` (Streaming Engine)**:
-   - **Puerto**: `8000` (Harbor) / `1234` (Telnet).
-   - **Conexión**: Lee continuamente los archivos de audio en `music/songs/` e `music/interludios/`. Emite el flujo continuo (stream) de audio en formato MP3 hacia el puerto `8000`. Es controlado por el `publisher` mediante comandos Telnet.
+   - **Puerto**: `8000` (Harbor Output) / `8001` (Harbor Input Icecast) / `8002` (SRT) / `1234` (Telnet).
+   - **Conexión**: Lee continuamente los archivos de audio en `music/songs/` e `music/interludios/`. Emite el flujo continuo (stream) de audio en formato MP3 hacia el puerto `8000`. Es controlado por el `publisher` mediante comandos Telnet. Acepta transmisiones en vivo (Icecast/Harbor) en el puerto `8001`.
 
 ---
 

@@ -8,6 +8,9 @@ services:
   liquidsoap:
     image: savonet/liquidsoap:v2.2.5
     restart: unless-stopped
+    ports:
+      - "${SRT_PORT}:8002/udp"
+      - "${LIVE_INPUT_PORT}:8001"
     volumes:
       - ./liquidsoap/radio.liq:/etc/liquidsoap/radio.liq
       - radio-music:/music/songs

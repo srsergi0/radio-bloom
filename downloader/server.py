@@ -292,6 +292,7 @@ class Handler(BaseHTTPRequestHandler):
                         "--service", *services,
                         "--quality", quality,
                         "--no-lyrics",
+                        "--no-enrich",
                         "--retries", "2",
                         "--timeout", "300",
                     ]

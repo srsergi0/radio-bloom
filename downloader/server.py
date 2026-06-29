@@ -138,15 +138,27 @@ class Handler(BaseHTTPRequestHandler):
                         env={**os.environ, "PYTHONIOENCODING": "utf-8"}
                     )
 
+                    # Enforce a hard process-level timeout of 270 seconds (4.5 minutes)
+                    # to prevent hanging processes from locking the downloader queue.
+                    timeout_seconds = 270
+                    timer = threading.Timer(
+                        timeout_seconds,
+                        lambda: process.kill() if process.poll() is None else None
+                    )
+                    timer.start()
+
                     output_lines = []
-                    while True:
-                        line = process.stdout.readline()
-                        if not line and process.poll() is not None:
-                            break
-                        if line:
-                            trimmed = line.strip()
-                            output_lines.append(trimmed.lower())
-                            send_event("log", {"message": trimmed})
+                    try:
+                        while True:
+                            line = process.stdout.readline()
+                            if not line and process.poll() is not None:
+                                break
+                            if line:
+                                trimmed = line.strip()
+                                output_lines.append(trimmed.lower())
+                                send_event("log", {"message": trimmed})
+                    finally:
+                        timer.cancel()
 
                     process.wait()
                     output = " ".join(output_lines)
@@ -154,7 +166,13 @@ class Handler(BaseHTTPRequestHandler):
                     if process.returncode != 0:
                         if _tidal_blocked_in_output(output):
                             _rebalance_services(success=False)
-                        error_msg = f"spotiflac process exited with code {process.returncode}"
+                        
+                        # Check if process was terminated due to timeout (SIGKILL is -9, SIGTERM is -15)
+                        if process.returncode in (-9, -15):
+                            error_msg = f"spotiflac process timed out and was killed after {timeout_seconds} seconds"
+                        else:
+                            error_msg = f"spotiflac process exited with code {process.returncode}"
+                        
                         send_event("error", {"message": error_msg})
                         return
 

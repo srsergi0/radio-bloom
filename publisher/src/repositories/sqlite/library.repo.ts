@@ -1,5 +1,5 @@
-import { desc, eq, like, or, sql } from "drizzle-orm";
-import type { DownloadJob, Track } from "../../domain/types";
+import { eq, like, or, sql } from "drizzle-orm";
+import type { Track } from "../../domain/types";
 import type { DatabaseConnection } from "../../infrastructure/database";
 import * as schema from "./schema";
 
@@ -22,94 +22,6 @@ function generateId(spotifyUrl?: string): string {
 
 export class LibraryRepository {
   constructor(private readonly db: DatabaseConnection) {}
-
-  // --- DOWNLOAD JOBS ---
-
-  public createDownload(url: string): DownloadJob {
-    const id = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const now = new Date().toISOString();
-    this.db.drizzle
-      .insert(schema.downloads)
-      .values({ id, url, status: "queued", startedAt: now })
-      .run();
-    return { id, url, status: "queued", startedAt: now };
-  }
-
-  public getNextQueuedDownload(): DownloadJob | null {
-    const row = this.db.drizzle
-      .select()
-      .from(schema.downloads)
-      .where(eq(schema.downloads.status, "queued"))
-      .orderBy(schema.downloads.startedAt)
-      .limit(1)
-      .get();
-    return row ? this.mapDownloadRow(row) : null;
-  }
-
-  public updateDownload(id: string, updates: Partial<DownloadJob & { result: Track }>): void {
-    const setClause: any = {};
-    if (updates.status !== undefined) setClause.status = updates.status;
-    if (updates.error !== undefined) setClause.error = updates.error;
-    if (updates.completedAt !== undefined) setClause.completedAt = updates.completedAt;
-    if (updates.result !== undefined) {
-      setClause.resultFile = updates.result.file;
-      setClause.resultTitle = updates.result.title;
-      setClause.resultDuration = updates.result.duration;
-      setClause.resultSpotifyUrl = updates.result.spotifyUrl || "";
-    }
-    if (Object.keys(setClause).length > 0) {
-      this.db.drizzle
-        .update(schema.downloads)
-        .set(setClause)
-        .where(eq(schema.downloads.id, id))
-        .run();
-    }
-  }
-
-  public getDownload(id: string): DownloadJob | null {
-    const row = this.db.drizzle
-      .select()
-      .from(schema.downloads)
-      .where(eq(schema.downloads.id, id))
-      .get();
-    return row ? this.mapDownloadRow(row) : null;
-  }
-
-  public getAllDownloads(): DownloadJob[] {
-    return this.db.drizzle
-      .select()
-      .from(schema.downloads)
-      .orderBy(desc(schema.downloads.startedAt))
-      .all()
-      .map((r) => this.mapDownloadRow(r));
-  }
-
-  public clearDownloads(): void {
-    this.db.drizzle.delete(schema.downloads).run();
-  }
-
-  private mapDownloadRow(row: any): DownloadJob {
-    const job: DownloadJob = {
-      id: row.id,
-      url: row.url,
-      status: row.status as any,
-      startedAt: row.startedAt,
-      error: row.error || undefined,
-      completedAt: row.completedAt || undefined,
-    };
-    if (row.resultFile) {
-      job.result = {
-        id: `dl_${Date.now()}`,
-        type: "song",
-        file: `songs/${row.resultFile}`,
-        title: row.resultTitle || "",
-        duration: row.resultDuration || 0,
-        spotifyUrl: row.resultSpotifyUrl || undefined,
-        addedAt: row.completedAt || row.startedAt,
-      };
-    }
-    return job;
-  }
 
   // --- LIBRARY TRACKS ---
 

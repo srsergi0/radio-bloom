@@ -4,7 +4,6 @@ import { z } from "zod";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import { WebStandardStreamableHTTPServerTransport } from "../webStandardStreamableHttp.js";
-import type { DownloadService } from "./download.service";
 import type { LibraryService } from "./library.service";
 import type { LiquidsoapService } from "./liquidsoap.service";
 import { spotifySearch } from "../infrastructure/spotify.client";
@@ -23,8 +22,7 @@ export class McpService {
     private readonly libraryRepo: LibraryRepository,
     private readonly playlistRepo: PlaylistRepository,
     private readonly libraryService: LibraryService,
-    private readonly liquidsoapService: LiquidsoapService,
-    private readonly downloadService: DownloadService
+    private readonly liquidsoapService: LiquidsoapService
   ) {
     this.server = new McpServer({
       name: "radio-bloom",
@@ -183,22 +181,22 @@ export class McpService {
 
     server.tool(
       "radio_queue_add",
-      "Añadir una canción o interludio al final de la cola. Usa el campo 'file' que devuelve radio_search",
+      "Añadir una canción o interludio al final de la cola usando su ID de la biblioteca. Usa el campo 'id' que devuelve radio_search",
       {
-        file: z
+        id: z
           .string()
           .describe(
-            "Ruta del archivo (campo 'file' del track, ej: 'songs/mi-tema.mp3' o 'interludios/pausa.mp3')"
+            "ID del track en la biblioteca (campo 'id' que devuelve radio_search)"
           ),
       },
-      async ({ file }) => {
-        const track = this.libraryRepo.getTrackByFile(file);
+      async ({ id }) => {
+        const track = this.libraryRepo.getTrackById(id);
         if (!track)
           return {
-            content: [{ type: "text", text: `El archivo '${file}' no existe en la biblioteca` }],
+            content: [{ type: "text", text: `Track con ID '${id}' no existe en la biblioteca` }],
             isError: true,
           };
-        const filepath = `/music/${file}`;
+        const filepath = `/music/${track.file}`;
         const rid = await this.liquidsoapService.queuePush(filepath);
         if (!rid) return { content: [{ type: "text", text: "Error al encolar" }], isError: true };
         const queue = await this.liquidsoapService.queueList();
@@ -219,23 +217,23 @@ export class McpService {
 
     server.tool(
       "radio_queue_insert",
-      "Insertar una canción o interludio en una posición específica de la cola. La posición 1 es la siguiente en reproducirse",
+      "Insertar una canción o interludio en una posición específica de la cola usando su ID de la biblioteca. La posición 1 es la siguiente en reproducirse",
       {
         position: z
           .number()
           .int()
           .min(1)
           .describe("Posición donde insertar (1 = siguiente en reproducirse)"),
-        file: z.string().describe("Ruta del archivo (campo 'file' del track)"),
+        id: z.string().describe("ID del track en la biblioteca (campo 'id' de radio_search)"),
       },
-      async ({ position, file }) => {
-        const track = this.libraryRepo.getTrackByFile(file);
+      async ({ position, id }) => {
+        const track = this.libraryRepo.getTrackById(id) || this.libraryRepo.getTrackByFile(id);
         if (!track)
           return {
-            content: [{ type: "text", text: `El archivo '${file}' no existe en la biblioteca` }],
+            content: [{ type: "text", text: `Track con ID '${id}' no existe en la biblioteca` }],
             isError: true,
           };
-        const filepath = `/music/${file}`;
+        const filepath = `/music/${track.file}`;
         const ok = await this.liquidsoapService.queueInsert(position - 1, filepath);
         if (!ok)
           return { content: [{ type: "text", text: "Error al insertar en cola" }], isError: true };
@@ -308,21 +306,21 @@ export class McpService {
 
     server.tool(
       "radio_play_now",
-      "Reproducir una canción o interludio inmediatamente (limpia la cola y la salta)",
+      "Reproducir una canción o interludio inmediatamente (limpia la cola y la salta) usando su ID de la biblioteca",
       {
-        file: z.string().describe("Ruta del archivo (campo 'file' del track)"),
+        id: z.string().describe("ID del track en la biblioteca (campo 'id' de radio_search)"),
       },
-      async ({ file }) => {
-        const track = this.libraryRepo.getTrackByFile(file);
+      async ({ id }) => {
+        const track = this.libraryRepo.getTrackById(id) || this.libraryRepo.getTrackByFile(id);
         if (!track)
           return {
-            content: [{ type: "text", text: `El archivo '${file}' no existe en la biblioteca` }],
+            content: [{ type: "text", text: `Track con ID '${id}' no existe en la biblioteca` }],
             isError: true,
           };
-        const filepath = `/music/${file}`;
+        const filepath = `/music/${track.file}`;
         const ok = await this.liquidsoapService.playFileNow(filepath);
         if (!ok) return { content: [{ type: "text", text: "Error al reproducir" }], isError: true };
-        return { content: [{ type: "text", text: `Reproduciendo: ${file}` }] };
+        return { content: [{ type: "text", text: `Reproduciendo: ${track.title}` }] };
       }
     );
 
@@ -336,11 +334,13 @@ export class McpService {
       "Estadísticas de la biblioteca: total de canciones e interludios",
       {},
       async () => {
+        const songs = this.libraryRepo.countTracks("song");
+        const interludios = this.libraryRepo.countTracks("interludio");
         return {
           content: [
             {
               type: "text",
-              text: "Library stats removed",
+              text: JSON.stringify({ songs, interludios, total: songs + interludios }, null, 2),
             },
           ],
         };
@@ -382,6 +382,7 @@ export class McpService {
                         showing: items.length,
                         offset,
                         items: items.map((s) => ({
+                          id: s.id,
                           file: s.file,
                           title: s.title,
                           artist: s.artist,
@@ -432,6 +433,7 @@ export class McpService {
                         showing: items.length,
                         offset,
                         items: items.map((i) => ({
+                          id: i.id,
                           file: i.file,
                           title: i.title,
                           duration: i.duration,
@@ -512,25 +514,54 @@ export class McpService {
 
     server.tool(
       "radio_playlist_add_track",
-      "Añadir una canción o interludio a una playlist. Si tiene spotifyUrl se descargará al reproducir la playlist",
+      "Añadir una canción o interludio a una playlist. Si se proporciona libraryTrackId, se rellenan automáticamente title, artist, file y duration desde la biblioteca",
       {
         playlistId: z.string().describe("ID de la playlist"),
-        title: z.string().describe("Título de la canción"),
-        artist: z.string().optional().describe("Artista"),
-        spotifyUrl: z
+        libraryTrackId: z
           .string()
           .optional()
-          .describe("URL de Spotify (https://open.spotify.com/track/...)"),
+          .describe("ID del track en la biblioteca (rellena automáticamente title, artist, file, duration)"),
+        title: z.string().optional().describe("Título (obligatorio si no se usa libraryTrackId)"),
+        artist: z.string().optional().describe("Artista"),
+        file: z
+          .string()
+          .optional()
+          .describe("Ruta del archivo relativa (ej: 'songs/mi-tema.mp3' o 'interludios/cuna.wav')"),
         duration: z.number().int().optional().default(0).describe("Duración en segundos"),
         type: z.enum(["song", "interludio"]).optional().default("song").describe("Tipo de track"),
       },
-      async ({ playlistId, title, artist, spotifyUrl, duration, type }) => {
+      async ({ playlistId, libraryTrackId, title, artist, file, duration, type }) => {
+        let resolvedTitle = title || "";
+        let resolvedArtist = artist || "";
+        let resolvedFile = file || undefined;
+        let resolvedDuration = duration || 0;
+        let resolvedType = type;
+
+        if (libraryTrackId) {
+          const libTrack = this.libraryRepo.getTrackById(libraryTrackId);
+          if (!libTrack)
+            return {
+              content: [{ type: "text", text: `Track con ID '${libraryTrackId}' no existe en la biblioteca` }],
+              isError: true,
+            };
+          resolvedTitle = libTrack.title;
+          resolvedArtist = libTrack.artist || "";
+          resolvedFile = libTrack.file;
+          resolvedDuration = libTrack.duration;
+          resolvedType = libTrack.type as "song" | "interludio";
+        } else if (!resolvedTitle) {
+          return {
+            content: [{ type: "text", text: "Se requiere 'title' o 'libraryTrackId'" }],
+            isError: true,
+          };
+        }
+
         const track = this.playlistRepo.addTrack(playlistId, {
-          type,
-          title,
-          artist,
-          duration,
-          spotifyUrl,
+          type: resolvedType,
+          file: resolvedFile,
+          title: resolvedTitle,
+          artist: resolvedArtist,
+          duration: resolvedDuration,
         });
         if (!track)
           return { content: [{ type: "text", text: "Playlist no encontrada" }], isError: true };
@@ -546,60 +577,8 @@ export class McpService {
     );
 
     server.tool(
-      "radio_queue_add_url",
-      "Añadir una URL de Spotify a la cola de reproducción. Descarga automáticamente si no está en la biblioteca",
-      {
-        url: z.string().describe("URL de Spotify (https://open.spotify.com/track/...)"),
-      },
-      async ({ url }) => {
-        const existing = this.libraryRepo.getTrackByUrl(url);
-        if (existing) {
-          const rid = await this.liquidsoapService.queuePush(`/music/${existing.file}`);
-          const queue = await this.liquidsoapService.queueList();
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    ok: !!rid,
-                    source: "library",
-                    track: existing.title,
-                    queue: queue.map((q, i) => ({ position: i + 1, ...q })),
-                  },
-                  null,
-                  2
-                ),
-              },
-            ],
-          };
-        }
-        this.downloadService.downloadFromSpotify(url, async (track) => {
-          const rid = await this.liquidsoapService.queuePush(`/music/${track.file}`);
-          console.log(`[MCP] Queued downloaded track: ${track.title} rid=${rid}`);
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  ok: true,
-                  source: "download",
-                  message: "Descarga iniciada. Se encolará automáticamente al completarse.",
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
-    );
-
-    server.tool(
       "radio_playlist_play",
-      "Reproducir una playlist inmediatamente. Descarga automáticamente canciones de Spotify si es necesario",
+      "Reproducir una playlist inmediatamente. Las canciones se encolan en el orden definido en la playlist",
       {
         id: z.string().describe("ID de la playlist"),
         shuffle: z.boolean().optional().default(false).describe("Mezclar aleatoriamente"),
@@ -619,48 +598,22 @@ export class McpService {
           }
         }
 
-        const local: string[] = [];
-        const pending: { track: (typeof tracks)[0] }[] = [];
-        let firstPlayed = false;
-        let firstDownloadFired = false;
+        const filepaths: string[] = [];
+        const results: { pos: number; title: string; status: string }[] = [];
 
         for (const track of tracks) {
-          const filepath = track.file ? `/music/${track.file}` : "";
-          if (filepath) {
-            local.push(filepath);
-            continue;
-          }
-          if (track.spotifyUrl) {
-            const libTrack = this.libraryRepo.getTrackByUrl(track.spotifyUrl);
-            if (libTrack) {
-              local.push(`/music/${libTrack.file}`);
-              continue;
-            }
-            pending.push({ track });
+          if (track.file) {
+            const filepath = `/music/${track.file}`;
+            filepaths.push(filepath);
+            results.push({ pos: track.pos, title: track.title, status: "queued" });
+          } else {
+            results.push({ pos: track.pos, title: track.title, status: "skipped: no file" });
           }
         }
 
-        // Play local files immediately
-        if (local.length > 0) {
-          firstPlayed = await this.liquidsoapService.playFilesNow(local);
-        }
-
-        // Fire pending downloads asynchronously
-        for (const p of pending) {
-          this.downloadService
-            .downloadFromSpotify(p.track.spotifyUrl!, async (downloaded) => {
-              const fp = `/music/${downloaded.file}`;
-              if (!firstPlayed && !firstDownloadFired) {
-                firstDownloadFired = true;
-                await this.liquidsoapService.sendCommand("queue.flush_and_skip").catch(() => {});
-                await new Promise((r) => setTimeout(r, 500));
-                await this.liquidsoapService.queuePush(fp);
-                firstPlayed = true;
-              } else {
-                await this.liquidsoapService.queuePush(fp);
-              }
-            })
-            .catch(() => {});
+        let firstPlayed = false;
+        if (filepaths.length > 0) {
+          firstPlayed = await this.liquidsoapService.playFilesNow(filepaths);
         }
 
         return {
@@ -673,13 +626,11 @@ export class McpService {
                   playlistId: id,
                   name: playlist.name,
                   shuffle,
-                  localQueued: local.length,
-                  pendingDownloads: pending.length,
+                  total: tracks.length,
+                  queued: filepaths.length,
+                  skipped: tracks.length - filepaths.length,
                   firstPlayed,
-                  message:
-                    pending.length > 0
-                      ? `${local.length} canciones encoladas, ${pending.length} descargándose...`
-                      : `${local.length} canciones encoladas`,
+                  results,
                 },
                 null,
                 2

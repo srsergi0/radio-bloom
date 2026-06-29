@@ -71,21 +71,6 @@ export class DatabaseConnection {
     } catch {}
 
     this.client.exec(`
-      CREATE TABLE IF NOT EXISTS downloads (
-        id TEXT PRIMARY KEY,
-        url TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'queued',
-        result_file TEXT DEFAULT '',
-        result_title TEXT DEFAULT '',
-        result_duration REAL DEFAULT 0,
-        result_spotify_url TEXT DEFAULT '',
-        error TEXT DEFAULT '',
-        started_at TEXT NOT NULL DEFAULT (datetime('now')),
-        completed_at TEXT DEFAULT ''
-      )
-    `);
-
-    this.client.exec(`
       CREATE TABLE IF NOT EXISTS playback_state (
         id TEXT PRIMARY KEY,
         file TEXT NOT NULL DEFAULT '',

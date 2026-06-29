@@ -39,7 +39,6 @@ const libraryService = new LibraryService(
 
 const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liquidsoapService);
 
-// Initialize library service to scan files
 libraryService.init().catch((err) => console.error("[mcp] libraryService:", err));
 
 mcpService.startStdioServer().catch((err) => {

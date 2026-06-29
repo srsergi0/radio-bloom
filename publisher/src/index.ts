@@ -3,25 +3,19 @@ import { resolve } from "node:path";
 import { createApiRouter } from "./api/router";
 import { DatabaseConnection } from "./infrastructure/database";
 import { AudioMetadataClient } from "./infrastructure/audio-metadata.client";
-import { QueueManager } from "./infrastructure/queue.manager";
-import { SpotiflacClient } from "./infrastructure/spotiflac.client";
 import { TelnetClient } from "./infrastructure/telnet.client";
 import { ConfigRepository } from "./repositories/sqlite/config.repo";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
 import { PlaybackStateRepository } from "./repositories/sqlite/playback-state.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { ConfigService } from "./services/config.service";
-import { DownloadService } from "./services/download.service";
 import { LibraryService } from "./services/library.service";
 import { LiquidsoapService } from "./services/liquidsoap.service";
 import { McpService } from "./services/mcp.service";
 
-const queueManager = new QueueManager();
-
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
 const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
-const SONGS_DIR = resolve(MUSIC_DIR, "songs");
 const MUSIC_MOUNT = process.env.MUSIC_MOUNT || "/app/music";
 
 const LIQUIDSOAP_HOST = process.env.LIQUIDSOAP_HOST || "liquidsoap";
@@ -42,7 +36,6 @@ const dbConnection = new DatabaseConnection(dbPath);
 
 const telnetClient = new TelnetClient(LIQUIDSOAP_HOST, LIQUIDSOAP_TELNET_PORT);
 const audioMetadataClient = new AudioMetadataClient();
-const spotiflacClient = new SpotiflacClient(SONGS_DIR);
 
 // ============================================================
 // 2. Repositories Instantiation (Data Access)
@@ -58,7 +51,6 @@ const playbackStateRepo = new PlaybackStateRepository(dbConnection);
 const configService = new ConfigService(configRepo);
 const liquidsoapService = new LiquidsoapService(telnetClient, audioMetadataClient, MUSIC_MOUNT);
 
-// LibraryService deletes should clear the Liquidsoap queue
 const libraryService = new LibraryService(
   libraryRepo,
   audioMetadataClient,
@@ -68,32 +60,15 @@ const libraryService = new LibraryService(
   }
 );
 
-const downloadService = new DownloadService(
-  libraryRepo,
-  spotiflacClient,
-  SONGS_DIR,
-  queueManager
-);
-
 const mcpService = new McpService(
   libraryRepo,
   playlistRepo,
   libraryService,
-  liquidsoapService,
-  downloadService
+  liquidsoapService
 );
 
-// Initialize active services
+// Initialize library service (creates dirs, scans, starts watcher)
 libraryService.init().catch((err) => console.error("[init] libraryService:", err));
-downloadService.init();
-
-// Auto re-download missing tracks on startup
-setTimeout(() => {
-  const results = downloadService.reDownloadMissing();
-  if (results.length > 0) {
-    console.log(`[startup] Re-downloading ${results.length} missing tracks...`);
-  }
-}, 5000);
 
 // ============================================================
 // Playback State Persistence & Restore
@@ -124,23 +99,19 @@ setTimeout(async () => {
     return;
   }
 
-  // Retry loop waiting for Liquidsoap connection (up to 60s)
   for (let attempt = 0; attempt < 30; attempt++) {
     if (liquidsoapService.isConnected()) {
       console.log(`[restore] Resuming "${state.file}" at ~${Math.round(currentElapsed)}s`);
 
-      // Push to queue — queue has priority over background playlist
       const rid = await liquidsoapService.queuePush(state.file);
       if (!rid) {
         console.log("[restore] Failed to push track to queue.");
         return;
       }
 
-      // Wait for it to be ready, then skip to it
       await new Promise((r) => setTimeout(r, 1000));
       await liquidsoapService.sendCommand("queue.skip");
 
-      // Wait for the track to start playing, then seek to position
       await new Promise((r) => setTimeout(r, 800));
 
       const currentRid = await liquidsoapService.getCurrentRequestId();
@@ -185,10 +156,8 @@ const apiRouter = createApiRouter({
   libraryRepo,
   libraryService,
   liquidsoapService,
-  downloadService,
   playlistRepo,
   mcpService,
-  queueManager,
   musicDir: MUSIC_DIR,
   distDir: DIST_DIR,
 });
@@ -198,7 +167,7 @@ const apiRouter = createApiRouter({
 // ============================================================
 class StreamBroadcaster {
   private buffer: Uint8Array[] = [];
-  private maxBufferBytes = 320 * 1024; // 320 KB (approx 8 seconds of audio at 320kbps)
+  private maxBufferBytes = 320 * 1024;
   private bufferBytes = 0;
   private clients: Set<ReadableStreamDefaultController> = new Set();
   private isStreaming = false;
@@ -228,7 +197,6 @@ class StreamBroadcaster {
             break;
           }
 
-          // Add to circular memory buffer
           this.buffer.push(value);
           this.bufferBytes += value.length;
 
@@ -239,7 +207,6 @@ class StreamBroadcaster {
             }
           }
 
-          // Distribute chunk to active clients
           for (const client of this.clients) {
             try {
               client.enqueue(value);
@@ -252,11 +219,9 @@ class StreamBroadcaster {
         console.error("[Broadcaster] Error in upstream stream connection:", err.message);
       }
 
-      // Reset buffer on error to prevent old data looping
       this.buffer = [];
       this.bufferBytes = 0;
 
-      // Wait 2 seconds before attempting reconnection
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
@@ -290,7 +255,6 @@ const _server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
 
-    // Audio stream route
     if (url.pathname === "/radiobloom.mp3") {
       let clientController: ReadableStreamDefaultController | null = null;
       const stream = new ReadableStream({
@@ -317,7 +281,6 @@ const _server = Bun.serve({
       });
     }
 
-    // Delegate REST, static files, and MCP to Hono
     return apiRouter.fetch(req);
   },
 });
@@ -328,15 +291,12 @@ console.log(`[server] API:    http://localhost:${PORT}/api/`);
 console.log(`[server] MCP:    http://localhost:${PORT}/mcp`);
 console.log(`[server] Radio Bloom Composition Root ready`);
 
-// Clean shutdown handlers
 process.on("SIGINT", async () => {
-  console.log("[server] Shutting down cleanly...");
-  await queueManager.close();
+  libraryService.shutdown();
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
-  console.log("[server] Shutting down cleanly...");
-  await queueManager.close();
+  libraryService.shutdown();
   process.exit(0);
 });

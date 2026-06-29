@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, watch } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
 import type { Track } from "../domain/types";
 import type { AudioMetadataClient } from "../infrastructure/audio-metadata.client";
@@ -10,6 +10,9 @@ const AUDIO_EXTENSIONS = /\.(mp3|wav|ogg|flac|m4a)$/i;
 export class LibraryService {
   private readonly songsDir: string;
   private readonly interludiosDir: string;
+  private watcherTimer: Timer | null = null;
+  private watchDebounceTimer: Timer | null = null;
+  private watchPending = false;
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
@@ -23,11 +26,43 @@ export class LibraryService {
 
   public async init(): Promise<void> {
     this.ensureDirs();
+    await this.scan();
+    this.startWatching();
   }
 
   private ensureDirs(): void {
     if (!existsSync(this.songsDir)) mkdirSync(this.songsDir, { recursive: true });
     if (!existsSync(this.interludiosDir)) mkdirSync(this.interludiosDir, { recursive: true });
+  }
+
+  private startWatching(): void {
+    try {
+      for (const dir of [this.songsDir, this.interludiosDir]) {
+        watch(dir, (eventType, filename) => {
+          if (!filename) return;
+          this.scheduleWatchScan();
+        });
+      }
+      console.log("[LibraryService] File watcher started on songs/ and interludios/");
+    } catch (err: any) {
+      console.error("[LibraryService] Failed to start fs.watch, falling back to polling:", err.message);
+      this.watcherTimer = setInterval(() => this.scan(), 15000);
+    }
+  }
+
+  private scheduleWatchScan(): void {
+    if (this.watchPending) return;
+    this.watchPending = true;
+    if (this.watchDebounceTimer) clearTimeout(this.watchDebounceTimer);
+    this.watchDebounceTimer = setTimeout(async () => {
+      this.watchPending = false;
+      await this.scan();
+    }, 2000);
+  }
+
+  public shutdown(): void {
+    if (this.watcherTimer) clearInterval(this.watcherTimer);
+    if (this.watchDebounceTimer) clearTimeout(this.watchDebounceTimer);
   }
 
   private getAllFiles(dir: string): string[] {
@@ -53,14 +88,12 @@ export class LibraryService {
   public async scan(): Promise<void> {
     this.ensureDirs();
 
-    // 1. Scan and upsert physical files recursively
     const songFiles = this.getAllFiles(this.songsDir);
     await this.scanAndUpsertFiles(songFiles, this.songsDir, "song");
 
     const interludioFiles = this.getAllFiles(this.interludiosDir);
     await this.scanAndUpsertFiles(interludioFiles, this.interludiosDir, "interludio");
 
-    // 2. Prune tracks that no longer exist on disk
     const dbSongs = this.libraryRepo.getAllTracks("song");
     const dbInterludios = this.libraryRepo.getAllTracks("interludio");
 
@@ -81,19 +114,16 @@ export class LibraryService {
     for (const track of dbSongs) {
       if (!physicalSongKeys.has(track.file)) {
         this.libraryRepo.removeTrack(track.file);
-        console.log(`[LibraryService] Pruned deleted song from DB: ${track.file}`);
+        console.log(`[LibraryService] Removed deleted song from DB: ${track.file}`);
       }
     }
 
     for (const track of dbInterludios) {
       if (!physicalInterludioKeys.has(track.file)) {
         this.libraryRepo.removeTrack(track.file);
-        console.log(`[LibraryService] Pruned deleted interludio from DB: ${track.file}`);
+        console.log(`[LibraryService] Removed deleted interludio from DB: ${track.file}`);
       }
     }
-
-    const pendingSongs = this.libraryRepo.getAllTracks("song").filter((t) => !t.spotifyUrl).length;
-    console.log(`[LibraryService] Catalog indexed. Pendientes de enriquecer: ${pendingSongs}`);
   }
 
   private async scanAndUpsertFiles(
@@ -125,28 +155,17 @@ export class LibraryService {
         let duration = meta.duration || Math.floor(stat.size / ((192 * 1000) / 8));
         let spotifyUrl = meta.spotifyUrl || "";
 
-        // For songs, try to get metadata from Spotify
         if (type === "song" && !spotifyUrl) {
-          // First search: title + artist only (more accurate)
           const queryBasic = artist ? `${title} ${artist}` : title;
           let results = await spotifySearch(queryBasic);
-          
-          // If no result or album mismatch, try with album
+
           if (results.length === 0 && album) {
             const queryWithAlbum = `${title} ${artist} ${album}`;
             results = await spotifySearch(queryWithAlbum);
           }
-          
+
           if (results.length > 0) {
             const track = results[0];
-            // Verify album match if we have album metadata from file
-            if (album && track.album) {
-              const fileAlbum = album.toLowerCase().trim();
-              const spotifyAlbum = track.album.toLowerCase().trim();
-              if (fileAlbum !== spotifyAlbum) {
-                console.log(`[LibraryService] ⚠️ Album mismatch: file="${album}" vs spotify="${track.album}"`);
-              }
-            }
             title = track.title;
             artist = track.artist;
             album = track.album;
@@ -154,7 +173,7 @@ export class LibraryService {
             spotifyUrl = track.spotifyUrl;
             console.log(`[LibraryService] ✅ Spotify found: ${title} — ${artist} (${album})`);
           } else {
-            console.log(`[LibraryService] ⚠️ Spotify not found: ${queryBasic}`);
+            console.log(`[LibraryService] Spotify not found: ${queryBasic}`);
           }
         }
 
@@ -237,6 +256,4 @@ export class LibraryService {
       return false;
     }
   }
-
-  public shutdown(): void {}
 }

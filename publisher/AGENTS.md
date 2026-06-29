@@ -29,16 +29,15 @@ bun run db:migrate
 
 ```
 src/
-├── index.ts                 # Elysia server bootstrap
-├── env.ts                   # Env var validation & typing
-├── mcp-entry.ts             # MCP protocol integration for AI agents
-├── api/router.ts            # REST endpoints
+├── index.ts                 # Bun.serve, DI, StreamBroadcaster
+├── env.ts                   # Env var defaults
+├── mcp-entry.ts             # MCP stdio mode
+├── api/router.ts            # REST endpoints (Hono)
 ├── domain/types.ts          # Shared TypeScript types
 ├── infrastructure/          # External clients
 │   ├── database.ts          # Drizzle + SQLite init
-│   ├── queue.manager.ts     # BullMQ generic queue manager
+│   ├── audio-metadata.client.ts  # music-metadata extraction
 │   ├── spotify.client.ts    # Spotify Web API
-│   ├── spotiflac.client.ts  # HTTP client → downloader container
 │   └── telnet.client.ts     # Telnet → liquidsoap
 ├── repositories/sqlite/     # Data access layer
 │   ├── schema.ts            # Drizzle schema
@@ -48,8 +47,7 @@ src/
 │   └── playlist.repo.ts
 └── services/                # Business logic
     ├── config.service.ts
-    ├── download.service.ts
-    ├── library.service.ts
+    ├── library.service.ts   # File scanner + file watcher
     ├── liquidsoap.service.ts
     ├── mcp.service.ts
     └── metadata-enrichment.service.ts
@@ -77,8 +75,7 @@ Tests live in `test/` — unit tests for API and services, integration tests for
 
 ## Key Dependencies
 
-- **Elysia** — HTTP framework
+- **Hono** — HTTP framework
 - **Drizzle ORM** — SQLite database layer
-- **BullMQ + Redis** — Async job queues for downloads
 - **music-metadata** — Audio tag extraction (pure JS, no ffmpeg)
 - **Biome** — Formatting & linting

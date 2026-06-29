@@ -22,16 +22,6 @@ export interface StreamStatus {
   metadata?: Record<string, string>;
 }
 
-export interface DownloadJob {
-  id: string;
-  url: string;
-  status: "queued" | "downloading" | "done" | "error";
-  result?: Track;
-  error?: string;
-  startedAt: string;
-  completedAt?: string;
-}
-
 export interface SystemConfig {
   streamBitrate: number;
   streamSampleRate: number;

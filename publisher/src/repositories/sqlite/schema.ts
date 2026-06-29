@@ -20,19 +20,6 @@ export const libraryTracks = sqliteTable("library_tracks", {
   spotifyUrl: text("spotify_url").default(""),
 });
 
-export const downloads = sqliteTable("downloads", {
-  id: text("id").primaryKey(),
-  url: text("url").notNull(),
-  status: text("status").notNull().default("queued"),
-  resultFile: text("result_file").default(""),
-  resultTitle: text("result_title").default(""),
-  resultDuration: real("result_duration").default(0),
-  resultSpotifyUrl: text("result_spotify_url").default(""),
-  error: text("error").default(""),
-  startedAt: text("started_at").notNull().default(sql`(datetime('now'))`),
-  completedAt: text("completed_at").default(""),
-});
-
 export const playlists = sqliteTable("playlists", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),

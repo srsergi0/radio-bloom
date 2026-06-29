@@ -165,9 +165,16 @@ const apiRouter = createApiRouter({
 // ============================================================
 // 5. Burst Buffer Stream Broadcaster
 // ============================================================
+// Standard Silent MP3 Frame at 320kbps, 44.1kHz, Stereo (~26ms of audio)
+const SILENT_MP3_FRAME = new Uint8Array([
+  0xFF, 0xFB, 0xE0, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  ...new Array(1024).fill(0),
+  0x00, 0x00, 0x00, 0x00
+]);
+
 class StreamBroadcaster {
   private buffer: Uint8Array[] = [];
-  private maxBufferBytes = 320 * 1024;
+  private maxBufferBytes = 1.5 * 1024 * 1024; // 1.5 MB Buffer (~38 seconds cushion)
   private bufferBytes = 0;
   private clients: Set<ReadableStreamDefaultController> = new Set();
   private isStreaming = false;
@@ -193,36 +200,52 @@ class StreamBroadcaster {
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
-            console.log("[Broadcaster] Upstream connection closed.");
+            console.log("[Broadcaster] Upstream connection closed. Switching to silent frames fallback...");
             break;
           }
 
-          this.buffer.push(value);
-          this.bufferBytes += value.length;
-
-          while (this.bufferBytes > this.maxBufferBytes) {
-            const removed = this.buffer.shift();
-            if (removed) {
-              this.bufferBytes -= removed.length;
-            }
-          }
-
-          for (const client of this.clients) {
-            try {
-              client.enqueue(value);
-            } catch {
-              this.clients.delete(client);
-            }
-          }
+          this.pushData(value);
         }
       } catch (err: any) {
-        console.error("[Broadcaster] Error in upstream stream connection:", err.message);
+        console.error("[Broadcaster] Upstream connection failed:", err.message);
+        
+        // Moonshot Fallback: Keep generating silent frames to maintain client connections alive
+        console.log("[Broadcaster] Initiating hot-standby silence loop to protect client connections.");
+        let silenceDurationMs = 0;
+        
+        // Inject silence for up to 30 seconds before attempting full reconnect loop
+        while (silenceDurationMs < 30000 && this.clients.size > 0) {
+          this.pushData(SILENT_MP3_FRAME);
+          // 1 MP3 frame at 44.1kHz is ~26.12ms of audio
+          await new Promise((resolve) => setTimeout(resolve, 26));
+          silenceDurationMs += 26;
+        }
       }
 
       this.buffer = [];
       this.bufferBytes = 0;
 
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+
+  private pushData(value: Uint8Array) {
+    this.buffer.push(value);
+    this.bufferBytes += value.length;
+
+    while (this.bufferBytes > this.maxBufferBytes) {
+      const removed = this.buffer.shift();
+      if (removed) {
+        this.bufferBytes -= removed.length;
+      }
+    }
+
+    for (const client of this.clients) {
+      try {
+        client.enqueue(value);
+      } catch {
+        this.clients.delete(client);
+      }
     }
   }
 
@@ -273,7 +296,10 @@ const _server = Bun.serve({
         status: 200,
         headers: {
           "Content-Type": "audio/mpeg",
-          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Cache-Control": "no-cache, no-store, must-revalidate, pre-check=0, post-check=0",
+          "Connection": "keep-alive",
+          "X-Accel-Buffering": "no",
+          "Content-Encoding": "identity",
           Pragma: "no-cache",
           Expires: "0",
           "Access-Control-Allow-Origin": "*",

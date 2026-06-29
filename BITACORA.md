@@ -216,3 +216,10 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 - **API de subida de archivos**: Nuevo endpoint `POST /api/library/upload` para subir archivos por HTTP (multipart/form-data).
 - **Cola por ID**: Las herramientas MCP y endpoints REST ahora aceptan el `id` del track en la base de datos, no rutas de archivo ni URLs de Spotify.
 - **Eliminación de `radio_queue_add_url`**: Se eliminó la herramienta MCP `radio_queue_add_url`. Para encolar usar `radio_queue_add` con el `id` del track.
+
+### Transmisión en Vivo por Icecast y Estabilidad Extrema (Moonshot)
+
+- **Entrada en vivo por Icecast (Harbor)**: Se reemplazó la entrada SRT (puerto 8002) por una entrada Icecast (`input.harbor`) en el puerto `8001`, permitiendo el uso de software estándar de audio como **BUTT** o **Mixxx**.
+- **Amortiguador de Red (Shock Absorber)**: Se aumentó el buffer interno del `StreamBroadcaster` a **1.5 MB** (~38 segundos de audio a 320kbps) en el backend de Bun. Al conectar, el cliente recibe esta ráfaga para pre-llenar su buffer.
+- **Inyección de Silencio en Caliente (Hot-Standby)**: Implementado bucle de inyección de frames de silencio MP3 estándar a 320kbps si la señal con Liquidsoap se cae. Esto mantiene el socket HTTP de los oyentes y plataformas como **Radio Garden** 100% activo, evitando desconexiones por inactividad.
+- **Cabeceras Anti-Proxy**: Integrados headers `"X-Accel-Buffering": "no"` y `"Content-Encoding": "identity"` en la respuesta del stream para prevenir que Cloudflare o Traefik almacenen en caché o compriman el stream, lo cual congelaba y tiraba las conexiones.

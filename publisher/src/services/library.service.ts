@@ -36,17 +36,20 @@ export class LibraryService {
   }
 
   private startWatching(): void {
+    // Polling: reliable across all platforms incl. Docker volumes
+    this.watcherTimer = setInterval(() => this.scan(), 15000);
+
+    // fs.watch: fast notification on platforms that support recursive
     try {
       for (const dir of [this.songsDir, this.interludiosDir]) {
-        watch(dir, (eventType, filename) => {
-          if (!filename) return;
+        watch(dir, { recursive: true }, (_event, filename) => {
+          if (!filename || filename.startsWith(".")) return;
           this.scheduleWatchScan();
         });
       }
-      console.log("[LibraryService] File watcher started on songs/ and interludios/");
-    } catch (err: any) {
-      console.error("[LibraryService] Failed to start fs.watch, falling back to polling:", err.message);
-      this.watcherTimer = setInterval(() => this.scan(), 15000);
+      console.log("[LibraryService] File watcher (recursive) + polling 15s");
+    } catch {
+      console.log("[LibraryService] File watcher: polling 15s (recursive fs.watch no soportado en esta plataforma)");
     }
   }
 

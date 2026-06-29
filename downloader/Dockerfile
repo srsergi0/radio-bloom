@@ -6,7 +6,7 @@ WORKDIR /app
 RUN --mount=type=cache,target=/var/cache/apk apk add --no-cache ffmpeg
 
 # Usamos caché de BuildKit para acelerar pip install
-RUN --mount=type=cache,target=/root/.cache/pip pip install --upgrade SpotiFLAC yt-dlp ytmusicapi requests
+RUN --mount=type=cache,target=/root/.cache/pip pip install --upgrade SpotiFLAC yt-dlp
 
 COPY server.py .
 

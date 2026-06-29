@@ -12,7 +12,6 @@ import threading
 import re
 
 import yt_dlp
-import requests
 
 
 
@@ -125,7 +124,6 @@ def _download_with_ytdlp(url: str, title: str, artist: str, temp_dir: str, send_
         if info is None:
             return None, "yt-dlp returned no info"
 
-        # Info can be a playlist with entries or a single video
         entries = []
         if "entries" in info and info["entries"]:
             entries = info["entries"]
@@ -138,14 +136,12 @@ def _download_with_ytdlp(url: str, title: str, artist: str, temp_dir: str, send_
         entry = entries[0]
         filename = entry.get("title", title)
 
-        # Find the downloaded file in temp_dir
         temp_path = Path(temp_dir)
         files = [f for f in temp_path.rglob("*") if f.is_file() and f.suffix.lower() in VALID_AUDIO_EXTENSIONS]
         if not files:
             return None, "yt-dlp downloaded but no audio file found in temp dir"
 
         best = max(files, key=lambda f: f.stat().st_size)
-        # Rename to a clean filename
         safe_name = _sanitize_filename(filename) + best.suffix
         final = best.rename(temp_path / safe_name)
         send_event("log", {"message": f"[yt-dlp] Downloaded: {safe_name} ({final.stat().st_size / 1024:.0f} KB)"})
@@ -344,14 +340,12 @@ class Handler(BaseHTTPRequestHandler):
 
                         # Try yt-dlp fallback if we have title+artist metadata
                         if title or artist:
-                            send_event("log", {"message": "Spotiflac failed — falling back to yt-dlp (YouTube Music)"})
+                            send_event("log", {"message": "Spotiflac failed — falling back to yt-dlp"})
                             print("[downloader] Spotiflac failed — trying yt-dlp fallback", flush=True)
                             yt_file, yt_error = _download_with_ytdlp(url, title, artist, temp_dir, send_event)
                             if yt_file and yt_error is None:
-                                # yt-dlp succeeded — continue to ingestion
                                 pass
                             else:
-                                # Both failed
                                 error_msg = f"spotiflac exited with code {process.returncode}, yt-dlp: {yt_error}"
                                 if process.returncode in (-9, -15):
                                     error_msg = f"spotiflac timed out, yt-dlp: {yt_error}"

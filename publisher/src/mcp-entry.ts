@@ -3,14 +3,13 @@ console.log = console.error;
 import "./env";
 import { resolve } from "node:path";
 import { DatabaseConnection } from "./infrastructure/database";
-import { FfprobeClient } from "./infrastructure/ffprobe.client";
+import { AudioMetadataClient } from "./infrastructure/audio-metadata.client";
 import { TelnetClient } from "./infrastructure/telnet.client";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { LibraryService } from "./services/library.service";
 import { LiquidsoapService } from "./services/liquidsoap.service";
 import { McpService } from "./services/mcp.service";
-import { MetadataEnrichmentService } from "./services/metadata-enrichment.service";
 
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
 const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
@@ -23,18 +22,16 @@ const dbPath = resolve(DATA_DIR, "radio.db");
 const dbConnection = new DatabaseConnection(dbPath);
 
 const telnetClient = new TelnetClient(LIQUIDSOAP_HOST, LIQUIDSOAP_TELNET_PORT);
-const ffprobeClient = new FfprobeClient();
+const audioMetadataClient = new AudioMetadataClient();
 
 const libraryRepo = new LibraryRepository(dbConnection);
 const playlistRepo = new PlaylistRepository(dbConnection);
 
-const liquidsoapService = new LiquidsoapService(telnetClient, ffprobeClient, MUSIC_MOUNT);
-const metadataEnrichment = new MetadataEnrichmentService();
+const liquidsoapService = new LiquidsoapService(telnetClient, audioMetadataClient, MUSIC_MOUNT);
 const libraryService = new LibraryService(
   libraryRepo,
-  ffprobeClient,
+  audioMetadataClient,
   MUSIC_DIR,
-  metadataEnrichment,
   async () => {
     await liquidsoapService.queueClear();
   }

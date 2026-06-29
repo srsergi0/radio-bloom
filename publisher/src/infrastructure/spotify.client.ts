@@ -50,6 +50,55 @@ async function getAccessToken(): Promise<string> {
   return cachedToken;
 }
 
+export async function spotifyGetTrack(spotifyUrl: string): Promise<SpotifyTrack | null> {
+  if (!CLIENT_ID || !CLIENT_SECRET) {
+    console.error("[Spotify] Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET");
+    return null;
+  }
+
+  const trackId = extractTrackId(spotifyUrl);
+  if (!trackId) {
+    console.error(`[Spotify] Invalid Spotify URL: ${spotifyUrl}`);
+    return null;
+  }
+
+  try {
+    const token = await getAccessToken();
+    const res = await fetch(`https://api.spotify.com/v1/tracks/${trackId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!res.ok) {
+      console.error(`[Spotify] GetTrack failed: ${res.status}`);
+      return null;
+    }
+
+    const track: any = await res.json();
+    const images = track.album?.images || [];
+    const albumArt = images.length > 0 ? images[0].url : "";
+
+    return {
+      id: track.id,
+      title: track.name,
+      artist: track.artists?.[0]?.name || "",
+      album: track.album?.name || "",
+      albumArt,
+      duration: Math.round((track.duration_ms || 0) / 1000),
+      spotifyUrl: `https://open.spotify.com/track/${track.id}`,
+    };
+  } catch (err: any) {
+    console.error(`[Spotify] GetTrack error:`, err.message);
+    return null;
+  }
+}
+
+function extractTrackId(url: string): string | null {
+  // https://open.spotify.com/track/3E7dfMvvCLUddWissuqMwr?si=...
+  const match = url.match(/open\.spotify\.com\/track\/([a-zA-Z0-9]+)/);
+  return match?.[1] || null;
+}
+
 export async function spotifySearch(query: string): Promise<SpotifyTrack | null> {
   if (!CLIENT_ID || !CLIENT_SECRET) {
     console.error("[Spotify] Missing SPOTIFY_CLIENT_ID or SPOTIFY_CLIENT_SECRET");

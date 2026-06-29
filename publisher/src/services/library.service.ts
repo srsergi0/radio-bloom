@@ -1,22 +1,20 @@
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
 import type { Track } from "../domain/types";
-import type { FfprobeClient } from "../infrastructure/ffprobe.client";
+import type { AudioMetadataClient } from "../infrastructure/audio-metadata.client";
+import { spotifySearch } from "../infrastructure/spotify.client";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
-import type { MetadataEnrichmentService } from "./metadata-enrichment.service";
 
 const AUDIO_EXTENSIONS = /\.(mp3|wav|ogg|flac|m4a)$/i;
 
 export class LibraryService {
   private readonly songsDir: string;
   private readonly interludiosDir: string;
-  private enrichQueue = 0;
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
-    private readonly ffprobeClient: FfprobeClient,
+    private readonly audioMetadataClient: AudioMetadataClient,
     private readonly musicDir: string,
-    private readonly metadataEnrichment?: MetadataEnrichmentService,
     private readonly onDeleteCallback?: () => Promise<void>
   ) {
     this.songsDir = join(musicDir, "songs");
@@ -114,65 +112,65 @@ export class LibraryService {
         const existing = existingTracks.find((t) => t.file === key);
 
         if (existing && new Date(stat.mtime.toISOString()) <= new Date(existing.addedAt)) {
-          if (!existing.spotifyUrl && type === "song" && this.metadataEnrichment) {
-            console.log(
-              `[LibraryService][debug] ${key} → spotify_url vacío (existente), encolando enriquecimiento...`
-            );
-            this.enrichTrackAfterScan(key, existing.title, existing.artist);
-          }
           continue;
         }
 
         const file = basename(filePath);
         const name = basename(file, extname(file));
-        const meta = await this.ffprobeClient.extractMetadata(filePath);
+        const meta = await this.audioMetadataClient.extractMetadata(filePath);
+
+        let title = meta.title || name;
+        let artist = meta.artist || "";
+        let album = meta.album || "";
+        let duration = meta.duration || Math.floor(stat.size / ((192 * 1000) / 8));
+        let spotifyUrl = meta.spotifyUrl || "";
+
+        // For songs, try to get metadata from Spotify
+        if (type === "song" && !spotifyUrl) {
+          // First search: title + artist only (more accurate)
+          const queryBasic = artist ? `${title} ${artist}` : title;
+          let spotifyTrack = await spotifySearch(queryBasic);
+          
+          // If no result or album mismatch, try with album
+          if (!spotifyTrack && album) {
+            const queryWithAlbum = `${title} ${artist} ${album}`;
+            spotifyTrack = await spotifySearch(queryWithAlbum);
+          }
+          
+          if (spotifyTrack) {
+            // Verify album match if we have album metadata from file
+            if (album && spotifyTrack.album) {
+              const fileAlbum = album.toLowerCase().trim();
+              const spotifyAlbum = spotifyTrack.album.toLowerCase().trim();
+              if (fileAlbum !== spotifyAlbum) {
+                console.log(`[LibraryService] ⚠️ Album mismatch: file="${album}" vs spotify="${spotifyTrack.album}"`);
+              }
+            }
+            title = spotifyTrack.title;
+            artist = spotifyTrack.artist;
+            album = spotifyTrack.album;
+            duration = spotifyTrack.duration;
+            spotifyUrl = spotifyTrack.spotifyUrl;
+            console.log(`[LibraryService] ✅ Spotify found: ${title} — ${artist} (${album})`);
+          } else {
+            console.log(`[LibraryService] ⚠️ Spotify not found: ${queryBasic}`);
+          }
+        }
 
         this.libraryRepo.upsertTrack({
           file: key,
           type,
-          title: meta.title || name,
-          artist: meta.artist,
-          album: meta.album,
-          duration: meta.duration || Math.floor(stat.size / ((192 * 1000) / 8)),
-          spotify_url: meta.spotifyUrl,
+          title,
+          artist,
+          album,
+          duration,
+          spotify_url: spotifyUrl,
           size: stat.size,
           mtime: stat.mtime.toISOString(),
         });
-
-        if (!meta.spotifyUrl && type === "song") {
-          if (existing?.spotifyUrl) {
-            console.log(`[LibraryService][debug] ${key} → ya tiene spotify_url, se salta`);
-          } else if (this.metadataEnrichment) {
-            console.log(
-              `[LibraryService][debug] ${key} → spotify_url vacío, encolando enriquecimiento...`
-            );
-            this.enrichTrackAfterScan(key, meta.title || name, meta.artist);
-          }
-        }
       } catch (err: any) {
         console.error(`[LibraryService] Failed to index file ${filePath}:`, err.message);
       }
-    }
-  }
-
-  private async enrichTrackAfterScan(file: string, title: string, artist: string): Promise<void> {
-    const order = ++this.enrichQueue;
-    const delay = order * 1500;
-    console.log(
-      `[LibraryService][debug] [#${order}] Encolado "${title}" (${artist}), esperando ${delay}ms...`
-    );
-    await new Promise((r) => setTimeout(r, delay));
-    console.log(`[LibraryService][debug] [#${order}] Enriching "${title}" (${artist})...`);
-    try {
-      const result = await this.metadataEnrichment!.enrich(title, artist);
-      if (result?.spotifyUrl) {
-        const _spotifyId = this.libraryRepo.updateSpotifyUrl(file, result.spotifyUrl);
-        console.log(`[LibraryService] [#${order}] ✅ Auto-enriched ${file} → ${result.spotifyUrl}`);
-      } else {
-        console.log(`[LibraryService][debug] [#${order}] ${file} → no se encontró en Spotify`);
-      }
-    } catch (err: any) {
-      console.error(`[LibraryService][debug] [#${order}] ${file} → error: ${err.message}`);
     }
   }
 

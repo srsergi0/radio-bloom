@@ -2,8 +2,8 @@ import { statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import type { Queue } from "bullmq";
 import type { DownloadJob, Track } from "../domain/types";
-import type { FfprobeClient } from "../infrastructure/ffprobe.client";
 import type { QueueManager } from "../infrastructure/queue.manager";
+import { spotifyGetTrack } from "../infrastructure/spotify.client";
 import type { SpotiflacClient } from "../infrastructure/spotiflac.client";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 
@@ -14,7 +14,6 @@ export class DownloadService {
   constructor(
     private readonly libraryRepo: LibraryRepository,
     private readonly spotiflacClient: SpotiflacClient,
-    private readonly ffprobeClient: FfprobeClient,
     private readonly songsDir: string,
     private readonly queueManager: QueueManager
   ) {
@@ -52,19 +51,19 @@ export class DownloadService {
 
           const latestFile = result.filename;
           const filePath = join(this.songsDir, latestFile);
-          const name = basename(latestFile, extname(latestFile));
           const fileStat = statSync(filePath);
 
-          const meta = await this.ffprobeClient.extractMetadata(filePath);
+          // Metadata from Spotify API
+          const spotifyTrack = await spotifyGetTrack(url);
 
           const track: Track = {
             id: `lib_${Date.now()}`,
             type: "song",
             file: `songs/${latestFile}`,
-            title: meta.title || name,
-            artist: meta.artist || undefined,
-            album: meta.album || undefined,
-            duration: meta.duration || Math.floor(fileStat.size / ((192 * 1000) / 8)),
+            title: spotifyTrack?.title || basename(latestFile, extname(latestFile)),
+            artist: spotifyTrack?.artist || undefined,
+            album: spotifyTrack?.album || undefined,
+            duration: spotifyTrack?.duration || Math.floor(fileStat.size / ((192 * 1000) / 8)),
             spotifyUrl: url,
             addedAt: new Date().toISOString(),
           };

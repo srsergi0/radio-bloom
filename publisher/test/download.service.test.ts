@@ -33,6 +33,22 @@ mock.module("bullmq", () => {
   };
 });
 
+// Mock Spotify client
+mock.module("../src/infrastructure/spotify.client", () => ({
+  spotifyGetTrack: mock(async (url: string) => {
+    if (url.includes("fail")) return null;
+    return {
+      id: "mock_track_id",
+      title: "Test Spotify Track",
+      artist: "Test Artist",
+      album: "Test Album",
+      albumArt: "",
+      duration: 180,
+      spotifyUrl: url,
+    };
+  }),
+}));
+
 import { DownloadService } from "../src/services/download.service";
 import { LibraryRepository } from "../src/repositories/sqlite/library.repo";
 import { DatabaseConnection } from "../src/infrastructure/database";
@@ -54,15 +70,6 @@ const mockSpotiflacClient = {
     }
     return { filename: "track_downloaded.mp3", error: null };
   }),
-} as any;
-
-const mockFfprobeClient = {
-  extractMetadata: mock(() => ({
-    title: "Test Spotify Track",
-    artist: "Test Artist",
-    album: "Test Album",
-    duration: 180,
-  })),
 } as any;
 
 const songsDir = join(import.meta.dirname || "", "temp_songs_test");
@@ -91,7 +98,6 @@ describe("DownloadService SQLite Queue", () => {
     downloadService = new DownloadService(
       libraryRepo,
       mockSpotiflacClient,
-      mockFfprobeClient,
       songsDir,
       queueManager
     );

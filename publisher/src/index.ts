@@ -2,7 +2,7 @@ import "./env";
 import { resolve } from "node:path";
 import { createApiRouter } from "./api/router";
 import { DatabaseConnection } from "./infrastructure/database";
-import { FfprobeClient } from "./infrastructure/ffprobe.client";
+import { AudioMetadataClient } from "./infrastructure/audio-metadata.client";
 import { QueueManager } from "./infrastructure/queue.manager";
 import { SpotiflacClient } from "./infrastructure/spotiflac.client";
 import { TelnetClient } from "./infrastructure/telnet.client";
@@ -15,7 +15,6 @@ import { DownloadService } from "./services/download.service";
 import { LibraryService } from "./services/library.service";
 import { LiquidsoapService } from "./services/liquidsoap.service";
 import { McpService } from "./services/mcp.service";
-import { MetadataEnrichmentService } from "./services/metadata-enrichment.service";
 
 const queueManager = new QueueManager();
 
@@ -42,7 +41,7 @@ const dbPath = resolve(DATA_DIR, "radio.db");
 const dbConnection = new DatabaseConnection(dbPath);
 
 const telnetClient = new TelnetClient(LIQUIDSOAP_HOST, LIQUIDSOAP_TELNET_PORT);
-const ffprobeClient = new FfprobeClient();
+const audioMetadataClient = new AudioMetadataClient();
 const spotiflacClient = new SpotiflacClient(SONGS_DIR);
 
 // ============================================================
@@ -57,16 +56,13 @@ const playbackStateRepo = new PlaybackStateRepository(dbConnection);
 // 3. Services & Use Cases Instantiation
 // ============================================================
 const configService = new ConfigService(configRepo);
-const liquidsoapService = new LiquidsoapService(telnetClient, ffprobeClient, MUSIC_MOUNT);
-
-const metadataEnrichment = new MetadataEnrichmentService();
+const liquidsoapService = new LiquidsoapService(telnetClient, audioMetadataClient, MUSIC_MOUNT);
 
 // LibraryService deletes should clear the Liquidsoap queue
 const libraryService = new LibraryService(
   libraryRepo,
-  ffprobeClient,
+  audioMetadataClient,
   MUSIC_DIR,
-  metadataEnrichment,
   async () => {
     await liquidsoapService.queueClear();
   }
@@ -75,7 +71,6 @@ const libraryService = new LibraryService(
 const downloadService = new DownloadService(
   libraryRepo,
   spotiflacClient,
-  ffprobeClient,
   SONGS_DIR,
   queueManager
 );

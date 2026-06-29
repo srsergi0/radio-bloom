@@ -1,5 +1,5 @@
 import type { StreamStatus } from "../domain/types";
-import type { FfprobeClient } from "../infrastructure/ffprobe.client";
+import type { AudioMetadataClient } from "../infrastructure/audio-metadata.client";
 import type { TelnetClient } from "../infrastructure/telnet.client";
 
 export class LiquidsoapService {
@@ -9,7 +9,7 @@ export class LiquidsoapService {
 
   constructor(
     private readonly telnetClient: TelnetClient,
-    private readonly ffprobeClient: FfprobeClient,
+    private readonly audioMetadataClient: AudioMetadataClient,
     private readonly musicMount: string
   ) {}
 
@@ -88,7 +88,7 @@ export class LiquidsoapService {
     }
 
     const localPath = filepath.replace(/^\/music\//, `${this.musicMount}/`);
-    const meta = await this.ffprobeClient.extractMetadata(localPath);
+    const meta = await this.audioMetadataClient.extractMetadata(localPath);
     if (meta.duration > 0) {
       this.durationCache.set(filepath, { duration: meta.duration, cachedAt: Date.now() });
       return meta.duration;

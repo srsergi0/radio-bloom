@@ -98,7 +98,7 @@ radio/
 │       │
 │       ├── infrastructure/               # Clientes y conectores externos
 │       │   ├── database.ts               # Inicializador de Drizzle con SQLite (Drizzle / SQLite-Bun)
-│       │   ├── ffprobe.client.ts         # Cliente para extraer metadatos de audio físicos mediante `ffprobe`
+│       │   ├── audio-metadata.client.ts  # Cliente para extraer metadatos de audio físicos mediante `music-metadata`
 │       │   ├── queue.manager.ts          # Gestor genérico de colas con BullMQ (reintentos, backoff, timeouts)
 │       │   ├── spotify.client.ts         # Cliente oficial de la API de Spotify
 │       │   ├── spotiflac.client.ts       # Cliente HTTP hacia el contenedor `downloader`
@@ -115,10 +115,9 @@ radio/
 │       └── services/                     # Lógica de Negocio
 │           ├── config.service.ts         # Servicio de gestión y persistencia de configuraciones
 │           ├── download.service.ts       # Orquestador del flujo de descargas de Spotify
-│           ├── library.service.ts        # Escaneador del directorio `music/songs` y catalogación
+│           ├── library.service.ts        # Escaneador del directorio `music/songs` y catalogación (usa Spotify API para metadata)
 │           ├── liquidsoap.service.ts     # Sincronización y órdenes sobre el reproductor (incluye playFilesNow)
-│           ├── mcp.service.ts            # Herramientas MCP: radio_playlist_create, radio_playlist_add_track, radio_queue_add_url, etc.
-│           └── metadata-enrichment.service.ts # Servicio para completar metadatos faltantes mediante Spotify
+│           └── mcp.service.ts            # Herramientas MCP: radio_playlist_create, radio_playlist_add_track, radio_queue_add_url, etc.
 │
 │       └── scripts/                      # Scripts de utilidad y mantenimiento (carpeta actualmente vacía)
 │

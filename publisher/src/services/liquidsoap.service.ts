@@ -6,6 +6,7 @@ export class LiquidsoapService {
   private lastQueuedRid: string | null = null;
   private readonly durationCache = new Map<string, { duration: number; cachedAt: number }>();
   private readonly DURATION_CACHE_TTL = 3600000;
+  private queueLock: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly telnetClient: TelnetClient,
@@ -15,6 +16,12 @@ export class LiquidsoapService {
 
   public isConnected(): boolean {
     return this.telnetClient.isConnected();
+  }
+
+  private withQueueLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queueLock.then(fn, fn);
+    this.queueLock = run.then(() => {}, () => {});
+    return run;
   }
 
   public async sendCommand(cmd: string, timeoutMs = 10000): Promise<string[]> {
@@ -85,6 +92,16 @@ export class LiquidsoapService {
     const cached = this.durationCache.get(filepath);
     if (cached && Date.now() - cached.cachedAt < this.DURATION_CACHE_TTL) {
       return cached.duration;
+    }
+
+    // Evict stale entries periodically
+    if (this.durationCache.size > 100) {
+      const now = Date.now();
+      for (const [key, val] of this.durationCache) {
+        if (now - val.cachedAt >= this.DURATION_CACHE_TTL) {
+          this.durationCache.delete(key);
+        }
+      }
     }
 
     const localPath = filepath.replace(/^\/music\//, `${this.musicMount}/`);
@@ -170,74 +187,77 @@ export class LiquidsoapService {
     }
   }
 
-  public async queueList(): Promise<{ rid: string; artist: string; title: string }[]> {
+  public async queueList(limit?: number): Promise<{ items: { rid: string; artist: string; title: string }[]; total: number }> {
     try {
       const lines = await this.sendCommand("queue.queue");
-      if (lines.length === 0) return [];
+      if (lines.length === 0) return { items: [], total: 0 };
       const rids = lines[0].split(/\s+/).filter(Boolean);
-      const items: { rid: string; artist: string; title: string }[] = [];
-      for (const rid of rids) {
-        const meta = await this.getRequestMetadata(rid).catch(() => ({}));
-        items.push({
-          rid,
-          artist: meta.artist || "",
-          title: meta.title || meta.filename || rid,
-        });
-      }
-      return items;
+      const total = rids.length;
+      const ridsToFetch = limit ? rids.slice(0, limit) : rids;
+      const metas = await Promise.all(
+        ridsToFetch.map((rid) => this.getRequestMetadata(rid).catch(() => ({})))
+      );
+      const items = ridsToFetch.map((rid, i) => ({
+        rid,
+        artist: metas[i].artist || "",
+        title: metas[i].title || metas[i].filename || rid,
+      }));
+      return { items, total };
     } catch {
-      return [];
+      return { items: [], total: 0 };
     }
   }
 
-  public async queueRemove(rid: string): Promise<boolean> {
-    try {
-      const lines = await this.sendCommand("queue.queue");
-      if (lines.length === 0) return false;
-      const queued = lines[0].split(/\s+/).filter(Boolean);
-      const idx = queued.indexOf(rid);
-      if (idx === -1) return false;
+  public queueRemove(rid: string): Promise<boolean> {
+    return this.withQueueLock(async () => {
+      try {
+        const lines = await this.sendCommand("queue.queue");
+        if (lines.length === 0) return false;
+        const queued = lines[0].split(/\s+/).filter(Boolean);
+        const idx = queued.indexOf(rid);
+        if (idx === -1) return false;
 
-      const uris: string[] = [];
-      for (const r of queued) {
-        const meta = await this.getRequestMetadata(r).catch(() => ({}));
-        uris.push(meta.initial_uri || meta.filename || "");
-      }
-      if (idx >= uris.length) return false;
-      uris.splice(idx, 1);
+        const metas = await Promise.all(
+          queued.map((r) => this.getRequestMetadata(r).catch(() => ({})))
+        );
+        const uris = metas.map((m) => m.initial_uri || m.filename || "");
+        if (idx >= uris.length) return false;
+        uris.splice(idx, 1);
 
-      await this.sendCommand("queue.clear");
-      await new Promise((r) => setTimeout(r, 500));
-      for (const uri of uris) {
-        if (uri) await this.queuePush(uri).catch(() => {});
+        await this.sendCommand("queue.clear");
+        await new Promise((r) => setTimeout(r, 500));
+        for (const uri of uris) {
+          if (uri) await this.queuePush(uri).catch(() => {});
+        }
+        return true;
+      } catch {
+        return false;
       }
-      return true;
-    } catch {
-      return false;
-    }
+    });
   }
 
-  public async queueInsert(index: number, filepath: string): Promise<boolean> {
-    try {
-      const lines = await this.sendCommand("queue.queue");
-      const queued = lines.length > 0 ? lines[0].split(/\s+/).filter(Boolean) : [];
-      const uris: string[] = [];
-      for (const r of queued) {
-        const meta = await this.getRequestMetadata(r).catch(() => ({}));
-        uris.push(meta.initial_uri || meta.filename || "");
-      }
-      const safeIndex = Math.max(0, Math.min(index, uris.length));
-      uris.splice(safeIndex, 0, filepath);
+  public queueInsert(index: number, filepath: string): Promise<boolean> {
+    return this.withQueueLock(async () => {
+      try {
+        const lines = await this.sendCommand("queue.queue");
+        const queued = lines.length > 0 ? lines[0].split(/\s+/).filter(Boolean) : [];
+        const metas = await Promise.all(
+          queued.map((r) => this.getRequestMetadata(r).catch(() => ({})))
+        );
+        const uris = metas.map((m) => m.initial_uri || m.filename || "");
+        const safeIndex = Math.max(0, Math.min(index, uris.length));
+        uris.splice(safeIndex, 0, filepath);
 
-      await this.sendCommand("queue.clear");
-      await new Promise((r) => setTimeout(r, 500));
-      for (const uri of uris) {
-        if (uri) await this.queuePush(uri).catch(() => {});
+        await this.sendCommand("queue.clear");
+        await new Promise((r) => setTimeout(r, 500));
+        for (const uri of uris) {
+          if (uri) await this.queuePush(uri).catch(() => {});
+        }
+        return true;
+      } catch {
+        return false;
       }
-      return true;
-    } catch {
-      return false;
-    }
+    });
   }
 
   public async queueClear(): Promise<void> {

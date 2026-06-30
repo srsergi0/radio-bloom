@@ -85,6 +85,12 @@ export class TorrentService {
             magnet,
           ]);
 
+          // Safety timeout: kill if aria2c hangs for 10 minutes
+          const safetyTimer = setTimeout(() => {
+            child.kill("SIGKILL");
+            reject(new Error("aria2c timed out after 10 minutes"));
+          }, 600000);
+
           child.stdout.on("data", async (data) => {
             const lines = data.toString().split(/\r?\n/);
             for (const line of lines) {
@@ -112,12 +118,16 @@ export class TorrentService {
           });
 
           child.on("error", async (err: any) => {
+            clearTimeout(safetyTimer);
             await job.log(`Error al lanzar aria2c: ${err.message}`);
+            await fs.promises.rm(downloadPath, { recursive: true, force: true }).catch(() => {});
             reject(new Error(`aria2c execution failed: ${err.message}. Ensure aria2 is installed.`));
           });
 
           child.on("close", async (code) => {
+            clearTimeout(safetyTimer);
             if (code !== 0) {
+              await fs.promises.rm(downloadPath, { recursive: true, force: true }).catch(() => {});
               reject(new Error(`aria2c exited with code ${code}`));
               return;
             }

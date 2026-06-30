@@ -25,6 +25,7 @@ export class AudioMetadataClient {
   }
 
   private findSpotifyUrl(meta: any): string {
+    if (!meta.native) return "";
     for (const [, tags] of Object.entries(meta.native)) {
       for (const tag of tags as any[]) {
         const key = tag.id?.toLowerCase();

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync, promises as fsPromises } from "node:fs";
 import { join } from "node:path";
 import { EdgeTTS } from "edge-tts-universal";
 import type { Track } from "../domain/types";
@@ -118,11 +118,11 @@ export class OrchestratorService {
   /**
    * Saves dialogue history to a file.
    */
-  private saveHistory(): void {
+  private async saveHistory(): Promise<void> {
     const filePath = join(this.dataDir, "dj_history.json");
     try {
       const data: DjHistory = { dialogueHistory: this.dialogueHistory };
-      writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+      await fsPromises.writeFile(filePath, JSON.stringify(data, null, 2), "utf-8");
     } catch (err: any) {
       console.error("[OrchestratorService] Failed to save dj_history.json:", err.message);
     }
@@ -142,7 +142,7 @@ export class OrchestratorService {
       }
 
       const status = await this.liquidsoapService.getStreamStatus();
-      const queue = await this.liquidsoapService.queueList();
+      const { items: queue } = await this.liquidsoapService.queueList();
 
       // 1. Clean up generated TTS files that already played
       await this.cleanupTempFiles(status, queue);
@@ -171,8 +171,10 @@ export class OrchestratorService {
     const currentPlayingFile = status.metadata?.filename || status.metadata?.initial_uri || "";
 
     const queuedFilenames = new Set<string>();
-    for (const item of queue) {
-      const meta = await this.liquidsoapService.getRequestMetadata(item.rid);
+    const metaResults = await Promise.all(
+      queue.map((item) => this.liquidsoapService.getRequestMetadata(item.rid).catch(() => ({})))
+    );
+    for (const meta of metaResults) {
       const filename = meta.filename || meta.initial_uri || "";
       if (filename) queuedFilenames.add(filename);
     }
@@ -209,27 +211,29 @@ export class OrchestratorService {
     const songsBetween = parseInt(process.env.AI_DJ_SONGS_BETWEEN || "3", 10);
 
     // Get all tracks in queue with their metadata
+    const metaResults = await Promise.all(
+      queue.map((item) => this.liquidsoapService.getRequestMetadata(item.rid).catch(() => ({})))
+    );
+
     const queueWithMeta: Array<{
       rid: string;
       title: string;
       artist: string;
       filename: string;
       isInterludio: boolean;
-    }> = [];
-
-    for (const item of queue) {
-      const meta = await this.liquidsoapService.getRequestMetadata(item.rid);
+    }> = queue.map((item, i) => {
+      const meta = metaResults[i];
       const filename = meta.filename || meta.initial_uri || "";
       const isInterludio =
         filename.includes("/interludios/") || item.title?.includes("/interludios/");
-      queueWithMeta.push({
+      return {
         rid: item.rid,
         title: meta.title || item.title || "",
         artist: meta.artist || item.artist || "",
         filename,
         isInterludio,
-      });
-    }
+      };
+    });
 
     // Count consecutive songs without interludios
     let consecutiveSongs = 0;
@@ -300,7 +304,7 @@ export class OrchestratorService {
       if (this.dialogueHistory.length > 5) {
         this.dialogueHistory = this.dialogueHistory.slice(-5);
       }
-      this.saveHistory();
+      this.saveHistory().catch(() => {});
     }
   }
 
@@ -478,7 +482,7 @@ export class OrchestratorService {
       if (this.dialogueHistory.length > 5) {
         this.dialogueHistory = this.dialogueHistory.slice(-5);
       }
-      this.saveHistory();
+      this.saveHistory().catch(() => {});
     }
   }
 
@@ -718,6 +722,7 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
       try {
         const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
+          signal: AbortSignal.timeout(60000),
           headers: {
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
@@ -840,7 +845,7 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
         }
         case "get_stream_status": {
           const status = await this.liquidsoapService.getStreamStatus();
-          const queue = await this.liquidsoapService.queueList();
+          const { items: queue } = await this.liquidsoapService.queueList();
           return JSON.stringify({
             playing: status.playing,
             currentTrack: status.title
@@ -873,7 +878,7 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
       const result = await tts.synthesize();
       const arrayBuffer = await result.audio.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
-      writeFileSync(localPath, buffer);
+      await fsPromises.writeFile(localPath, buffer);
 
       console.log(`[OrchestratorService] Voice synthesis completed: ${localPath}`);
       return localPath;

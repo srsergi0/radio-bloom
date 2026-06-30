@@ -92,57 +92,61 @@ orchestratorService.start();
 
 // Restore playback state on startup (after Liquidsoap is likely ready)
 setTimeout(async () => {
-  const state = playbackStateRepo.get();
-  if (!state?.file) {
-    console.log("[restore] No saved state found. Starting fresh.");
-    return;
-  }
-
-  console.log(`[restore] Previous track found: "${state.title}" by ${state.artist}`);
-
-  const savedAtMs = new Date(state.savedAt).getTime();
-  if (Number.isNaN(savedAtMs)) {
-    playbackStateRepo.clear();
-    return;
-  }
-
-  const secondsSinceSave = (Date.now() - savedAtMs) / 1000;
-  const currentElapsed = state.elapsed + secondsSinceSave;
-
-  if (state.duration > 0 && currentElapsed >= state.duration) {
-    console.log("[restore] Previous track would have ended. Starting fresh.");
-    playbackStateRepo.clear();
-    return;
-  }
-
-  for (let attempt = 0; attempt < 30; attempt++) {
-    if (liquidsoapService.isConnected()) {
-      console.log(`[restore] Resuming "${state.file}" at ~${Math.round(currentElapsed)}s`);
-
-      const rid = await liquidsoapService.queuePush(state.file);
-      if (!rid) {
-        console.log("[restore] Failed to push track to queue.");
-        return;
-      }
-
-      await new Promise((r) => setTimeout(r, 1000));
-      await liquidsoapService.sendCommand("queue.skip");
-
-      await new Promise((r) => setTimeout(r, 800));
-
-      const currentRid = await liquidsoapService.getCurrentRequestId();
-      if (currentRid) {
-        const seekPos = Math.max(0, currentElapsed);
-        const ok = await liquidsoapService.requestSeek(currentRid, seekPos);
-        console.log(
-          `[restore] Seek to ${Math.round(seekPos)}s: ${ok ? "OK" : "failed, playing from start"}`
-        );
-      }
+  try {
+    const state = playbackStateRepo.get();
+    if (!state?.file) {
+      console.log("[restore] No saved state found. Starting fresh.");
       return;
     }
-    await new Promise((r) => setTimeout(r, 2000));
+
+    console.log(`[restore] Previous track found: "${state.title}" by ${state.artist}`);
+
+    const savedAtMs = new Date(state.savedAt).getTime();
+    if (Number.isNaN(savedAtMs)) {
+      playbackStateRepo.clear();
+      return;
+    }
+
+    const secondsSinceSave = (Date.now() - savedAtMs) / 1000;
+    const currentElapsed = state.elapsed + secondsSinceSave;
+
+    if (state.duration > 0 && currentElapsed >= state.duration) {
+      console.log("[restore] Previous track would have ended. Starting fresh.");
+      playbackStateRepo.clear();
+      return;
+    }
+
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (liquidsoapService.isConnected()) {
+        console.log(`[restore] Resuming "${state.file}" at ~${Math.round(currentElapsed)}s`);
+
+        const rid = await liquidsoapService.queuePush(state.file);
+        if (!rid) {
+          console.log("[restore] Failed to push track to queue.");
+          return;
+        }
+
+        await new Promise((r) => setTimeout(r, 1000));
+        await liquidsoapService.sendCommand("queue.skip");
+
+        await new Promise((r) => setTimeout(r, 800));
+
+        const currentRid = await liquidsoapService.getCurrentRequestId();
+        if (currentRid) {
+          const seekPos = Math.max(0, currentElapsed);
+          const ok = await liquidsoapService.requestSeek(currentRid, seekPos);
+          console.log(
+            `[restore] Seek to ${Math.round(seekPos)}s: ${ok ? "OK" : "failed, playing from start"}`
+          );
+        }
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    console.log("[restore] Liquidsoap not available after 60s, skipping restore.");
+  } catch (err: any) {
+    console.error("[restore] Error during playback restore:", err.message);
   }
-  console.log("[restore] Liquidsoap not available after 60s, skipping restore.");
 }, 3000);
 
 // Persist current playback state every 15 seconds
@@ -214,6 +218,7 @@ class StreamBroadcaster {
   private bufferBytes = 0;
   private clients: Set<ReadableStreamDefaultController> = new Set();
   private isStreaming = false;
+  private static readonly MAX_CLIENTS = 500;
 
   constructor() {
     this.startStreaming();
@@ -290,6 +295,11 @@ class StreamBroadcaster {
   }
 
   public registerClient(controller: ReadableStreamDefaultController) {
+    if (this.clients.size >= StreamBroadcaster.MAX_CLIENTS) {
+      console.warn(`[Broadcaster] Max clients reached (${StreamBroadcaster.MAX_CLIENTS}). Rejecting.`);
+      try { controller.close(); } catch {}
+      return;
+    }
     for (const chunk of this.buffer) {
       try {
         controller.enqueue(chunk);
@@ -358,15 +368,19 @@ console.log(`[server] MCP:    http://localhost:${PORT}/mcp`);
 console.log(`[server] Radio Bloom Composition Root ready`);
 
 process.on("SIGINT", async () => {
+  console.log("[shutdown] SIGINT received, shutting down gracefully...");
   orchestratorService.stop();
   libraryService.shutdown();
+  _server.stop();
   await torrentService.close().catch(() => {});
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
+  console.log("[shutdown] SIGTERM received, shutting down gracefully...");
   orchestratorService.stop();
   libraryService.shutdown();
+  _server.stop();
   await torrentService.close().catch(() => {});
   process.exit(0);
 });

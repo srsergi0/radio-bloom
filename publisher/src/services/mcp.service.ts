@@ -16,8 +16,11 @@ export class McpService {
     {
       server: McpServer;
       transport: WebStandardStreamableHTTPServerTransport;
+      lastActivity: number;
     }
   >();
+  private static readonly MAX_SESSIONS = 20;
+  private static readonly SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
@@ -33,6 +36,17 @@ export class McpService {
     this.registerAllTools(this.server);
   }
 
+  private cleanupStaleSessions(): void {
+    const now = Date.now();
+    for (const [id, session] of this.sessions) {
+      if (now - session.lastActivity > McpService.SESSION_TIMEOUT_MS) {
+        session.transport.close().catch(() => {});
+        this.sessions.delete(id);
+        console.log(`[McpService] Session expired: ${id}`);
+      }
+    }
+  }
+
   private registerAllTools(server: McpServer) {
     server.tool(
       "radio_status",
@@ -40,13 +54,15 @@ export class McpService {
       {},
       async () => {
         try {
-          const status = await this.liquidsoapService.getStreamStatus();
-          const queue = await this.liquidsoapService.queueList();
+          const [status, queue] = await Promise.all([
+            this.liquidsoapService.getStreamStatus(),
+            this.liquidsoapService.queueList(20),
+          ]);
           return {
             content: [
               {
                 type: "text",
-                text: JSON.stringify({ status, queue }, null, 2),
+                text: JSON.stringify({ status, queue: queue.items, queueTotal: queue.total }, null, 2),
               },
             ],
           };
@@ -157,18 +173,17 @@ export class McpService {
           .describe("Número máximo de elementos a mostrar (default: 5, recomendado)"),
       },
       async ({ limit }) => {
-        const queue = await this.liquidsoapService.queueList();
-        const items = queue.slice(0, limit);
+        const { items, total } = await this.liquidsoapService.queueList(limit);
         return {
           content: [
             {
               type: "text",
               text:
-                queue.length === 0
+                total === 0
                   ? "Cola vacía"
                   : JSON.stringify(
                       {
-                        total: queue.length,
+                        total,
                         showing: items.length,
                         items: items.map((q, i) => ({ position: i + 1, ...q })),
                       },
@@ -199,13 +214,13 @@ export class McpService {
         const filepath = `/music/${track.file}`;
         const rid = await this.liquidsoapService.queuePush(filepath);
         if (!rid) return { content: [{ type: "text", text: "Error al encolar" }], isError: true };
-        const queue = await this.liquidsoapService.queueList();
+        const { items: queueItems } = await this.liquidsoapService.queueList();
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify(
-                { ok: true, rid, queue: queue.map((q, i) => ({ position: i + 1, ...q })) },
+                { ok: true, rid, queue: queueItems.map((q, i) => ({ position: i + 1, ...q })) },
                 null,
                 2
               ),
@@ -237,13 +252,13 @@ export class McpService {
         const ok = await this.liquidsoapService.queueInsert(position - 1, filepath);
         if (!ok)
           return { content: [{ type: "text", text: "Error al insertar en cola" }], isError: true };
-        const queue = await this.liquidsoapService.queueList();
+        const { items: queueItems } = await this.liquidsoapService.queueList();
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify(
-                { ok: true, queue: queue.map((q, i) => ({ position: i + 1, ...q })) },
+                { ok: true, queue: queueItems.map((q, i) => ({ position: i + 1, ...q })) },
                 null,
                 2
               ),
@@ -264,22 +279,22 @@ export class McpService {
           .describe("Posición del elemento a eliminar (1 = el siguiente en reproducirse)"),
       },
       async ({ position }) => {
-        const queue = await this.liquidsoapService.queueList();
-        if (position > queue.length) {
+        const { items: queueItems, total } = await this.liquidsoapService.queueList();
+        if (position > total) {
           return {
             content: [
               {
                 type: "text",
-                text: `Posición ${position} no existe, la cola tiene ${queue.length} elementos`,
+                text: `Posición ${position} no existe, la cola tiene ${total} elementos`,
               },
             ],
             isError: true,
           };
         }
-        const rid = queue[position - 1].rid;
+        const rid = queueItems[position - 1].rid;
         const ok = await this.liquidsoapService.queueRemove(rid);
         if (!ok) return { content: [{ type: "text", text: "Error al eliminar" }], isError: true };
-        const newQueue = await this.liquidsoapService.queueList();
+        const { items: newQueueItems } = await this.liquidsoapService.queueList();
         return {
           content: [
             {
@@ -288,7 +303,7 @@ export class McpService {
                 {
                   ok: true,
                   removed: position,
-                  queue: newQueue.map((q, i) => ({ position: i + 1, ...q })),
+                  queue: newQueueItems.map((q, i) => ({ position: i + 1, ...q })),
                 },
                 null,
                 2
@@ -892,6 +907,26 @@ export class McpService {
     }
 
     if (isInit) {
+      this.cleanupStaleSessions();
+
+      if (this.sessions.size >= McpService.MAX_SESSIONS) {
+        // Evict oldest session
+        let oldestKey: string | null = null;
+        let oldestTime = Infinity;
+        for (const [key, session] of this.sessions) {
+          if (session.lastActivity < oldestTime) {
+            oldestTime = session.lastActivity;
+            oldestKey = key;
+          }
+        }
+        if (oldestKey) {
+          const oldest = this.sessions.get(oldestKey)!;
+          oldest.transport.close().catch(() => {});
+          this.sessions.delete(oldestKey);
+          console.log(`[McpService] Evicted oldest session: ${oldestKey}`);
+        }
+      }
+
       const sessionServer = new McpServer({
         name: "radio-bloom",
         version: "1.0.0",
@@ -902,7 +937,11 @@ export class McpService {
         sessionIdGenerator: () => crypto.randomUUID(),
         enableJsonResponse: true,
         onsessioninitialized: (sessionId) => {
-          this.sessions.set(sessionId, { server: sessionServer, transport });
+          this.sessions.set(sessionId, {
+            server: sessionServer,
+            transport,
+            lastActivity: Date.now(),
+          });
           console.log(`[McpService] MCP Session initialized: ${sessionId}`);
         },
         onsessionclosed: (sessionId) => {
@@ -943,6 +982,7 @@ export class McpService {
       );
     }
 
+    session.lastActivity = Date.now();
     return session.transport.handleRequest(req);
   }
 }

@@ -1,9 +1,14 @@
 import { createConnection, type Socket } from "node:net";
 
+const MAX_COMMAND_QUEUE = 50;
+const MAX_BUFFER_BYTES = 1024 * 1024; // 1MB
+const MAX_RECONNECT_ATTEMPTS = 100;
+
 export class TelnetClient {
   private socket: Socket | null = null;
   private connected = false;
   private isConnecting = false;
+  private reconnectAttempts = 0;
   private commandQueue: {
     cmd: string;
     resolve: (val: string[]) => void;
@@ -30,12 +35,24 @@ export class TelnetClient {
     if (this.isConnecting || this.connected) return;
     this.isConnecting = true;
 
-    console.log(`[TelnetClient] Connecting to Liquidsoap telnet at ${this.host}:${this.port}...`);
+    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      console.error(
+        `[TelnetClient] Stopped reconnecting after ${MAX_RECONNECT_ATTEMPTS} attempts. Liquidsoap may be down.`
+      );
+      this.isConnecting = false;
+      return;
+    }
+
+    this.reconnectAttempts++;
+    console.log(
+      `[TelnetClient] Connecting to Liquidsoap telnet at ${this.host}:${this.port} (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`
+    );
     this.socket = createConnection(this.port, this.host);
 
     this.socket.on("connect", () => {
       this.connected = true;
       this.isConnecting = false;
+      this.reconnectAttempts = 0;
       console.log(`[TelnetClient] Connected to Liquidsoap telnet.`);
       this.processQueue();
     });
@@ -43,6 +60,10 @@ export class TelnetClient {
     this.socket.on("data", (data) => {
       if (!this.currentCommand) return;
       this.currentCommand.buf += data.toString();
+      if (this.currentCommand.buf.length > MAX_BUFFER_BYTES) {
+        console.error("[TelnetClient] Buffer overflow, truncating.");
+        this.currentCommand.buf = this.currentCommand.buf.slice(-MAX_BUFFER_BYTES);
+      }
       while (this.currentCommand.buf.includes("\n")) {
         const idx = this.currentCommand.buf.indexOf("\n");
         const line = this.currentCommand.buf.substring(0, idx).trim();
@@ -121,6 +142,10 @@ export class TelnetClient {
 
   public send(cmd: string, timeoutMs = 10000): Promise<string[]> {
     return new Promise((resolve, reject) => {
+      if (this.commandQueue.length >= MAX_COMMAND_QUEUE) {
+        reject(new Error("Command queue full, Liquidsoap may be unresponsive"));
+        return;
+      }
       this.commandQueue.push({ cmd, resolve, reject, timeoutMs });
       this.processQueue();
     });

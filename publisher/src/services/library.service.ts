@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, watch } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, watch, type FSWatcher } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
 import type { Track } from "../domain/types";
 import type { AudioMetadataClient } from "../infrastructure/audio-metadata.client";
@@ -13,6 +13,8 @@ export class LibraryService {
   private watcherTimer: Timer | null = null;
   private watchDebounceTimer: Timer | null = null;
   private watchPending = false;
+  private watchHandles: FSWatcher[] = [];
+  private scanLock: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
@@ -42,10 +44,11 @@ export class LibraryService {
     // fs.watch: fast notification on platforms that support recursive
     try {
       for (const dir of [this.songsDir, this.interludiosDir]) {
-        watch(dir, { recursive: true }, (_event, filename) => {
+        const handle = watch(dir, { recursive: true }, (_event, filename) => {
           if (!filename || filename.startsWith(".") || filename.startsWith("ai_dj_")) return;
           this.scheduleWatchScan();
         });
+        this.watchHandles.push(handle);
       }
       console.log("[LibraryService] File watcher (recursive) + polling 15s");
     } catch {
@@ -68,6 +71,10 @@ export class LibraryService {
   public shutdown(): void {
     if (this.watcherTimer) clearInterval(this.watcherTimer);
     if (this.watchDebounceTimer) clearTimeout(this.watchDebounceTimer);
+    for (const handle of this.watchHandles) {
+      try { handle.close(); } catch {}
+    }
+    this.watchHandles = [];
   }
 
   private getAllFiles(dir: string): string[] {
@@ -90,7 +97,13 @@ export class LibraryService {
     return results;
   }
 
-  public async scan(): Promise<void> {
+  public scan(): Promise<void> {
+    const run = this.scanLock.then(() => this.doScan());
+    this.scanLock = run.then(() => {}, () => {});
+    return run;
+  }
+
+  private async doScan(): Promise<void> {
     this.ensureDirs();
 
     const songFiles = this.getAllFiles(this.songsDir);

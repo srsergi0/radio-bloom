@@ -14,6 +14,28 @@ import type { LocutorService } from "../services/locutor.service";
 import type { McpService } from "../services/mcp.service";
 import type { TorrentService } from "../services/torrent.service";
 
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024; // 200MB
+
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(ip: string, maxPerMinute = 120): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + 60000 });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= maxPerMinute;
+}
+
+// Cleanup stale entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimitMap) {
+    if (now > entry.resetAt) rateLimitMap.delete(ip);
+  }
+}, 300000);
+
 export interface ApiDependencies {
   configService: ConfigService;
   libraryRepo: LibraryRepository;
@@ -36,6 +58,14 @@ export function createApiRouter(deps: ApiDependencies): Hono {
       exposeHeaders: ["mcp-session-id", "mcp-protocol-version"],
     })
   );
+
+  app.use("*", async (c: any, next: any) => {
+    const ip = c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown";
+    if (!checkRateLimit(ip)) {
+      return c.json({ ok: false, error: "Rate limit exceeded" }, 429);
+    }
+    await next();
+  });
 
   // ============================================================
   // SYSTEM
@@ -125,6 +155,12 @@ export function createApiRouter(deps: ApiDependencies): Hono {
       const fileField = formData.get("file");
       if (!fileField || !(fileField instanceof File)) {
         return c.json({ ok: false, error: "Se requiere un archivo en el campo 'file'" }, 400);
+      }
+      if (fileField.size > MAX_UPLOAD_BYTES) {
+        return c.json(
+          { ok: false, error: `Archivo excede el límite de ${MAX_UPLOAD_BYTES / 1024 / 1024}MB` },
+          413
+        );
       }
       const type = (formData.get("type") as string) || "song";
       if (type !== "song" && type !== "interludio") {
@@ -220,7 +256,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
       const filepath = `/music/${track.file}`;
       const rid = await deps.liquidsoapService.queuePush(filepath);
-      const list = await deps.liquidsoapService.queueList();
+      const { items: list } = await deps.liquidsoapService.queueList();
       return c.json({ ok: true, data: { source: "library", rid, track, queue: list } });
     } catch (err: any) {
       return c.json(
@@ -232,7 +268,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
   app.get("/api/stream/queue", async (c) => {
     try {
-      const items = await deps.liquidsoapService.queueList();
+      const { items } = await deps.liquidsoapService.queueList();
       return c.json({ ok: true, data: items });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);
@@ -258,7 +294,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
           404
         );
       }
-      const list = await deps.liquidsoapService.queueList();
+      const { items: list } = await deps.liquidsoapService.queueList();
       return c.json({ ok: true, data: { removed: rid, queue: list } });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);
@@ -278,7 +314,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
       const ok = await deps.liquidsoapService.queueInsert(index, `/music/${track.file}`);
       if (!ok) return c.json({ ok: false, error: "Failed to insert" }, 500);
-      const list = await deps.liquidsoapService.queueList();
+      const { items: list } = await deps.liquidsoapService.queueList();
       return c.json({ ok: true, data: { index, track, queue: list } });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);

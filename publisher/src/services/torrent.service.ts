@@ -138,19 +138,22 @@ export class TorrentService {
               const audioFiles = findAudioFiles(downloadPath);
               await job.log(`Se encontraron ${audioFiles.length} archivos de audio.`);
 
+              // Use the parent folder of the first audio file as album name
+              const albumFolder = path.basename(path.dirname(audioFiles[0])) || job.data.name;
+              const albumDir = path.join(musicSongsDir, albumFolder);
+              await fs.promises.mkdir(albumDir, { recursive: true });
+
               for (const file of audioFiles) {
                 const baseName = path.basename(file);
-                // Sanitize file name for final destination
                 const safeFile = baseName.replace(/[^a-zA-Z0-9.-_ ]/g, "_");
-                const dest = path.join(musicSongsDir, safeFile);
+                const dest = path.join(albumDir, safeFile);
 
-                await job.log(`Moviendo ${baseName} -> ${dest}`);
+                await job.log(`Moviendo ${baseName} -> ${albumFolder}/${safeFile}`);
                 try {
                   await fs.promises.rename(file, dest);
                 } catch {
                   // Cross-device fallback
                   await fs.promises.copyFile(file, dest);
-                  await fs.promises.unlink(file);
                 }
               }
 

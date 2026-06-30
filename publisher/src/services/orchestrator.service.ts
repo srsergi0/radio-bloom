@@ -392,9 +392,7 @@ Directrices de Locución Radial para un Flujo Magnético y Carismático:
 5. ESCRIBE PARA EL OÍDO: Usa frases cortas, preguntas retóricas, expresiones naturales. La puntuación determina cómo lee la voz (comas para pausas breves, puntos suspensivos para expectación).
 6. LIMITACIÓN ESTRICTA DE PALABRAS: Si decides escribir un guión de locución ('dj_script'), este debe tener obligatoriamente entre 30 y 45 palabras. Debe ser conciso, memorable y sugerente. No incluyes acotaciones musicales ni hashtags.
 7. FRECUENCIA DE LOCUCIÓN: No es necesario locutar antes de todas las canciones. Se recomienda locutar sólo en 1 o 2 de las 5 canciones de la cola (deja 'dj_script' vacío en las demás).
-8. SELECCIÓN DE CANCIONES Y EVITAR BÚSQUEDAS INFINITAS: Cada 'selected_song_id' DEBE ser un ID de canción real y válido de tu biblioteca. Para conocer qué canciones tienes disponibles, usa preferentemente la herramienta 'get_library_songs'. Si usas la herramienta 'search_library' y los resultados son una lista vacía [], NO sigas buscando más canciones por texto; elige de inmediato de la lista de 'CANCIONES SUGERIDAS' o usa 'get_library_songs' para ver los temas disponibles en catálogo. No agotes tus turnos en llamadas de búsqueda infructuosas.
-
-Puedes ejecutar herramientas de tu entorno para obtener información antes de decidir. Responde utilizando el formato estructurado JSON.`;
+9. ENTREGAR RESULTADOS: Para entregar tu planificación final de 5 canciones, DEBES llamar obligatoriamente a la herramienta 'submit_decisions' con tus 5 decisiones estructuradas. No te limites a escribir el JSON en texto, utiliza la herramienta.`;
 
     const currentTrackText = status.title
       ? `"${status.title}" de ${status.artist || "Desconocido"}`
@@ -489,6 +487,42 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
           },
         },
       },
+      {
+        type: "function",
+        function: {
+          name: "submit_decisions",
+          description:
+            "Envía la lista final con las 5 programaciones de canciones y sus guiones de locución (exactamente 5 elementos). Llama a esta herramienta obligatoriamente como tu último paso para finalizar la planificación.",
+          parameters: {
+            type: "object",
+            properties: {
+              decisions: {
+                type: "array",
+                description:
+                  "Lista ordenada de exactamente 5 programaciones consecutivas para el stream.",
+                items: {
+                  type: "object",
+                  properties: {
+                    selected_song_id: {
+                      type: "string",
+                      description: "El ID real de la canción elegida de la biblioteca de música.",
+                    },
+                    dj_script: {
+                      type: "string",
+                      description:
+                        "El guión completo en español para la locución radial del DJ (30-45 palabras), o string vacío si no toca locutar antes de esta canción.",
+                    },
+                  },
+                  required: ["selected_song_id", "dj_script"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["decisions"],
+            additionalProperties: false,
+          },
+        },
+      },
     ];
 
     const responseFormat = {
@@ -527,6 +561,8 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
       },
     };
 
+    let finalDecisions: any[] | null = null;
+
     // Loop for tool calls (max 6 turns to avoid early cutoffs)
     for (let turn = 0; turn < 6; turn++) {
       try {
@@ -564,7 +600,13 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
             const args = JSON.parse(call.function.arguments || "{}");
             console.log(`[OrchestratorService] Native agent tool call: ${name} with args:`, args);
 
-            const toolResult = await this.executeTool(name, args);
+            let toolResult = "";
+            if (name === "submit_decisions") {
+              finalDecisions = args.decisions || [];
+              toolResult = JSON.stringify({ ok: true });
+            } else {
+              toolResult = await this.executeTool(name, args);
+            }
 
             messages.push({
               role: "tool",
@@ -573,6 +615,10 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
               content: toolResult,
             });
           }
+
+          if (finalDecisions) {
+            return { decisions: finalDecisions };
+          }
           continue; // Execute next turn
         }
 
@@ -580,7 +626,15 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
         if (message.content) {
           const content = message.content.trim();
           console.log("[OrchestratorService] Native agent final response:", content);
-          const parsed = JSON.parse(content);
+
+          let jsonText = content;
+          const firstBrace = content.indexOf("{");
+          const lastBrace = content.lastIndexOf("}");
+          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            jsonText = content.slice(firstBrace, lastBrace + 1);
+          }
+
+          const parsed = JSON.parse(jsonText);
           return {
             decisions: parsed.decisions || [],
           };

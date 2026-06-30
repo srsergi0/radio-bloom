@@ -6,8 +6,11 @@ import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { LiquidsoapService } from "./liquidsoap.service";
 
 interface DialogueMessage {
-  role: "user" | "assistant" | "system";
-  content: string;
+  role: "user" | "assistant" | "system" | "tool";
+  content?: string | null;
+  name?: string;
+  tool_call_id?: string;
+  tool_calls?: any[];
 }
 
 interface DjHistory {
@@ -326,26 +329,13 @@ Tu tarea actual es programar la siguiente canción que sonará en el stream.
 ${
   isInterlude
     ? "ATENCIÓN: Es hora de hablar al micrófono (DJ Speech). Debes seleccionar la siguiente canción de tu biblioteca local Y redactar el guión de locución que leerás en el aire antes de que suene."
-    : "ATENCIÓN: Solo debes seleccionar la siguiente canción de tu biblioteca local. No es necesario que escribas un guión de locución en esta ocasión."
+    : "ATENCIÓN: Solo debes seleccionar la siguiente canción de tu biblioteca local. No es necesario que escribas un guión de locución en esta ocasión (deja 'dj_script' como string vacío)."
 }
 
 Canciones sugeridas disponibles actualmente (puedes elegir uno de sus IDs directamente o buscar otros usando tus herramientas):
 ${suggestedSongsText}
 
-Puedes ejecutar herramientas de tu entorno para obtener información antes de decidir. Responde SIEMPRE con un objeto JSON.
-
-Herramientas disponibles:
-- search_library(query: string): busca canciones en la base de datos de la radio por texto (título, artista, álbum).
-- get_library_stats(): obtiene el total de canciones disponibles en la base de datos local.
-- get_stream_status(): consulta qué canción está sonando actualmente y qué temas están ya en la cola de Liquidsoap.
-- get_current_time(): obtiene la hora local de la emisora.
-
-Cuando decidas la canción (y redactes el guión si es hora de locutar), responde EXACTAMENTE con esta estructura JSON de respuesta final:
-{
-  "action": "final_response",
-  "selected_song_id": "ID_REAL_DE_LA_CANCION_DE_TU_BIBLIOTECA",
-  "dj_script": "${isInterlude ? "Tu guión completo de locución (en español, de 30 a 45 palabras)." : ""}"
-}
+Puedes ejecutar herramientas de tu entorno para obtener información antes de decidir.
 
 Directrices de Locución Radial para un Flujo Magnético y Carismático:
 1. EVITA los saludos repetitivos. No empieces siempre diciendo "Hola" o "Bienvenidos a Radio Bloom". Entra directo a la idea, al gancho o al puente.
@@ -360,18 +350,99 @@ Directrices de Locución Radial para un Flujo Magnético y Carismático:
 7. El 'selected_song_id' DEBE corresponder a una canción real existente en tu biblioteca. Usa tus herramientas para encontrar los IDs correctos.
 8. Mantén la continuidad del programa considerando el historial de tus últimas interacciones.`;
 
-    const messages: DialogueMessage[] = [
-      { role: "system", content: systemPrompt },
-      ...this.dialogueHistory,
-    ];
+    const messages: any[] = [{ role: "system", content: systemPrompt }, ...this.dialogueHistory];
 
     const triggerText = isInterlude
-      ? "Es hora de tu locución y de programar el próximo tema. Utiliza herramientas si lo necesitas, selecciona la canción de la biblioteca y escribe el guión final."
-      : "Selecciona el próximo tema para programar en la cola. Utiliza herramientas si lo necesitas, y responde con la selección final (deja 'dj_script' vacío).";
+      ? "Es hora de tu locución y de programar el próximo tema. Utiliza herramientas si lo necesitas, selecciona la canción de la biblioteca y responde con el formato estructurado final."
+      : "Selecciona el próximo tema para programar en la cola. Utiliza herramientas si lo necesitas, y responde con el formato estructurado final (deja 'dj_script' vacío).";
 
     messages.push({ role: "user", content: triggerText });
 
-    // Loop for tool calls (max 3 turns)
+    const tools = [
+      {
+        type: "function",
+        function: {
+          name: "search_library",
+          description:
+            "Busca canciones en la biblioteca de la radio por texto (título, artista o álbum). Devuelve coincidencias con sus IDs.",
+          parameters: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "Término de búsqueda textual (ej. 'Rick Astley').",
+              },
+            },
+            required: ["query"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "get_library_stats",
+          description:
+            "Obtiene estadísticas generales sobre la biblioteca local (total de canciones y de interludios cargados).",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "get_stream_status",
+          description:
+            "Consulta qué canción está sonando actualmente y qué temas están ya en la cola de Liquidsoap.",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "get_current_time",
+          description: "Obtiene la hora local exacta de la emisora.",
+          parameters: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+      },
+    ];
+
+    const responseFormat = {
+      type: "json_schema",
+      json_schema: {
+        name: "dj_decision",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            selected_song_id: {
+              type: "string",
+              description: "El ID real de la canción elegida de la biblioteca de música.",
+            },
+            dj_script: {
+              type: "string",
+              description:
+                "El guión completo en español para la locución radial del DJ (30-45 palabras), o string vacío si no toca locutar.",
+            },
+          },
+          required: ["selected_song_id", "dj_script"],
+          additionalProperties: false,
+        },
+      },
+    };
+
+    // Loop for tool calls (max 4 turns)
     for (let turn = 0; turn < 4; turn++) {
       try {
         const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -386,7 +457,8 @@ Directrices de Locución Radial para un Flujo Magnético y Carismático:
             model,
             messages,
             temperature: 0.7,
-            response_format: { type: "json_object" },
+            tools,
+            response_format: responseFormat,
           }),
         });
 
@@ -395,43 +467,44 @@ Directrices de Locución Radial para un Flujo Magnético y Carismático:
         }
 
         const data = (await res.json()) as any;
-        const content = data.choices?.[0]?.message?.content?.trim();
-        if (!content) return null;
+        const message = data.choices?.[0]?.message;
+        if (!message) return null;
 
-        const cleanedContent = content
-          .replace(/^```json\s*/i, "")
-          .replace(/```$/, "")
-          .trim();
-        const parsed = JSON.parse(cleanedContent);
-        console.log("[OrchestratorService] Agent response:", cleanedContent);
+        // If assistant wants to call tools natively
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          messages.push(message);
 
-        if (parsed.action === "call_tool" || parsed.action === "use_tool") {
-          const toolName = parsed.tool;
-          const toolArgs = parsed.arguments || {};
-          console.log(`[OrchestratorService] Agent called tool: ${toolName} with args:`, toolArgs);
+          for (const call of message.tool_calls) {
+            const name = call.function.name;
+            const args = JSON.parse(call.function.arguments || "{}");
+            console.log(`[OrchestratorService] Native agent tool call: ${name} with args:`, args);
 
-          const toolResult = await this.executeTool(toolName, toolArgs);
+            const toolResult = await this.executeTool(name, args);
 
-          // Add assistant call and tool result to context
-          messages.push({ role: "assistant", content: cleanedContent });
-          messages.push({
-            role: "user",
-            content: `Resultado de la herramienta ${toolName}: ${toolResult}`,
-          });
-
-          continue; // Next turn
+            messages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              name,
+              content: toolResult,
+            });
+          }
+          continue; // Execute next turn
         }
 
-        if (parsed.action === "final_response") {
+        // If assistant returns final structured JSON response
+        if (message.content) {
+          const content = message.content.trim();
+          console.log("[OrchestratorService] Native agent final response:", content);
+          const parsed = JSON.parse(content);
           return {
             selectedSongId: parsed.selected_song_id,
             djScript: parsed.dj_script || undefined,
           };
         }
 
-        throw new Error(`Acción de agente desconocida: ${parsed.action}`);
+        throw new Error("El modelo retornó una respuesta vacía sin llamadas a herramientas.");
       } catch (err: any) {
-        console.error(`[OrchestratorService] Error in agent turn ${turn}:`, err.message);
+        console.error(`[OrchestratorService] Error in native agent turn ${turn}:`, err.message);
         break;
       }
     }

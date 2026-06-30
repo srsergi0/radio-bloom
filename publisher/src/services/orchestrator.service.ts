@@ -403,6 +403,7 @@ Directrices de Locución Radial para un Flujo Magnético y Carismático:
           .replace(/```$/, "")
           .trim();
         const parsed = JSON.parse(cleanedContent);
+        console.log("[OrchestratorService] Agent response:", cleanedContent);
 
         if (parsed.action === "call_tool" || parsed.action === "use_tool") {
           const toolName = parsed.tool;

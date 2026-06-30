@@ -7,6 +7,8 @@ export class LiquidsoapService {
   private readonly durationCache = new Map<string, { duration: number; cachedAt: number }>();
   private readonly DURATION_CACHE_TTL = 3600000;
   private queueLock: Promise<void> = Promise.resolve();
+  private lastManualQueueClear = 0;
+  private static readonly MANUAL_CLEAR_COOLDOWN_MS = 120_000; // 2min after manual clear, don't auto-fill
 
   constructor(
     private readonly telnetClient: TelnetClient,
@@ -217,20 +219,27 @@ export class LiquidsoapService {
         const idx = queued.indexOf(rid);
         if (idx === -1) return false;
 
+        // Fetch metadata only for remaining items (skip the one being removed)
+        const remainingRids = queued.filter((_, i) => i !== idx);
         const metas = await Promise.all(
-          queued.map((r) => this.getRequestMetadata(r).catch(() => ({})))
+          remainingRids.map((r) => this.getRequestMetadata(r).catch(() => ({})))
         );
-        const uris = metas.map((m) => m.initial_uri || m.filename || "");
-        if (idx >= uris.length) return false;
-        uris.splice(idx, 1);
+        const uris = metas.map((m) => m.initial_uri || m.filename || "").filter(Boolean);
 
         await this.sendCommand("queue.clear");
-        await new Promise((r) => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 200));
+
+        let pushedCount = 0;
         for (const uri of uris) {
-          if (uri) await this.queuePush(uri).catch(() => {});
+          const result = await this.queuePush(uri).catch(() => null);
+          if (result) pushedCount++;
         }
+        console.log(
+          `[LiquidsoapService] queueRemove: cleared and rebuilt queue with ${pushedCount}/${uris.length} items`
+        );
         return true;
-      } catch {
+      } catch (err: any) {
+        console.error(`[LiquidsoapService] queueRemove failed:`, err.message);
         return false;
       }
     });
@@ -244,17 +253,24 @@ export class LiquidsoapService {
         const metas = await Promise.all(
           queued.map((r) => this.getRequestMetadata(r).catch(() => ({})))
         );
-        const uris = metas.map((m) => m.initial_uri || m.filename || "");
+        const uris = metas.map((m) => m.initial_uri || m.filename || "").filter(Boolean);
         const safeIndex = Math.max(0, Math.min(index, uris.length));
         uris.splice(safeIndex, 0, filepath);
 
         await this.sendCommand("queue.clear");
-        await new Promise((r) => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 200));
+
+        let pushedCount = 0;
         for (const uri of uris) {
-          if (uri) await this.queuePush(uri).catch(() => {});
+          const result = await this.queuePush(uri).catch(() => null);
+          if (result) pushedCount++;
         }
+        console.log(
+          `[LiquidsoapService] queueInsert: cleared and rebuilt queue with ${pushedCount}/${uris.length} items`
+        );
         return true;
-      } catch {
+      } catch (err: any) {
+        console.error(`[LiquidsoapService] queueInsert failed:`, err.message);
         return false;
       }
     });
@@ -263,7 +279,13 @@ export class LiquidsoapService {
   public async queueClear(): Promise<void> {
     try {
       await this.sendCommand("queue.clear");
+      this.lastManualQueueClear = Date.now();
+      console.log("[LiquidsoapService] Queue cleared manually");
     } catch {}
+  }
+
+  public isManualClearActive(): boolean {
+    return Date.now() - this.lastManualQueueClear < LiquidsoapService.MANUAL_CLEAR_COOLDOWN_MS;
   }
 
   public async playFileNow(filepath: string): Promise<boolean> {

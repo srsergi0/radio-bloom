@@ -24,6 +24,10 @@ export class OrchestratorService {
   private recentHistory: string[] = []; // Last 15 song IDs queued
   private tempFiles = new Set<string>(); // Keep track of absolute paths of generated MP3s
   private dialogueHistory: DialogueMessage[] = [];
+  private startedAt = 0;
+  private lastInjectionTime = 0;
+  private static readonly STARTUP_GRACE_MS = 30_000; // 30s grace period on startup
+  private static readonly INJECTION_COOLDOWN_MS = 60_000; // 1min between interludio injections
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
@@ -58,6 +62,8 @@ export class OrchestratorService {
     this.loadHistory();
 
     console.log("[OrchestratorService] Starting AI DJ Orchestrator background loop...");
+    this.startedAt = Date.now();
+
     // Check every 10 seconds
     this.loopInterval = setInterval(() => {
       this.tick().catch((err) => console.error("[OrchestratorService] Error in tick loop:", err));
@@ -141,6 +147,13 @@ export class OrchestratorService {
         return;
       }
 
+      // Grace period: wait after startup before doing anything
+      const elapsed = Date.now() - this.startedAt;
+      if (elapsed < OrchestratorService.STARTUP_GRACE_MS) {
+        this.isProcessing = false;
+        return;
+      }
+
       const status = await this.liquidsoapService.getStreamStatus();
       const { items: queue } = await this.liquidsoapService.queueList();
 
@@ -151,7 +164,9 @@ export class OrchestratorService {
       await this.checkAndInjectManualQueueInterludios(status, queue);
 
       // 3. Queue new tracks if queue is dropping below 2 elements
-      if (queue.length < 2) {
+      //    but never exceed 20 items to prevent unbounded growth
+      //    Also skip if user recently cleared the queue manually
+      if (queue.length < 2 && queue.length < 20 && !this.liquidsoapService.isManualClearActive()) {
         console.log(
           `[OrchestratorService] Queue is low (${queue.length} items). Enqueuing next track...`
         );
@@ -210,6 +225,12 @@ export class OrchestratorService {
   private async checkAndInjectManualQueueInterludios(status: any, queue: any[]): Promise<void> {
     const songsBetween = parseInt(process.env.AI_DJ_SONGS_BETWEEN || "3", 10);
 
+    // Cooldown: don't inject again too soon after last injection
+    const timeSinceLastInjection = Date.now() - this.lastInjectionTime;
+    if (timeSinceLastInjection < OrchestratorService.INJECTION_COOLDOWN_MS) {
+      return;
+    }
+
     // Get all tracks in queue with their metadata
     const metaResults = await Promise.all(
       queue.map((item) => this.liquidsoapService.getRequestMetadata(item.rid).catch(() => ({})))
@@ -249,53 +270,39 @@ export class OrchestratorService {
       }
     }
 
-    // If we have enough consecutive songs without interludios, inject them
+    // If we have enough consecutive songs without interludios, inject ONE interludio
     if (consecutiveSongs >= songsBetween) {
       console.log(
-        `[OrchestratorService] Detected ${consecutiveSongs} consecutive songs without interludios. Injecting DJ speeches...`
+        `[OrchestratorService] Detected ${consecutiveSongs} consecutive songs without interludios. Injecting ONE DJ speech...`
       );
 
       const activeLocutor = this.locutorService.getActiveLocutorAtCurrentTime();
-      if (activeLocutor) {
-        console.log(
-          `[OrchestratorService] Using locutor: "${activeLocutor.name}" (Voice: ${activeLocutor.voice})`
-        );
-      }
 
-      // Calculate positions where interludios should go (every songsBetween songs)
-      const positionsToInject: number[] = [];
-      for (let i = songsBetween - 1; i < songIndices.length; i += songsBetween) {
-        positionsToInject.push(songIndices[i]);
-      }
+      // Only inject at the FIRST valid position (not all positions)
+      const insertAfterIndex = songIndices[songsBetween - 1];
+      const songItem = queueWithMeta[insertAfterIndex];
 
-      // Generate and inject interludios (in reverse order to maintain indices)
-      for (let i = positionsToInject.length - 1; i >= 0; i--) {
-        const insertAfterIndex = positionsToInject[i];
-        const songItem = queueWithMeta[insertAfterIndex];
+      const script = await this.generateContextualScript(songItem, activeLocutor);
 
-        // Generate a contextual script for this song
-        const script = await this.generateContextualScript(songItem, activeLocutor);
-
-        if (script) {
-          const speechPath = await this.synthesizeSpeech(script, activeLocutor?.voice);
-          if (speechPath) {
-            const filename = speechPath.replace(/\\/g, "/").split("/").pop();
-            // Insert after the song (so it plays before the next song)
-            const insertPosition = insertAfterIndex + 1;
-            console.log(
-              `[OrchestratorService] Injecting interludio at position ${insertPosition} after "${songItem.title}"`
-            );
-            const success = await this.liquidsoapService.queueInsert(
-              insertPosition,
-              `/music/interludios/${filename}`
-            );
-            if (success) {
-              this.tempFiles.add(speechPath);
-              this.dialogueHistory.push({
-                role: "assistant",
-                content: script,
-              });
-            }
+      if (script) {
+        const speechPath = await this.synthesizeSpeech(script, activeLocutor?.voice);
+        if (speechPath) {
+          const filename = speechPath.replace(/\\/g, "/").split("/").pop();
+          const insertPosition = insertAfterIndex + 1;
+          console.log(
+            `[OrchestratorService] Injecting interludio at position ${insertPosition} after "${songItem.title}"`
+          );
+          const success = await this.liquidsoapService.queueInsert(
+            insertPosition,
+            `/music/interludios/${filename}`
+          );
+          if (success) {
+            this.tempFiles.add(speechPath);
+            this.lastInjectionTime = Date.now();
+            this.dialogueHistory.push({
+              role: "assistant",
+              content: script,
+            });
           }
         }
       }
@@ -416,8 +423,8 @@ export class OrchestratorService {
       console.warn(
         "[OrchestratorService] Agent loop failed to plan a batch. Falling back to local selection."
       );
-      // Fallback: queue 5 random songs programmatically
-      for (let i = 0; i < 5; i++) {
+      // Fallback: queue 2 random songs programmatically (reduced from 5 to avoid queue bloat)
+      for (let i = 0; i < 2; i++) {
         const candidates = allSongs.filter((song) => !this.recentHistory.includes(song.id));
         const pool = candidates.length > 0 ? candidates : allSongs;
         const randomSong = pool[Math.floor(Math.random() * pool.length)];

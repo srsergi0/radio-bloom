@@ -37,6 +37,59 @@ import Layout from "../../layouts/Layout.astro";
             Cargando catálogo de locutores...
           </div>
         </div>
+
+        <!-- GESTOR DE DESCARGAS DE MÚSICA (TORRENTS) -->
+        <div class="mt-8 brutalist-border p-6 bg-yellow-200 brutalist-shadow text-text-dark" style="background-color: #fef08a;">
+          <div class="flex justify-between items-center mb-4 border-b-2 border-black pb-2">
+            <h2 class="text-2xl font-black tracking-tight">DESCARGADOR DE MÚSICA</h2>
+            <a href="/admin/queues" target="_blank" class="brutalist-button bg-orange text-text-dark px-3 py-1 font-mono text-xs font-black no-underline">
+              PANEL BULLMQ ↗
+            </a>
+          </div>
+          
+          <div class="font-mono text-xs font-bold flex flex-col gap-4">
+            <div class="flex gap-2">
+              <input
+                type="text"
+                id="torrent-search-input"
+                placeholder="Buscar artista, álbum o canción..."
+                class="brutalist-input p-2 text-sm bg-white flex-grow"
+              />
+              <button
+                type="button"
+                id="torrent-search-btn"
+                class="brutalist-button bg-black text-white px-5 py-2 uppercase font-black"
+              >
+                BUSCAR
+              </button>
+            </div>
+
+            <!-- Search Results -->
+            <div id="torrent-results-container" class="hidden brutalist-border bg-white p-4 max-h-60 overflow-y-auto">
+              <table class="w-full text-left font-mono text-[11px]">
+                <thead>
+                  <tr class="border-b border-black">
+                    <th class="pb-1 uppercase">Nombre</th>
+                    <th class="pb-1 uppercase w-20">Tamaño</th>
+                    <th class="pb-1 uppercase w-16 text-green-700">Seeds</th>
+                    <th class="pb-1 uppercase w-20">Acción</th>
+                  </tr>
+                </thead>
+                <tbody id="torrent-results-body">
+                  <!-- JS injected results -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Active Downloads / Queue -->
+            <div>
+              <h3 class="text-sm font-black uppercase mb-2">Cola Activa y Estado</h3>
+              <div id="torrent-queue-container" class="flex flex-col gap-2">
+                <p class="italic text-[11px] text-gray-600">No hay descargas activas o torrents en cola.</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- COLUMNA 2: Formulario (4 cols) -->
@@ -663,4 +716,199 @@ import Layout from "../../layouts/Layout.astro";
 
   // Init
   loadLocutors();
+
+  // --- GESTOR DE DESCARGAS DE TORRENT ---
+  const torrentSearchInput = document.getElementById("torrent-search-input");
+  const torrentSearchBtn = document.getElementById("torrent-search-btn");
+  const torrentResultsContainer = document.getElementById("torrent-results-container");
+  const torrentResultsBody = document.getElementById("torrent-results-body");
+  const torrentQueueContainer = document.getElementById("torrent-queue-container");
+
+  async function searchTorrents() {
+    const query = torrentSearchInput.value.trim();
+    if (!query) return;
+
+    torrentSearchBtn.disabled = true;
+    torrentSearchBtn.textContent = "BUSCANDO...";
+
+    try {
+      const res = await fetch(`/api/torrents/search?q=${encodeURIComponent(query)}`);
+      const json = await res.json();
+      if (json.ok && json.data.length > 0) {
+        torrentResultsBody.innerHTML = json.data.map(item => `
+          <tr class="border-b border-gray-200 hover:bg-gray-50">
+            <td class="py-2 pr-2 font-bold truncate max-w-xs" title="${item.name}">${item.name}</td>
+            <td class="py-2 pr-2 font-mono">${item.size} MB</td>
+            <td class="py-2 pr-2 font-mono text-green-700">${item.seeds}</td>
+            <td class="py-2">
+              <button 
+                type="button" 
+                class="download-torrent-btn bg-orange text-text-dark border-2 border-black font-black px-2 py-0.5 hover:bg-black hover:text-white transition-colors"
+                data-magnet="${encodeURIComponent(item.magnet)}"
+                data-name="${encodeURIComponent(item.name)}"
+              >
+                DESCARGAR
+              </button>
+            </td>
+          </tr>
+        `).join("");
+        torrentResultsContainer.classList.remove("hidden");
+      } else {
+        torrentResultsBody.innerHTML = `<tr><td colspan="4" class="py-4 text-center italic text-gray-500">No se encontraron torrents o hubo un error.</td></tr>`;
+        torrentResultsContainer.classList.remove("hidden");
+      }
+    } catch (err) {
+      showAlert(`Búsqueda fallida: ${err.message}`, "error");
+    } finally {
+      torrentSearchBtn.disabled = false;
+      torrentSearchBtn.textContent = "BUSCAR";
+    }
+  }
+
+  torrentSearchBtn.addEventListener("click", searchTorrents);
+  torrentSearchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      searchTorrents();
+    }
+  });
+
+  torrentResultsBody.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".download-torrent-btn");
+    if (!btn) return;
+
+    const magnet = decodeURIComponent(btn.getAttribute("data-magnet"));
+    const name = decodeURIComponent(btn.getAttribute("data-name"));
+
+    btn.disabled = true;
+    btn.textContent = "ENCOLANDO...";
+
+    try {
+      const res = await fetch("/api/torrents/queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ magnet, name }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        showAlert(`La descarga de "${name}" fue añadida a la cola con éxito.`);
+        loadTorrentJobs();
+      } else {
+        showAlert(json.error || "No se pudo encolar la descarga", "error");
+      }
+    } catch (err) {
+      showAlert(`Error: ${err.message}`, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "DESCARGAR";
+    }
+  });
+
+  async function loadTorrentJobs() {
+    try {
+      const res = await fetch("/api/torrents/jobs");
+      const json = await res.json();
+      if (json.ok) {
+        const { jobs, stats } = json.data;
+        
+        if (jobs.length === 0) {
+          torrentQueueContainer.innerHTML = `<p class="italic text-[11px] text-gray-600">No hay descargas activas o torrents en cola.</p>`;
+          return;
+        }
+
+        torrentQueueContainer.innerHTML = jobs.map(job => {
+          let statusColor = "bg-gray-200";
+          if (job.status === "active") statusColor = "bg-green-500 text-white";
+          else if (job.status === "completed") statusColor = "bg-blue-500 text-white";
+          else if (job.status === "failed") statusColor = "bg-red-500 text-white";
+          else if (job.status === "waiting") statusColor = "bg-yellow-500 text-black";
+
+          const progressPercent = typeof job.progress === "number" ? job.progress : 0;
+
+          return `
+            <div class="brutalist-border bg-white p-3 text-text-dark text-[11px] font-mono flex flex-col gap-2">
+              <div class="flex justify-between items-start">
+                <span class="font-black truncate max-w-xs" title="${job.name}">${job.name}</span>
+                <span class="px-1.5 py-0.5 border border-black font-black uppercase text-[9px] ${statusColor}">${job.status === 'waiting' ? 'EN COLA' : job.status === 'active' ? 'DESCARGANDO' : job.status === 'completed' ? 'COMPLETADO' : 'FALLIDO'}</span>
+              </div>
+
+              ${job.status === "active" || job.status === "completed" || job.status === "failed" ? `
+                <div class="w-full bg-gray-200 border border-black h-3 relative">
+                  <div class="bg-orange h-full" style="width: ${progressPercent}%"></div>
+                  <span class="absolute inset-0 flex items-center justify-center text-[9px] font-bold text-black">${progressPercent}%</span>
+                </div>
+              ` : ""}
+
+              ${job.error ? `<p class="text-red-600 text-[9px] truncate">Error: ${job.error}</p>` : ""}
+
+              <div class="flex justify-between items-center text-[9px] text-gray-600 mt-1">
+                <span>ID: ${job.id}</span>
+                <div class="flex gap-2">
+                  <button 
+                    type="button" 
+                    class="view-logs-btn border border-black hover:bg-black hover:text-white px-2 py-0.5 font-bold"
+                    data-id="${job.id}"
+                    data-name="${job.name}"
+                  >
+                    LOGS
+                  </button>
+                  ${job.status === "active" || job.status === "waiting" ? `
+                    <button 
+                      type="button" 
+                      class="cancel-job-btn border border-red-600 text-red-600 hover:bg-red-600 hover:text-white px-2 py-0.5 font-bold"
+                      data-id="${job.id}"
+                    >
+                      CANCELAR
+                    </button>
+                  ` : ""}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join("");
+      }
+    } catch (err) {
+      console.error("No se pudieron cargar los trabajos de torrent:", err);
+    }
+  }
+
+  torrentQueueContainer.addEventListener("click", async (e) => {
+    const logBtn = e.target.closest(".view-logs-btn");
+    const cancelBtn = e.target.closest(".cancel-job-btn");
+
+    if (logBtn) {
+      const jobId = logBtn.getAttribute("data-id");
+      const jobName = logBtn.getAttribute("data-name");
+      try {
+        const res = await fetch(`/api/torrents/jobs/${jobId}/logs`);
+        const json = await res.json();
+        if (json.ok) {
+          const logContent = json.data.logs.join("\n") || "No hay logs disponibles aún.";
+          alert(`LOGS DE: ${jobName}\n\n${logContent}`);
+        }
+      } catch (err) {
+        showAlert(`No se pudieron cargar los logs: ${err.message}`, "error");
+      }
+    }
+
+    if (cancelBtn) {
+      const jobId = cancelBtn.getAttribute("data-id");
+      if (!confirm("¿Estás seguro de que quieres cancelar este trabajo de descarga?")) return;
+      try {
+        const res = await fetch(`/api/torrents/jobs/${jobId}/cancel`, { method: "POST" });
+        const json = await res.json();
+        if (json.ok && json.data.cancelled) {
+          showAlert("Trabajo de descarga cancelado.");
+          loadTorrentJobs();
+        } else {
+          showAlert("No se pudo cancelar el trabajo.", "error");
+        }
+      } catch (err) {
+        showAlert(`Error: ${err.message}`, "error");
+      }
+    }
+  });
+
+  setInterval(loadTorrentJobs, 5000);
+  loadTorrentJobs();
 </script>

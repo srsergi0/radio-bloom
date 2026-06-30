@@ -96,6 +96,7 @@ radio/
 │       │   ├── library.service.ts        # Escaneo + watcher de archivos + enriquecimiento Spotify
 │       │   ├── liquidsoap.service.ts     # Órdenes Telnet sobre liquidsoap (queue, skip, play)
 │       │   ├── mcp.service.ts            # Herramientas MCP (15+ tools)
+│       │   ├── torrent.service.ts        # Búsqueda PirateBay (apibay) + Cola de descargas BullMQ con aria2c
 │       │   ├── orchestrator.service.ts   # AI DJ & Programación automática (OpenRouter + Edge-TTS)
 │       │   ├── locutor.service.ts        # Lógica de guardarraíl de solapamiento y locutor activo
 │       │   └── metadata-enrichment.service.ts  # Enriquecimiento desde Spotify
@@ -198,6 +199,19 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 | `POST` | `/api/locutors/:id/schedules` | Programar horario diario o semanal (body: `{ type, dayOfWeek?, startHour, duration }`) con **guardarraíl de solapamiento** |
 | `DELETE` | `/api/locutors/:id/schedules/:scheduleId` | Eliminar un horario de emisión programado |
 
+---
+
+## 📥 API de Descargas y Torrents (BullMQ)
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/torrents/search` | Buscar torrents de música en PirateBay (`apibay.org`) |
+| `POST` | `/api/torrents/queue` | Encolar una nueva descarga (body: `{ magnet, name }`) |
+| `GET` | `/api/torrents/jobs` | Obtener estadísticas y listado de trabajos en cola |
+| `GET` | `/api/torrents/jobs/:id/logs` | Ver logs de descarga en tiempo real de un trabajo específico |
+| `POST` | `/api/torrents/jobs/:id/cancel` | Cancelar y remover un trabajo de descarga de la cola |
+| `GET` | `/admin/queues` | Dashboard web interactivo de Bull-Board para gestionar colas |
+
 ### Herramientas MCP
 
 | Herramienta | Descripción |
@@ -220,10 +234,27 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 | `radio_playlist_get` | Obtener playlist |
 | `radio_playlist_add_track` | Añadir track a playlist |
 | `radio_playlist_play` | Reproducir playlist |
+| `torrent_search` | Buscar torrents de música en PirateBay |
+| `torrent_queue_download` | Agregar descarga de torrent a la cola mediante magnet link |
+| `torrent_check_status` | Verificar el estado de un trabajo de descarga de la cola |
+| `torrent_queue_status` | Obtener estadísticas generales de la cola de descargas |
+| `torrent_list_queue` | Listar descargas recientes en la cola |
+| `torrent_cancel` | Cancelar una descarga en la cola (si aún no se ha procesado) |
+| `torrent_job_logs` | Obtener logs de salida en tiempo real de aria2c para un trabajo específico |
 
 ---
 
 ## Cambios Recientes
+
+### Integración de Búsqueda y Descarga de Torrents en Publisher (BullMQ + Bull-Board)
+
+- **Eliminación de `music-torrent` (Python)**: Se eliminó por completo el microservicio `music-torrent` en Python.
+- **Descargador nativo en el Publisher**: Se integró toda la lógica en el `publisher` usando Bun + TypeScript.
+- **Cola robusta con BullMQ**: Se implementó una cola de descargas usando BullMQ (respaldada por Redis) que procesa magnets en segundo plano de forma concurrente y ordenada.
+- **Salida de Logs en vivo (Bull-Board)**: Se integró el dashboard de Bull-Board en la ruta `/admin/queues`, permitiendo visualizar el estado de cada trabajo, el porcentaje de progreso de descarga obtenido de `aria2c` en tiempo real, y los logs de salida detallados (stdout/stderr) de `aria2c` gracias a `job.log()`.
+- **Integración con la Biblioteca**: Al terminar una descarga, el trabajador busca archivos de audio (`.mp3`, `.flac`, etc.) en la carpeta temporal, los mueve automáticamente a `music/songs` y limpia los archivos residuales. El File Watcher de `LibraryService` detecta e indexa estos archivos nuevos de forma inmediata.
+- **Buscador de PirateBay (apibay.org)**: Integrada la búsqueda de PirateBay en la categoría de Audio (`100`), la cual retorna magnet links con trackers optimizados para acelerar las descargas.
+- **Panel de control brutalista en el Admin UI**: Se añadió una sección de descarga brutalista en el `/admin` (y `/es/admin`) que permite buscar canciones, encolar descargas de PirateBay de forma interactiva, ver la cola de descargas con barras de progreso, abrir el log detallado de cada descarga en un popup y saltar directamente al panel de Bull-Board.
 
 ### Eliminación del sistema de descargas y Redis
 

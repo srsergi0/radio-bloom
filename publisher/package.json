@@ -6,7 +6,6 @@
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "mcp": "bun src/mcp-entry.ts",
-    "worker": "bun src/worker.ts",
     "test": "bun test",
     "lint": "biome lint src/",
     "format": "biome format --write src/",
@@ -17,7 +16,10 @@
     "radio-bloom-mcp": "./src/mcp-entry.ts"
   },
   "dependencies": {
+    "@bull-board/api": "^8.0.2",
+    "@bull-board/hono": "^8.0.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "bullmq": "^5.79.2",
     "drizzle-orm": "^0.45.2",
     "edge-tts-universal": "^1.4.0",
     "hi-base32": "^0.5.1",

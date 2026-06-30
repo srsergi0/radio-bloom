@@ -15,6 +15,7 @@ import { LiquidsoapService } from "./services/liquidsoap.service";
 import { LocutorService } from "./services/locutor.service";
 import { McpService } from "./services/mcp.service";
 import { OrchestratorService } from "./services/orchestrator.service";
+import { TorrentService } from "./services/torrent.service";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
@@ -60,7 +61,16 @@ const libraryService = new LibraryService(libraryRepo, audioMetadataClient, MUSI
   await liquidsoapService.queueClear();
 });
 
-const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liquidsoapService);
+const torrentService = new TorrentService();
+torrentService.startWorker();
+
+const mcpService = new McpService(
+  libraryRepo,
+  playlistRepo,
+  libraryService,
+  liquidsoapService,
+  torrentService
+);
 
 const orchestratorService = new OrchestratorService(
   libraryRepo,
@@ -165,6 +175,7 @@ const apiRouter = createApiRouter({
   playlistRepo,
   locutorService,
   mcpService,
+  torrentService,
   musicDir: MUSIC_DIR,
   distDir: DIST_DIR,
 });
@@ -349,11 +360,13 @@ console.log(`[server] Radio Bloom Composition Root ready`);
 process.on("SIGINT", async () => {
   orchestratorService.stop();
   libraryService.shutdown();
+  await torrentService.close().catch(() => {});
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
   orchestratorService.stop();
   libraryService.shutdown();
+  await torrentService.close().catch(() => {});
   process.exit(0);
 });

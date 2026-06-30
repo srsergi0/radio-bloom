@@ -11,7 +11,6 @@ import { TorrentService } from "./torrent.service";
 
 export class McpService {
   private readonly server: McpServer;
-  private readonly torrentService: TorrentService;
   private readonly sessions = new Map<
     string,
     {
@@ -24,13 +23,13 @@ export class McpService {
     private readonly libraryRepo: LibraryRepository,
     private readonly playlistRepo: PlaylistRepository,
     private readonly libraryService: LibraryService,
-    private readonly liquidsoapService: LiquidsoapService
+    private readonly liquidsoapService: LiquidsoapService,
+    private readonly torrentService: TorrentService
   ) {
     this.server = new McpServer({
       name: "radio-bloom",
       version: "1.0.0",
     });
-    this.torrentService = new TorrentService();
     this.registerAllTools(this.server);
   }
 
@@ -400,7 +399,7 @@ export class McpService {
                     ok: true,
                     jobId: job.id,
                     name: job.name,
-                    status: job.status,
+                    status: await job.getState(),
                     queuePosition: stats.pending,
                   },
                   null,
@@ -522,6 +521,29 @@ export class McpService {
                 text: cancelled
                   ? `Trabajo ${jobId} cancelado`
                   : `No se pudo cancelar ${jobId} (puede que ya esté descargando)`,
+              },
+            ],
+          };
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        }
+      }
+    );
+
+    server.tool(
+      "torrent_job_logs",
+      "Obtener los logs en tiempo real o finales de una descarga activa o terminada",
+      {
+        jobId: z.string().describe("ID del job de descarga"),
+      },
+      async ({ jobId }) => {
+        try {
+          const result = await this.torrentService.getJobLogs(jobId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: result.logs.length === 0 ? "No hay logs para este job aún" : result.logs.join("\n"),
               },
             ],
           };
@@ -849,6 +871,7 @@ export class McpService {
         };
       }
     );
+
   }
 
   public async startStdioServer(): Promise<void> {

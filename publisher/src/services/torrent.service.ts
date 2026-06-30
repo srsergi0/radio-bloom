@@ -1,40 +1,213 @@
-/**
- * Torrent Service
- * Handles torrent search and queue management via Redis.
- */
-import Redis from "ioredis";
+import { Queue, Worker, type Job } from "bullmq";
+import * as path from "node:path";
+import * as fs from "node:fs";
+import { spawn } from "node:child_process";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379/0";
+const DATA_DIR = process.env.DATA_DIR || "./data";
+const MUSIC_DIR = process.env.MUSIC_DIR || "../music";
+
+function parseRedisUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return {
+      host: parsed.hostname || "localhost",
+      port: parsed.port ? parseInt(parsed.port, 10) : 6379,
+      password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
+      db: parsed.pathname && parsed.pathname !== "/" ? parseInt(parsed.pathname.slice(1), 10) || 0 : 0,
+      maxRetriesPerRequest: null,
+    };
+  } catch (err) {
+    console.error("[TorrentService] Error parsing REDIS_URL, using default fallback:", err);
+    return {
+      host: "localhost",
+      port: 6379,
+      maxRetriesPerRequest: null,
+    };
+  }
+}
 
 export class TorrentService {
-  private redis: Redis;
-  private queueName = "music-downloads";
+  private queue: Queue;
+  private worker: Worker | null = null;
+  private queueName = "torrent-downloads";
+  private connectionOptions: any;
 
   constructor() {
-    this.redis = new Redis(REDIS_URL);
+    this.connectionOptions = parseRedisUrl(REDIS_URL);
+
+    // Initialize BullMQ Queue
+    this.queue = new Queue(this.queueName, {
+      connection: this.connectionOptions,
+    });
   }
 
   /**
-   * Search torrents on The Pirate Bay
+   * Start the BullMQ Worker to process downloads
    */
-  async search(query: string, limit = 5): Promise<TorrentResult[]> {
-    const url = `https://apibay.org/q.php?q=${encodeURIComponent(query)}&cat=1000`;
+  startWorker(): void {
+    const tempDir = path.resolve(DATA_DIR, "downloads-temp");
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+
+    const musicSongsDir = path.resolve(MUSIC_DIR, "songs");
+    if (!fs.existsSync(musicSongsDir)) {
+      fs.mkdirSync(musicSongsDir, { recursive: true });
+    }
+
+    console.log(`[TorrentService] Starting worker. Temp downloads: ${tempDir}, Target songs: ${musicSongsDir}`);
+
+    this.worker = new Worker(
+      this.queueName,
+      async (job: Job) => {
+        const { magnet, name } = job.data;
+        const safeName = name.replace(/[^a-zA-Z0-9 -_]/g, "").slice(0, 50).trim() || "download";
+        const downloadPath = path.join(tempDir, `${job.id}-${safeName}`);
+        
+        if (!fs.existsSync(downloadPath)) {
+          fs.mkdirSync(downloadPath, { recursive: true });
+        }
+
+        await job.log(`Iniciando descarga de: ${name}`);
+        await job.log(`Carpeta temporal: ${downloadPath}`);
+
+        // Spawn aria2c process
+        return new Promise<void>((resolve, reject) => {
+          const child = spawn("aria2c", [
+            `--dir=${downloadPath}`,
+            "--seed-time=0",
+            "--bt-stop-timeout=300",
+            "--max-connection-per-server=16",
+            "--split=16",
+            "--continue=true",
+            "--summary-interval=5",
+            magnet,
+          ]);
+
+          child.stdout.on("data", async (data) => {
+            const lines = data.toString().split(/\r?\n/);
+            for (const line of lines) {
+              if (line.trim()) {
+                await job.log(line);
+
+                // Parse progress percentage
+                // aria2c prints summary like: [#abcdef 1.2MiB/4.5MiB(26%) CN:1 SD:2 DL:120KiB]
+                const progressMatch = line.match(/\((\d+)%\)/);
+                if (progressMatch) {
+                  const percent = parseInt(progressMatch[1], 10);
+                  await job.updateProgress(percent);
+                }
+              }
+            }
+          });
+
+          child.stderr.on("data", async (data) => {
+            const lines = data.toString().split(/\r?\n/);
+            for (const line of lines) {
+              if (line.trim()) {
+                await job.log(`[ERROR] ${line}`);
+              }
+            }
+          });
+
+          child.on("error", async (err: any) => {
+            await job.log(`Error al lanzar aria2c: ${err.message}`);
+            reject(new Error(`aria2c execution failed: ${err.message}. Ensure aria2 is installed.`));
+          });
+
+          child.on("close", async (code) => {
+            if (code !== 0) {
+              reject(new Error(`aria2c exited with code ${code}`));
+              return;
+            }
+
+            await job.log("Descarga completada por aria2c. Escaneando archivos de audio...");
+            try {
+              // Recursively scan for audio files and move them to final destination
+              const audioFiles = findAudioFiles(downloadPath);
+              await job.log(`Se encontraron ${audioFiles.length} archivos de audio.`);
+
+              for (const file of audioFiles) {
+                const baseName = path.basename(file);
+                // Sanitize file name for final destination
+                const safeFile = baseName.replace(/[^a-zA-Z0-9.-_ ]/g, "_");
+                const dest = path.join(musicSongsDir, safeFile);
+
+                await job.log(`Moviendo ${baseName} -> ${dest}`);
+                try {
+                  await fs.promises.rename(file, dest);
+                } catch {
+                  // Cross-device fallback
+                  await fs.promises.copyFile(file, dest);
+                  await fs.promises.unlink(file);
+                }
+              }
+
+              // Cleanup temporary download folder
+              await fs.promises.rm(downloadPath, { recursive: true, force: true });
+              await job.log("Limpieza de carpeta temporal completada.");
+              resolve();
+            } catch (err: any) {
+              await job.log(`Error en procesamiento de archivos: ${err.message}`);
+              reject(err);
+            }
+          });
+        });
+      },
+      { connection: this.connectionOptions, concurrency: 1 }
+    );
+
+    this.worker.on("active", (job) => {
+      console.log(`[TorrentWorker] Job active: ${job.id} - ${job.data.name}`);
+    });
+
+    this.worker.on("completed", (job) => {
+      console.log(`[TorrentWorker] Job completed: ${job.id} - ${job.data.name}`);
+    });
+
+    this.worker.on("failed", (job, err) => {
+      console.error(`[TorrentWorker] Job failed: ${job?.id} - ${job?.data.name}. Error: ${err.message}`);
+    });
+  }
+
+  /**
+   * Search torrents on PirateBay (apibay.org)
+   */
+  async search(query: string, limit = 10): Promise<TorrentResult[]> {
+    const url = `https://apibay.org/q.php?q=${encodeURIComponent(query)}&cat=100`;
     const headers = { "User-Agent": "Mozilla/5.0" };
 
     try {
       const response = await fetch(url, { headers });
       const data = (await response.json()) as any[];
 
+      if (!Array.isArray(data) || data.length === 0 || (data.length === 1 && data[0].id === "0")) {
+        return [];
+      }
+
+      const trackers = [
+        "udp://tracker.coppersurfer.tk:6969/announce",
+        "udp://tracker.openbittorrent.com:6969/announce",
+        "udp://opentracker.i2p.rocks:6969/announce",
+        "udp://tracker.internetwarriors.net:12040/announce",
+        "udp://tracker.leechers-paradise.org:6969/announce",
+        "udp://coppersurfer.tk:6969/announce",
+        "udp://open.demonii.com:1337/announce",
+        "udp://open.stealth.si:80/announce",
+        "udp://tracker.cyberia.is:6969/announce",
+      ];
+      const trackersStr = trackers.map((t) => `&tr=${encodeURIComponent(t)}`).join("");
+
       return data
-        .filter((item: any) => item.id !== "0")
         .slice(0, limit)
         .map((item: any) => ({
           name: item.name || "N/A",
-          seeds: parseInt(item.seeders || "0"),
-          leechers: parseInt(item.leechers || "0"),
-          size: parseInt(item.size || "0") / (1024 * 1024), // Convert to MB
+          seeds: parseInt(item.seeders || "0", 10),
+          leechers: parseInt(item.leechers || "0", 10),
+          size: Math.round((parseInt(item.size || "0", 10) / (1024 * 1024)) * 10) / 10, // MB
           infoHash: item.info_hash || "",
-          magnet: `magnet:?xt=urn:btih:${item.info_hash}&dn=${encodeURIComponent(item.name)}`,
+          magnet: `magnet:?xt=urn:btih:${item.info_hash}&dn=${encodeURIComponent(item.name)}${trackersStr}`,
         }));
     } catch (error) {
       console.error("[TorrentService] Search error:", error);
@@ -43,124 +216,116 @@ export class TorrentService {
   }
 
   /**
-   * Add a download to the queue
+   * Queue download
    */
-  async queueDownload(magnet: string, name: string): Promise<QueueJob> {
-    const jobId = crypto.randomUUID();
-    const job: QueueJob = {
-      id: jobId,
-      magnet,
-      name,
-      status: "queued",
-      createdAt: new Date().toISOString(),
-      progress: 0,
-    };
-
-    await this.redis.hset(this.queueName, jobId, JSON.stringify(job));
-    await this.redis.lpush(`${this.queueName}:pending`, jobId);
-
+  async queueDownload(magnet: string, name: string) {
+    const job = await this.queue.add(
+      "download",
+      { magnet, name },
+      {
+        removeOnComplete: { count: 50 },
+        removeOnFail: { count: 50 },
+      }
+    );
     return job;
   }
 
   /**
-   * Get job status
+   * Get job status by ID
    */
-  async getJobStatus(jobId: string): Promise<QueueJob | null> {
-    const data = await this.redis.hget(this.queueName, jobId);
-    if (!data) return null;
-    return JSON.parse(data);
-  }
-
-  /**
-   * Update job status
-   */
-  async updateJobStatus(
-    jobId: string,
-    status: QueueJob["status"],
-    progress = 0,
-    files: string[] = []
-  ): Promise<void> {
-    const job = await this.getJobStatus(jobId);
-    if (!job) return;
-
-    job.status = status;
-    job.progress = progress;
-    job.files = files;
-    if (status === "completed" || status === "failed") {
-      job.completedAt = new Date().toISOString();
-    }
-
-    await this.redis.hset(this.queueName, jobId, JSON.stringify(job));
-  }
-
-  /**
-   * Get next job from queue
-   */
-  async getNextJob(): Promise<QueueJob | null> {
-    const jobId = await this.redis.rpop(`${this.queueName}:pending`);
-    if (!jobId) return null;
-
-    const job = await this.getJobStatus(jobId);
+  async getJobStatus(jobId: string) {
+    const job = await this.queue.getJob(jobId);
     if (!job) return null;
-
-    job.status = "downloading";
-    job.startedAt = new Date().toISOString();
-    await this.redis.hset(this.queueName, jobId, JSON.stringify(job));
-
-    return job;
+    return {
+      id: job.id,
+      name: job.data.name,
+      magnet: job.data.magnet,
+      status: await job.getState(),
+      progress: job.progress,
+      error: job.failedReason,
+      createdAt: job.timestamp ? new Date(job.timestamp).toISOString() : null,
+      startedAt: job.processedOn ? new Date(job.processedOn).toISOString() : null,
+      completedAt: job.finishedOn ? new Date(job.finishedOn).toISOString() : null,
+    };
   }
 
   /**
-   * Get queue statistics
+   * Get overall queue stats
    */
   async getQueueStats(): Promise<QueueStats> {
-    const pending = await this.redis.llen(`${this.queueName}:pending`);
-    const allJobs = await this.redis.hgetall(this.queueName);
+    const [pending, active, completed, failed] = await Promise.all([
+      this.queue.getWaitingCount(),
+      this.queue.getActiveCount(),
+      this.queue.getCompletedCount(),
+      this.queue.getFailedCount(),
+    ]);
 
-    let downloading = 0;
-    let completed = 0;
-    let failed = 0;
-
-    for (const data of Object.values(allJobs)) {
-      const job: QueueJob = JSON.parse(data);
-      if (job.status === "downloading") downloading++;
-      else if (job.status === "completed") completed++;
-      else if (job.status === "failed") failed++;
-    }
-
-    return { pending, downloading, completed, failed };
+    return {
+      pending,
+      downloading: active,
+      completed,
+      failed,
+    };
   }
 
   /**
-   * List recent jobs
+   * List jobs
    */
-  async listJobs(limit = 10): Promise<QueueJob[]> {
-    const allJobs = await this.redis.hgetall(this.queueName);
-    const jobs = Object.values(allJobs)
-      .map((data) => JSON.parse(data) as QueueJob)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, limit);
-
-    return jobs;
+  async listJobs(limit = 20) {
+    const jobs = await this.queue.getJobs(["waiting", "active", "completed", "failed"], 0, limit - 1, true);
+    
+    return Promise.all(
+      jobs.map(async (job) => ({
+        id: job.id,
+        name: job.data.name,
+        magnet: job.data.magnet,
+        status: await job.getState(),
+        progress: job.progress,
+        error: job.failedReason,
+        createdAt: job.timestamp ? new Date(job.timestamp).toISOString() : null,
+        startedAt: job.processedOn ? new Date(job.processedOn).toISOString() : null,
+        completedAt: job.finishedOn ? new Date(job.finishedOn).toISOString() : null,
+      }))
+    );
   }
 
   /**
-   * Cancel a queued job
+   * Get job logs
+   */
+  async getJobLogs(jobId: string) {
+    return this.queue.getJobLogs(jobId);
+  }
+
+  /**
+   * Cancel/Remove a job
    */
   async cancelJob(jobId: string): Promise<boolean> {
-    const job = await this.getJobStatus(jobId);
-    if (!job || job.status !== "queued") return false;
-
-    await this.redis.lrem(`${this.queueName}:pending`, 0, jobId);
-    await this.redis.hdel(this.queueName, jobId);
+    const job = await this.queue.getJob(jobId);
+    if (!job) return false;
+    
+    const state = await job.getState();
+    if (state === "active") {
+      try {
+        await job.discard();
+      } catch {}
+    }
+    await job.remove();
     return true;
   }
 
   /**
-   * Close Redis connection
+   * Get the underlying queue instance (for bull-board)
+   */
+  getQueue() {
+    return this.queue;
+  }
+
+  /**
+   * Close connections
    */
   async close(): Promise<void> {
-    await this.redis.quit();
+    await this.worker?.close();
+    await this.queue.close();
   }
 }
 
@@ -174,17 +339,9 @@ export interface TorrentResult {
   magnet: string;
 }
 
-export interface QueueJob {
-  id: string;
+export interface TorrentJobData {
   magnet: string;
   name: string;
-  status: "queued" | "downloading" | "completed" | "failed";
-  progress: number;
-  files?: string[];
-  error?: string;
-  createdAt: string;
-  startedAt?: string;
-  completedAt?: string;
 }
 
 export interface QueueStats {
@@ -192,4 +349,24 @@ export interface QueueStats {
   downloading: number;
   completed: number;
   failed: number;
+}
+
+// Helper function to recursively find all audio files in a folder
+function findAudioFiles(dir: string): string[] {
+  let results: string[] = [];
+  if (!fs.existsSync(dir)) return results;
+  const list = fs.readdirSync(dir);
+  for (const file of list) {
+    const filePath = path.join(dir, file);
+    const stat = fs.statSync(filePath);
+    if (stat && stat.isDirectory()) {
+      results = results.concat(findAudioFiles(filePath));
+    } else {
+      const ext = path.extname(filePath).toLowerCase();
+      if ([".mp3", ".flac", ".wav", ".m4a", ".ogg", ".opus"].includes(ext)) {
+        results.push(filePath);
+      }
+    }
+  }
+  return results;
 }

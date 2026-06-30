@@ -10,6 +10,7 @@ import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { LibraryService } from "./services/library.service";
 import { LiquidsoapService } from "./services/liquidsoap.service";
 import { McpService } from "./services/mcp.service";
+import { TorrentService } from "./services/torrent.service";
 
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
 const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
@@ -32,7 +33,14 @@ const libraryService = new LibraryService(libraryRepo, audioMetadataClient, MUSI
   await liquidsoapService.queueClear();
 });
 
-const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liquidsoapService);
+const torrentService = new TorrentService();
+const mcpService = new McpService(
+  libraryRepo,
+  playlistRepo,
+  libraryService,
+  liquidsoapService,
+  torrentService
+);
 
 libraryService.init().catch((err) => console.error("[mcp] libraryService:", err));
 

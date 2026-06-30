@@ -2,6 +2,9 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
+import { createBullBoard } from "@bull-board/api";
+import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
+import { HonoAdapter } from "@bull-board/hono";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import type { ConfigService } from "../services/config.service";
@@ -9,6 +12,7 @@ import type { LibraryService } from "../services/library.service";
 import type { LiquidsoapService } from "../services/liquidsoap.service";
 import type { LocutorService } from "../services/locutor.service";
 import type { McpService } from "../services/mcp.service";
+import type { TorrentService } from "../services/torrent.service";
 
 export interface ApiDependencies {
   configService: ConfigService;
@@ -18,6 +22,7 @@ export interface ApiDependencies {
   playlistRepo: PlaylistRepository;
   locutorService: LocutorService;
   mcpService: McpService;
+  torrentService: TorrentService;
   musicDir: string;
   distDir: string;
 }
@@ -493,6 +498,81 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     const ok = deps.locutorService.deleteSchedule(scheduleId);
     if (!ok) return c.json({ ok: false, error: "Schedule not found" }, 404);
     return c.json({ ok: true, data: { deleted: scheduleId } });
+  });
+
+  // Bull-Board Queue Panel
+  const serverAdapter = new HonoAdapter(serveStatic);
+  createBullBoard({
+    queues: [new BullMQAdapter(deps.torrentService.getQueue())],
+    serverAdapter: serverAdapter,
+  });
+  serverAdapter.setBasePath("/admin/queues");
+  (app as any).route("/admin/queues", serverAdapter.registerPlugin());
+
+  // ============================================================
+  // TORRENTS
+  // ============================================================
+
+  app.get("/api/torrents/search", async (c) => {
+    const q = c.req.query("q");
+    if (!q) return c.json({ ok: false, error: "q parameter is required" }, 400);
+    const limitStr = c.req.query("limit");
+    const limit = limitStr ? parseInt(limitStr, 10) : 10;
+    const results = await deps.torrentService.search(q, limit);
+    return c.json({ ok: true, data: results });
+  });
+
+  app.post("/api/torrents/queue", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { magnet, name } = body;
+      if (!magnet || !name) {
+        return c.json({ ok: false, error: "magnet and name are required" }, 400);
+      }
+      const job = await deps.torrentService.queueDownload(magnet, name);
+      return c.json({
+        ok: true,
+        data: {
+          jobId: job.id,
+          name: job.name,
+          status: await job.getState(),
+        },
+      });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  app.get("/api/torrents/jobs", async (c) => {
+    try {
+      const limitStr = c.req.query("limit");
+      const limit = limitStr ? parseInt(limitStr, 10) : 20;
+      const jobs = await deps.torrentService.listJobs(limit);
+      const stats = await deps.torrentService.getQueueStats();
+      return c.json({ ok: true, data: { jobs, stats } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  app.get("/api/torrents/jobs/:id/logs", async (c) => {
+    try {
+      const id = c.req.param("id");
+      const logs = await deps.torrentService.getJobLogs(id);
+      return c.json({ ok: true, data: logs });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  app.post("/api/torrents/jobs/:id/cancel", async (c) => {
+    try {
+      const id = c.req.param("id");
+      const cancelled = await deps.torrentService.cancelJob(id);
+      return c.json({ ok: true, data: { cancelled } });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
   });
 
   // ============================================================

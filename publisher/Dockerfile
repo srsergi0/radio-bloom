@@ -12,6 +12,8 @@ RUN bun run build
 # Stage 2: Run the publisher
 FROM oven/bun:1.2-alpine
 
+RUN apk add --no-cache aria2
+
 WORKDIR /app/publisher
 
 COPY publisher/package.json publisher/bun.lock* ./

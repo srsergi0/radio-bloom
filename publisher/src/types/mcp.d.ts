@@ -28,5 +28,6 @@ declare module "../node_modules/@modelcontextprotocol/sdk/dist/esm/server/webSta
     close(): Promise<void>;
   }
 
-  export type WebStandardStreamableHTTPServerTransportType = WebStandardStreamableHTTPServerTransport;
+  export type WebStandardStreamableHTTPServerTransportType =
+    WebStandardStreamableHTTPServerTransport;
 }

@@ -249,6 +249,7 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 - **Planificación por Lotes (Batching)**: Se optimizó el flujo para que cuando la cola sea baja, el DJ planifique una tanda completa de **5 canciones consecutivas** con sus interludios y locuciones en una sola llamada a OpenRouter, lo cual reduce el consumo de tokens en aproximadamente un 80% y permite ganchos y transiciones más cohesionadas.
 - **Voz Neural con Edge-TTS**: Síntesis gratuita de voz neural de alta calidad de Microsoft Edge en tiempo real para las locuciones.
 - **Bucle de Llamada a Herramientas (Tool-use)**: El locutor de OpenRouter tiene la facultad de ejecutar llamadas a herramientas locales para planificar su bloque de 5 temas o realizar búsquedas en su catálogo:
+  - `get_library_songs(limit?, offset?)`: Obtiene una lista paginada de canciones del catálogo (evita búsquedas ciegas).
   - `search_library(query)`: Busca canciones locales en la base de datos de la radio.
   - `get_library_stats()`: Obtiene el conteo total de temas locales.
   - `get_stream_status()`: Consulta el stream activo y temas en cola para no repetir.
@@ -265,4 +266,5 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 - **Guardarraíl de Conflictos Cíclicos**: Implementado un algoritmo matemático robusto que transforma todas las agendas en minutos semanales del ciclo (10080 minutos) para detectar y bloquear envolturas o solapamientos en tiempo real (por ejemplo, previniendo choques entre shows diarios, shows semanales en el mismo día, y shows que se cruzan por la medianoche).
 - **Selección de DJ Dinámica en Tiempo Real**: El orquestador de radio calcula la hora exacta en la zona de Perú (`America/Lima`) en cada ciclo y carga la personalidad y voz del locutor programado. Si no hay programaciones activas en ese bloque, cae de forma segura en el locutor marcado como "Predeterminado de Reserva" (Fallback) o el locutor por defecto del entorno.
 - **Panel de Administración Brutalista**: Creadas dos interfaces de usuario independientes y premium con estilo brutalista en Astro en `/admin` (Inglés) y `/es/admin` (Español), integrando retroalimentación de conflictos, edición rápida de locutores y listado de horarios interactivo.
+- **Optimización del Bucle del Agente (Fix de Bucle de Búsqueda)**: Se limitaron las búsquedas consecutivas de canciones por texto para el modelo a un máximo de 1-2 intentos si no hay resultados en la biblioteca, obligándolo a elegir de inmediato de la lista de sugerencias en lugar de quedar atrapado en llamadas de herramienta infinitas. Además, se aumentó el límite de turnos del agente a 6 para evitar cortes de planifición prematuros.
 

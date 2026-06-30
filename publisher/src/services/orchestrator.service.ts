@@ -392,7 +392,7 @@ Directrices de Locución Radial para un Flujo Magnético y Carismático:
 5. ESCRIBE PARA EL OÍDO: Usa frases cortas, preguntas retóricas, expresiones naturales. La puntuación determina cómo lee la voz (comas para pausas breves, puntos suspensivos para expectación).
 6. LIMITACIÓN ESTRICTA DE PALABRAS: Si decides escribir un guión de locución ('dj_script'), este debe tener obligatoriamente entre 30 y 45 palabras. Debe ser conciso, memorable y sugerente. No incluyes acotaciones musicales ni hashtags.
 7. FRECUENCIA DE LOCUCIÓN: No es necesario locutar antes de todas las canciones. Se recomienda locutar sólo en 1 o 2 de las 5 canciones de la cola (deja 'dj_script' vacío en las demás).
-8. SELECCIÓN DE CANCIONES: Cada 'selected_song_id' DEBE ser un ID de canción real y válido de la biblioteca de música. Puedes elegir de la lista de sugerencias provista en el prompt del usuario o usar la herramienta 'search_library' para buscar canciones específicas de tu biblioteca.
+8. SELECCIÓN DE CANCIONES Y EVITAR BÚSQUEDAS INFINITAS: Cada 'selected_song_id' DEBE ser un ID de canción real y válido de tu biblioteca. Para conocer qué canciones tienes disponibles, usa preferentemente la herramienta 'get_library_songs'. Si usas la herramienta 'search_library' y los resultados son una lista vacía [], NO sigas buscando más canciones por texto; elige de inmediato de la lista de 'CANCIONES SUGERIDAS' o usa 'get_library_songs' para ver los temas disponibles en catálogo. No agotes tus turnos en llamadas de búsqueda infructuosas.
 
 Puedes ejecutar herramientas de tu entorno para obtener información antes de decidir. Responde utilizando el formato estructurado JSON.`;
 
@@ -467,6 +467,28 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
           },
         },
       },
+      {
+        type: "function",
+        function: {
+          name: "get_library_songs",
+          description:
+            "Obtiene una lista paginada de las canciones disponibles en la biblioteca de la radio (título, artista e ID). Úsala para conocer el catálogo musical antes de decidir.",
+          parameters: {
+            type: "object",
+            properties: {
+              limit: {
+                type: "integer",
+                description: "Cantidad de canciones a retornar (por defecto 50, máx 100).",
+              },
+              offset: {
+                type: "integer",
+                description: "Desplazamiento para paginación (por defecto 0).",
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
     ];
 
     const responseFormat = {
@@ -505,8 +527,8 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
       },
     };
 
-    // Loop for tool calls (max 4 turns)
-    for (let turn = 0; turn < 4; turn++) {
+    // Loop for tool calls (max 6 turns to avoid early cutoffs)
+    for (let turn = 0; turn < 6; turn++) {
       try {
         const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
@@ -590,6 +612,20 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
               artist: s.artist || "Desconocido",
               album: s.album || "",
               file: s.file,
+            }))
+          );
+        }
+        case "get_library_songs": {
+          const limit = Math.min(args.limit || 50, 100);
+          const offset = args.offset || 0;
+          const allSongs = this.libraryRepo.getAllTracks("song");
+          const paginated = allSongs.slice(offset, offset + limit);
+          return JSON.stringify(
+            paginated.map((s) => ({
+              id: s.id,
+              title: s.title,
+              artist: s.artist || "Desconocido",
+              album: s.album || "",
             }))
           );
         }

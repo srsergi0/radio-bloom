@@ -17,6 +17,6 @@ declare module "zod" {
     enum(values: readonly string[]): ZodType;
   };
 
-  export { z, ZodType };
+  export { ZodType, z };
   export default z;
 }

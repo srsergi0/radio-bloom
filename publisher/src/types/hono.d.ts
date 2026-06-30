@@ -8,7 +8,10 @@ declare module "hono" {
       raw: Request;
     };
     json(data: any, status?: number): Response;
-    newResponse(body: any, init?: { status?: number; statusText?: string; headers?: any }): Response;
+    newResponse(
+      body: any,
+      init?: { status?: number; statusText?: string; headers?: any }
+    ): Response;
   }
 
   type H = (c: Context) => Response | Promise<Response>;
@@ -24,7 +27,7 @@ declare module "hono" {
     fetch(req: Request): Response | Promise<Response>;
   }
 
-  export { Hono, Context };
+  export { Context, Hono };
 }
 
 declare module "hono/bun" {

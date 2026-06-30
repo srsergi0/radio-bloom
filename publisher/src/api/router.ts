@@ -7,6 +7,7 @@ import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import type { ConfigService } from "../services/config.service";
 import type { LibraryService } from "../services/library.service";
 import type { LiquidsoapService } from "../services/liquidsoap.service";
+import type { LocutorService } from "../services/locutor.service";
 import type { McpService } from "../services/mcp.service";
 
 export interface ApiDependencies {
@@ -15,6 +16,7 @@ export interface ApiDependencies {
   libraryService: LibraryService;
   liquidsoapService: LiquidsoapService;
   playlistRepo: PlaylistRepository;
+  locutorService: LocutorService;
   mcpService: McpService;
   musicDir: string;
   distDir: string;
@@ -407,6 +409,90 @@ export function createApiRouter(deps: ApiDependencies): Hono {
         results,
       },
     });
+  });
+
+  // ============================================================
+  // LOCUTORS (AI Announcers)
+  // ============================================================
+
+  app.get("/api/locutors", (c) => {
+    const locutors = deps.locutorService.listLocutors();
+    const schedules = deps.locutorService.listSchedules();
+
+    const data = locutors.map((l) => ({
+      ...l,
+      schedules: schedules.filter((s) => s.locutorId === l.id),
+    }));
+
+    return c.json({ ok: true, data });
+  });
+
+  app.post("/api/locutors", async (c) => {
+    try {
+      const body = await c.req.json();
+      if (!body.name || !body.voice || !body.personality) {
+        return c.json({ ok: false, error: "name, voice, and personality are required" }, 400);
+      }
+      const locutor = deps.locutorService.createLocutor({
+        name: body.name,
+        voice: body.voice,
+        personality: body.personality,
+        isActive: body.isActive ?? true,
+        isDefault: body.isDefault ?? false,
+      });
+      return c.json({ ok: true, data: locutor });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  app.put("/api/locutors/:id", async (c) => {
+    try {
+      const id = c.req.param("id");
+      const body = await c.req.json();
+      const locutor = deps.locutorService.updateLocutor(id, body);
+      if (!locutor) return c.json({ ok: false, error: "Locutor not found" }, 404);
+      return c.json({ ok: true, data: locutor });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 400);
+    }
+  });
+
+  app.delete("/api/locutors/:id", (c) => {
+    const id = c.req.param("id");
+    const ok = deps.locutorService.deleteLocutor(id);
+    if (!ok) return c.json({ ok: false, error: "Locutor not found" }, 404);
+    return c.json({ ok: true, data: { deleted: id } });
+  });
+
+  app.post("/api/locutors/:id/schedules", async (c) => {
+    try {
+      const id = c.req.param("id");
+      const body = await c.req.json();
+      if (!body.type || !body.startHour || typeof body.duration !== "number") {
+        return c.json(
+          { ok: false, error: "type, startHour, and duration (number) are required" },
+          400
+        );
+      }
+      const schedule = deps.locutorService.createSchedule({
+        locutorId: id,
+        type: body.type,
+        dayOfWeek: body.dayOfWeek !== undefined ? body.dayOfWeek : null,
+        startHour: body.startHour,
+        duration: body.duration,
+      });
+      return c.json({ ok: true, data: schedule });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 400);
+    }
+  });
+
+  app.delete("/api/locutors/:id/schedules/:scheduleId", (c) => {
+    const scheduleId = c.req.param("scheduleId");
+    const ok = deps.locutorService.deleteSchedule(scheduleId);
+    if (!ok) return c.json({ ok: false, error: "Schedule not found" }, 404);
+    return c.json({ ok: true, data: { deleted: scheduleId } });
   });
 
   // ============================================================

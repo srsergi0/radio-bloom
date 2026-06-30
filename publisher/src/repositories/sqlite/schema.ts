@@ -51,3 +51,23 @@ export const playlistTracks = sqliteTable("playlist_tracks", {
   spotifyUrl: text("spotify_url").default(""),
   addedAt: text("added_at").notNull().default(sql`(datetime('now'))`),
 });
+
+export const locutors = sqliteTable("locutors", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  voice: text("voice").notNull(),
+  personality: text("personality").notNull(),
+  isActive: integer("is_active").notNull().default(1),
+  isDefault: integer("is_default").notNull().default(0),
+});
+
+export const locutorSchedules = sqliteTable("locutor_schedules", {
+  id: text("id").primaryKey(),
+  locutorId: text("locutor_id")
+    .notNull()
+    .references(() => locutors.id, { onDelete: "cascade" }),
+  type: text("type").notNull(), // 'daily' | 'weekly'
+  dayOfWeek: integer("day_of_week"), // 0 = Sunday, 1 = Monday ... 6 = Saturday, null if daily
+  startHour: text("start_hour").notNull(), // "HH:MM"
+  duration: integer("duration").notNull().default(60), // in minutes
+});

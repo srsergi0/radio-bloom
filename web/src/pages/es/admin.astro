@@ -1,0 +1,666 @@
+---
+import Layout from "../../layouts/Layout.astro";
+---
+
+<Layout title="Gestor de Locutores de IA - Bloom Radio" lang="es">
+  <div class="max-w-7xl mx-auto px-5 md:px-10 py-10">
+    <div
+      class="mb-10 brutalist-border p-6 bg-orange brutalist-shadow text-text-dark"
+    >
+      <h1 class="text-4xl md:text-5xl font-black mb-2 tracking-tight">
+        GESTOR DE LOCUTORES DE IA
+      </h1>
+      <p class="font-mono text-sm font-bold opacity-90">
+        Configura múltiples voces de IA, personaliza sus personalidades únicas y
+        programa sus horarios de emisión.
+      </p>
+    </div>
+
+    <!-- Contenedor de Alertas (Errores / Éxitos) -->
+    <div
+      id="global-alert"
+      class="hidden mb-6 brutalist-border p-4 font-mono text-sm font-bold brutalist-shadow"
+    >
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <!-- COLUMNA 1: Listado de Locutores (8 cols) -->
+      <div class="lg:col-span-8 flex flex-col gap-6">
+        <h2 class="text-2xl font-black tracking-tight text-white mb-2">
+          ELENCO DE VOCES ACTIVAS
+        </h2>
+
+        <div id="locutors-container" class="flex flex-col gap-6">
+          <div
+            class="p-6 brutalist-border bg-white text-text-dark font-mono text-sm"
+          >
+            Cargando catálogo de locutores...
+          </div>
+        </div>
+      </div>
+
+      <!-- COLUMNA 2: Formulario (4 cols) -->
+      <div class="lg:col-span-4 flex flex-col gap-6">
+        <div
+          class="brutalist-border p-6 bg-ice-blue text-text-dark brutalist-shadow"
+        >
+          <h2 class="text-xl font-black tracking-tight mb-4" id="form-title">
+            AÑADIR LOCUTOR DE IA
+          </h2>
+
+          <form
+            id="locutor-form"
+            class="flex flex-col gap-4 font-mono text-xs font-bold"
+          >
+            <input type="hidden" id="locutor-id" />
+
+            <div class="flex flex-col gap-1">
+              <label for="locutor-name" class="uppercase"
+                >Nombre del DJ / Alias</label
+              >
+              <input
+                type="text"
+                id="locutor-name"
+                required
+                placeholder="Ej. DJ Bloom, Locutora Camila"
+                class="brutalist-input p-2 text-sm bg-white"
+              />
+            </div>
+
+            <div class="flex flex-col gap-1">
+              <label for="locutor-voice" class="uppercase"
+                >Voz Neural (Edge-TTS)</label
+              >
+              <select
+                id="locutor-voice"
+                required
+                class="brutalist-input p-2 text-sm bg-white"
+              >
+                <option value="es-PE-AlexNeural"
+                  >es-PE-AlexNeural (Perú, Masculino)</option
+                >
+                <option value="es-PE-CamilaNeural"
+                  >es-PE-CamilaNeural (Perú, Femenino)</option
+                >
+                <option value="es-ES-AlvaroNeural" selected
+                  >es-ES-AlvaroNeural (España, Masculino)</option
+                >
+                <option value="es-ES-ElviraNeural"
+                  >es-ES-ElviraNeural (España, Femenino)</option
+                >
+                <option value="es-MX-JorgeNeural"
+                  >es-MX-JorgeNeural (México, Masculino)</option
+                >
+                <option value="es-MX-DaliaNeural"
+                  >es-MX-DaliaNeural (México, Femenino)</option
+                >
+                <option value="es-AR-TomasNeural"
+                  >es-AR-TomasNeural (Argentina, Masculino)</option
+                >
+                <option value="es-AR-ElenaNeural"
+                  >es-AR-ElenaNeural (Argentina, Femenino)</option
+                >
+                <option value="en-US-GuyNeural"
+                  >en-US-GuyNeural (EE.UU. Inglés, Masculino)</option
+                >
+                <option value="en-US-AriaNeural"
+                  >en-US-AriaNeural (EE.UU. Inglés, Femenino)</option
+                >
+              </select>
+            </div>
+
+            <div class="flex flex-col gap-1">
+              <label for="locutor-personality" class="uppercase"
+                >Personalidad al Aire / Instrucción (Prompt)</label
+              >
+              <textarea
+                id="locutor-personality"
+                required
+                rows="6"
+                placeholder="Describe cómo se comporta ante el micrófono, cómo presenta la música, su estilo (divertido, íntimo, técnico), chistes recurrentes, etc."
+                class="brutalist-input p-2 text-sm bg-white font-mono"
+              ></textarea>
+            </div>
+
+            <div class="flex gap-4 py-2">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  id="locutor-active"
+                  checked
+                  class="w-4 h-4 accent-orange"
+                />
+                <span>ACTIVO EN EMISIÓN</span>
+              </label>
+
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  id="locutor-default"
+                  class="w-4 h-4 accent-orange"
+                />
+                <span>PREDETERMINADO (RESERVA)</span>
+              </label>
+            </div>
+
+            <div class="flex gap-2 mt-2">
+              <button
+                type="submit"
+                class="flex-grow brutalist-button bg-orange text-text-dark p-3 text-sm font-black uppercase"
+              >
+                GUARDAR LOCUTOR
+              </button>
+              <button
+                type="button"
+                id="cancel-edit"
+                class="hidden brutalist-button bg-white text-text-dark p-3 text-sm font-black uppercase"
+              >
+                CANCELAR
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Panel de Horarios (oculto hasta seleccionar un DJ) -->
+        <div
+          id="schedule-panel"
+          class="hidden brutalist-border p-6 bg-white text-text-dark brutalist-shadow"
+        >
+          <h2 class="text-xl font-black tracking-tight mb-2">
+            PROGRAMAR HORARIO
+          </h2>
+          <p
+            id="schedule-dj-name"
+            class="font-mono text-xs font-bold text-orange mb-4"
+          >
+          </p>
+
+          <form
+            id="schedule-form"
+            class="flex flex-col gap-4 font-mono text-xs font-bold"
+          >
+            <div class="flex flex-col gap-1">
+              <label for="sched-type" class="uppercase">Periodicidad</label>
+              <select
+                id="sched-type"
+                required
+                class="brutalist-input p-2 text-sm bg-white"
+              >
+                <option value="daily">DIARIO (Todos los días)</option>
+                <option value="weekly">SEMANAL (Un día a la semana)</option>
+              </select>
+            </div>
+
+            <div class="flex flex-col gap-1" id="weekly-day-group">
+              <label for="sched-day" class="uppercase">Día de la Semana</label>
+              <select
+                id="sched-day"
+                class="brutalist-input p-2 text-sm bg-white"
+              >
+                <option value="1">Lunes</option>
+                <option value="2">Martes</option>
+                <option value="3">Miércoles</option>
+                <option value="4">Jueves</option>
+                <option value="5">Viernes</option>
+                <option value="6">Sábado</option>
+                <option value="0">Domingo</option>
+              </select>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div class="flex flex-col gap-1">
+                <label for="sched-time" class="uppercase">Hora de Inicio</label>
+                <input
+                  type="time"
+                  id="sched-time"
+                  required
+                  class="brutalist-input p-2 text-sm bg-white"
+                />
+              </div>
+
+              <div class="flex flex-col gap-1">
+                <label for="sched-duration" class="uppercase"
+                  >Duración (min)</label
+                >
+                <input
+                  type="number"
+                  id="sched-duration"
+                  required
+                  min="5"
+                  max="1440"
+                  value="60"
+                  class="brutalist-input p-2 text-sm bg-white"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              class="brutalist-button bg-orange text-text-dark p-3 text-sm font-black uppercase mt-2"
+            >
+              AÑADIR EMISIÓN
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .brutalist-border {
+    border: 3px solid #000000;
+  }
+
+  .brutalist-shadow {
+    box-shadow: 6px 6px 0px #000000;
+  }
+
+  .brutalist-input {
+    border: 3px solid #000000;
+    outline: none;
+    transition:
+      transform 0.1s,
+      box-shadow 0.1s;
+    font-weight: bold;
+    border-radius: 0;
+  }
+
+  .brutalist-input:focus {
+    transform: translate(-2px, -2px);
+    box-shadow: 4px 4px 0px #000000;
+  }
+
+  .brutalist-button {
+    border: 3px solid #000000;
+    box-shadow: 4px 4px 0px #000000;
+    cursor: pointer;
+    transition:
+      transform 0.1s,
+      box-shadow 0.1s;
+    border-radius: 0;
+    text-align: center;
+  }
+
+  .brutalist-button:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px #000000;
+  }
+
+  .brutalist-button:active {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0px #000000;
+  }
+</style>
+
+<script is:inline>
+  let locutors = [];
+  let selectedLocutorId = null;
+
+  const locutorsContainer = document.getElementById("locutors-container");
+  const locutorForm = document.getElementById("locutor-form");
+  const cancelEditBtn = document.getElementById("cancel-edit");
+  const formTitle = document.getElementById("form-title");
+
+  const schedulePanel = document.getElementById("schedule-panel");
+  const scheduleDjName = document.getElementById("schedule-dj-name");
+  const scheduleForm = document.getElementById("schedule-form");
+  const schedType = document.getElementById("sched-type");
+  const weeklyDayGroup = document.getElementById("weekly-day-group");
+
+  const alertContainer = document.getElementById("global-alert");
+
+  // Mostrar alertas de estado
+  function showAlert(msg, type = "success") {
+    alertContainer.textContent = msg.toUpperCase();
+    alertContainer.className = `mb-6 brutalist-border p-4 font-mono text-sm font-bold brutalist-shadow ${
+      type === "error" ? "bg-orange text-black" : "bg-ice-blue text-black"
+    }`;
+    alertContainer.classList.remove("hidden");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+
+    setTimeout(() => {
+      alertContainer.classList.add("hidden");
+    }, 6000);
+  }
+
+  // Activar/desactivar selector de día semanal
+  schedType.addEventListener("change", () => {
+    if (schedType.value === "weekly") {
+      weeklyDayGroup.classList.remove("hidden");
+    } else {
+      weeklyDayGroup.classList.add("hidden");
+    }
+  });
+
+  // Cargar locutores del backend
+  async function loadLocutors() {
+    try {
+      const res = await fetch("/api/locutors");
+      const json = await res.json();
+      if (json.ok) {
+        locutors = json.data;
+        renderLocutors();
+      } else {
+        showAlert(
+          json.error || "No se pudo cargar la lista de locutores",
+          "error",
+        );
+      }
+    } catch (err) {
+      showAlert(err.message, "error");
+    }
+  }
+
+  // Renderizar locutores
+  function renderLocutors() {
+    if (locutors.length === 0) {
+      locutorsContainer.innerHTML = `
+        <div class="p-6 brutalist-border bg-white text-text-dark font-mono text-sm brutalist-shadow">
+          NO HAY LOCUTORES DE IA REGISTRADOS AÚN. ¡USA EL FORMULARIO DE LA DERECHA PARA AGREGAR TU PRIMER DJ!
+        </div>
+      `;
+      return;
+    }
+
+    const dayNames = [
+      "Domingo",
+      "Lunes",
+      "Martes",
+      "Miércoles",
+      "Jueves",
+      "Viernes",
+      "Sábado",
+    ];
+
+    locutorsContainer.innerHTML = locutors
+      .map((loc) => {
+        const schedulesHtml =
+          loc.schedules && loc.schedules.length > 0
+            ? loc.schedules
+                .map(
+                  (s) => `
+                <div class="flex justify-between items-center bg-ice-blue p-2 border border-black text-xs font-bold">
+                  <span>
+                    ${s.type === "daily" ? "DIARIO" : "SEMANAL"}: 
+                    ${s.type === "weekly" ? dayNames[s.dayOfWeek] + " " : ""}
+                    a las ${s.startHour} (${s.duration} min)
+                  </span>
+                  <button 
+                    type="button" 
+                    data-locutor-id="${loc.id}" 
+                    data-schedule-id="${s.id}" 
+                    class="delete-sched-btn text-orange hover:text-black border border-orange hover:bg-orange px-2 py-0.5"
+                  >
+                    × ELIMINAR
+                  </button>
+                </div>
+              `,
+                )
+                .join("")
+            : `<p class="text-xs italic text-gray-500">Sin horarios programados. Solo hablará cuando la radio no tenga otros DJs activos asignados (Reserva).</p>`;
+
+        return `
+          <div class="brutalist-border p-6 bg-white text-text-dark brutalist-shadow flex flex-col gap-4">
+            <div class="flex justify-between items-start border-b-2 border-black pb-3">
+              <div>
+                <h3 class="text-2xl font-black">${loc.name.toUpperCase()}</h3>
+                <p class="font-mono text-xs font-bold text-gray-600 mt-1">VOZ: ${loc.voice}</p>
+              </div>
+              <div class="flex gap-2">
+                ${
+                  loc.isActive
+                    ? `<span class="bg-orange text-black border border-black font-mono text-[10px] font-black px-2 py-1">ACTIVO</span>`
+                    : `<span class="bg-gray-200 text-gray-600 border border-gray-400 font-mono text-[10px] font-bold px-2 py-1">INACTIVO</span>`
+                }
+                ${
+                  loc.isDefault
+                    ? `<span class="bg-ice-blue text-black border border-black font-mono text-[10px] font-black px-2 py-1">FALLBACK / RESERVA</span>`
+                    : ""
+                }
+              </div>
+            </div>
+
+            <div class="font-mono text-xs">
+              <strong class="uppercase text-gray-600">PERSONALIDAD Y PROMPT:</strong>
+              <p class="mt-1 bg-gray-50 p-3 border border-black whitespace-pre-wrap leading-relaxed">${loc.personality}</p>
+            </div>
+
+            <div class="font-mono mt-2">
+              <strong class="uppercase text-gray-600 text-xs">PROGRAMACIÓN DE EMISIONES:</strong>
+              <div class="flex flex-col gap-2 mt-2">
+                ${schedulesHtml}
+              </div>
+            </div>
+
+            <div class="flex gap-2 mt-4 font-mono text-xs">
+              <button 
+                type="button" 
+                data-id="${loc.id}" 
+                class="edit-loc-btn brutalist-button bg-ice-blue p-2 font-bold uppercase flex-grow"
+              >
+                ✏️ EDITAR DETALLES
+              </button>
+              <button 
+                type="button" 
+                data-id="${loc.id}" 
+                data-name="${loc.name}" 
+                class="manage-sched-btn brutalist-button bg-orange p-2 font-bold uppercase flex-grow"
+              >
+                📅 PROGRAMAR HORARIO
+              </button>
+              <button 
+                type="button" 
+                data-id="${loc.id}" 
+                class="delete-loc-btn text-white bg-black p-2 font-bold uppercase px-4 border-2 border-black"
+              >
+                ELIMINAR DJ
+              </button>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
+    // Event listeners
+    document.querySelectorAll(".edit-loc-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const id = e.target.getAttribute("data-id");
+        editLocutor(id);
+      });
+    });
+
+    document.querySelectorAll(".manage-sched-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const id = e.target.getAttribute("data-id");
+        const name = e.target.getAttribute("data-name");
+        openSchedulePlanner(id, name);
+      });
+    });
+
+    document.querySelectorAll(".delete-loc-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const id = e.target.getAttribute("data-id");
+        if (
+          confirm(
+            "¿Estás seguro de que deseas eliminar este locutor? Todos sus horarios programados se perderán.",
+          )
+        ) {
+          deleteLocutor(id);
+        }
+      });
+    });
+
+    document.querySelectorAll(".delete-sched-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const locId = e.target.getAttribute("data-locutor-id");
+        const schedId = e.target.getAttribute("data-schedule-id");
+        deleteSchedule(locId, schedId);
+      });
+    });
+  }
+
+  // Rellenar formulario de edición
+  function editLocutor(id) {
+    const loc = locutors.find((l) => l.id === id);
+    if (!loc) return;
+
+    selectedLocutorId = id;
+    formTitle.textContent = "EDITAR LOCUTOR DE IA";
+    document.getElementById("locutor-id").value = loc.id;
+    document.getElementById("locutor-name").value = loc.name;
+    document.getElementById("locutor-voice").value = loc.voice;
+    document.getElementById("locutor-personality").value = loc.personality;
+    document.getElementById("locutor-active").checked = loc.isActive;
+    document.getElementById("locutor-default").checked = loc.isDefault;
+
+    cancelEditBtn.classList.remove("hidden");
+    document.getElementById("locutor-name").focus();
+  }
+
+  // Limpiar formulario
+  function resetLocutorForm() {
+    selectedLocutorId = null;
+    formTitle.textContent = "AÑADIR LOCUTOR DE IA";
+    locutorForm.reset();
+    document.getElementById("locutor-id").value = "";
+    document.getElementById("locutor-active").checked = true;
+    document.getElementById("locutor-default").checked = false;
+    cancelEditBtn.classList.add("hidden");
+  }
+
+  cancelEditBtn.addEventListener("click", resetLocutorForm);
+
+  // Guardar locutor
+  locutorForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const id = document.getElementById("locutor-id").value;
+    const name = document.getElementById("locutor-name").value;
+    const voice = document.getElementById("locutor-voice").value;
+    const personality = document.getElementById("locutor-personality").value;
+    const isActive = document.getElementById("locutor-active").checked;
+    const isDefault = document.getElementById("locutor-default").checked;
+
+    const payload = { name, voice, personality, isActive, isDefault };
+
+    try {
+      let res;
+      if (id) {
+        res = await fetch(`/api/locutors/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch("/api/locutors", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      const json = await res.json();
+      if (json.ok) {
+        showAlert(`Locutor ${name} guardado correctamente.`);
+        resetLocutorForm();
+        loadLocutors();
+      } else {
+        showAlert(json.error || "Error al guardar el locutor", "error");
+      }
+    } catch (err) {
+      showAlert(err.message, "error");
+    }
+  });
+
+  // Eliminar locutor
+  async function deleteLocutor(id) {
+    try {
+      const res = await fetch(`/api/locutors/${id}`, { method: "DELETE" });
+      const json = await res.json();
+      if (json.ok) {
+        showAlert("Locutor eliminado correctamente.");
+        if (selectedLocutorId === id) resetLocutorForm();
+        if (schedulePanel.getAttribute("data-current-loc-id") === id) {
+          schedulePanel.classList.add("hidden");
+        }
+        loadLocutors();
+      } else {
+        showAlert(json.error || "Error al eliminar el locutor", "error");
+      }
+    } catch (err) {
+      showAlert(err.message, "error");
+    }
+  }
+
+  // Abrir programador de horarios
+  function openSchedulePlanner(id, name) {
+    schedulePanel.setAttribute("data-current-loc-id", id);
+    scheduleDjName.textContent = `AÑADIENDO HORARIO PARA: ${name.toUpperCase()}`;
+    schedulePanel.classList.remove("hidden");
+
+    schedType.value = "daily";
+    weeklyDayGroup.classList.add("hidden");
+    document.getElementById("sched-time").value = "12:00";
+    document.getElementById("sched-duration").value = "60";
+    schedulePanel.scrollIntoView({ behavior: "smooth" });
+  }
+
+  // Guardar horario (con guardarraíl del backend)
+  scheduleForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const locId = schedulePanel.getAttribute("data-current-loc-id");
+    const type = schedType.value;
+    const dayOfWeek =
+      type === "weekly"
+        ? parseInt(document.getElementById("sched-day").value, 10)
+        : null;
+    const startHour = document.getElementById("sched-time").value;
+    const duration = parseInt(
+      document.getElementById("sched-duration").value,
+      10,
+    );
+
+    const payload = { type, dayOfWeek, startHour, duration };
+
+    try {
+      const res = await fetch(`/api/locutors/${locId}/schedules`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json();
+      if (json.ok) {
+        showAlert("Horario añadido correctamente.");
+        schedulePanel.classList.add("hidden");
+        loadLocutors();
+      } else {
+        // ¡GUARDARRAÍL ACTIVADO!
+        showAlert(`ERROR DE CONFLICTO: ${json.error}`, "error");
+      }
+    } catch (err) {
+      showAlert(err.message, "error");
+    }
+  });
+
+  // Eliminar horario
+  async function deleteSchedule(locId, schedId) {
+    try {
+      const res = await fetch(`/api/locutors/${locId}/schedules/${schedId}`, {
+        method: "DELETE",
+      });
+      const json = await res.json();
+      if (json.ok) {
+        showAlert("Horario eliminado correctamente.");
+        loadLocutors();
+      } else {
+        showAlert(json.error || "Error al eliminar el horario", "error");
+      }
+    } catch (err) {
+      showAlert(err.message, "error");
+    }
+  }
+
+  // Init
+  loadLocutors();
+</script>

@@ -6,11 +6,13 @@ import { DatabaseConnection } from "./infrastructure/database";
 import { TelnetClient } from "./infrastructure/telnet.client";
 import { ConfigRepository } from "./repositories/sqlite/config.repo";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
+import { LocutorRepository } from "./repositories/sqlite/locutor.repo";
 import { PlaybackStateRepository } from "./repositories/sqlite/playback-state.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { ConfigService } from "./services/config.service";
 import { LibraryService } from "./services/library.service";
 import { LiquidsoapService } from "./services/liquidsoap.service";
+import { LocutorService } from "./services/locutor.service";
 import { McpService } from "./services/mcp.service";
 import { OrchestratorService } from "./services/orchestrator.service";
 
@@ -45,12 +47,14 @@ const configRepo = new ConfigRepository(dbConnection);
 const libraryRepo = new LibraryRepository(dbConnection);
 const playlistRepo = new PlaylistRepository(dbConnection);
 const playbackStateRepo = new PlaybackStateRepository(dbConnection);
+const locutorRepo = new LocutorRepository(dbConnection);
 
 // ============================================================
 // 3. Services & Use Cases Instantiation
 // ============================================================
 const configService = new ConfigService(configRepo);
 const liquidsoapService = new LiquidsoapService(telnetClient, audioMetadataClient, MUSIC_MOUNT);
+const locutorService = new LocutorService(locutorRepo);
 
 const libraryService = new LibraryService(libraryRepo, audioMetadataClient, MUSIC_DIR, async () => {
   await liquidsoapService.queueClear();
@@ -61,6 +65,7 @@ const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liq
 const orchestratorService = new OrchestratorService(
   libraryRepo,
   liquidsoapService,
+  locutorService,
   MUSIC_DIR,
   DATA_DIR
 );
@@ -158,6 +163,7 @@ const apiRouter = createApiRouter({
   libraryService,
   liquidsoapService,
   playlistRepo,
+  locutorService,
   mcpService,
   musicDir: MUSIC_DIR,
   distDir: DIST_DIR,

@@ -106,5 +106,28 @@ export class DatabaseConnection {
         FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
       )
     `);
+
+    this.client.exec(`
+      CREATE TABLE IF NOT EXISTS locutors (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        voice TEXT NOT NULL,
+        personality TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        is_default INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+
+    this.client.exec(`
+      CREATE TABLE IF NOT EXISTS locutor_schedules (
+        id TEXT PRIMARY KEY,
+        locutor_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        day_of_week INTEGER,
+        start_hour TEXT NOT NULL,
+        duration INTEGER NOT NULL DEFAULT 60,
+        FOREIGN KEY (locutor_id) REFERENCES locutors(id) ON DELETE CASCADE
+      )
+    `);
   }
 }

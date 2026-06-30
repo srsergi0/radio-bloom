@@ -13,7 +13,19 @@
     "resolveJsonModule": true,
     "allowJs": true,
     "incremental": true,
-    "tsBuildInfoFile": "node_modules/.cache/tsconfig.tsbuildinfo"
+    "tsBuildInfoFile": "node_modules/.cache/tsconfig.tsbuildinfo",
+    "baseUrl": ".",
+    "paths": {
+      "hono": ["./src/types/hono.js"],
+      "hono/*": ["./src/types/hono.js"],
+      "@modelcontextprotocol/sdk/*": ["./src/types/mcp.js"],
+      "../node_modules/@modelcontextprotocol/sdk/*": ["./src/types/mcp.js"],
+      "drizzle-orm": ["./src/types/drizzle.js"],
+      "drizzle-orm/*": ["./src/types/drizzle.js"],
+      "music-metadata": ["./src/types/music-metadata.js"],
+      "edge-tts-universal": ["./src/types/edge-tts.js"],
+      "zod": ["./src/types/zod.js"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "test"]

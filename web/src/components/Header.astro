@@ -8,6 +8,14 @@ const { isEn = true } = Astro.props;
 const currentPath = Astro.url.pathname;
 const esLink = isEn ? `/es${currentPath === "/" ? "" : currentPath}` : currentPath;
 const enLink = isEn ? currentPath : currentPath.replace(/^\/es/, "") || "/";
+
+const homePrefix = currentPath.startsWith("/es") ? "/es" : "";
+const isHome = currentPath === "/" || currentPath === "/es" || currentPath === "/es/";
+
+const liveLink = isHome ? "#live-section" : `${homePrefix || "/"}/#live-section`;
+const scheduleLink = isHome ? "#programs-section" : `${homePrefix || "/"}/#programs-section`;
+const eventsLink = isHome ? "#events-section" : `${homePrefix || "/"}/#events-section`;
+const adminLink = `${homePrefix}/admin`;
 ---
 
 <header class="sticky top-0 z-50 bg-orange border-b-[3px] border-text-dark">
@@ -18,9 +26,10 @@ const enLink = isEn ? currentPath : currentPath.replace(/^\/es/, "") || "/";
 
     <div class="hidden lg:flex items-center gap-8">
       <nav class="flex items-center gap-6 font-mono text-xs font-bold">
-        <a href="#live-section" class="text-text-dark no-underline hover:opacity-60 transition-opacity">{isEn ? "LIVE" : "EN VIVO"}</a>
-        <a href="#programs-section" class="text-text-dark no-underline hover:opacity-60 transition-opacity">{isEn ? "SCHEDULE" : "PROGRAMACIÓN"}</a>
-        <a href="#events-section" class="text-text-dark no-underline hover:opacity-60 transition-opacity">{isEn ? "EVENTS" : "EVENTOS"}</a>
+        <a href={liveLink} class="text-text-dark no-underline hover:opacity-60 transition-opacity">{isEn ? "LIVE" : "EN VIVO"}</a>
+        <a href={scheduleLink} class="text-text-dark no-underline hover:opacity-60 transition-opacity">{isEn ? "SCHEDULE" : "PROGRAMACIÓN"}</a>
+        <a href={eventsLink} class="text-text-dark no-underline hover:opacity-60 transition-opacity">{isEn ? "EVENTS" : "EVENTOS"}</a>
+        <a href={adminLink} class={`text-text-dark no-underline hover:opacity-60 transition-opacity ${currentPath.includes('/admin') ? 'border-b-2 border-text-dark' : ''}`}>{isEn ? "DJ MANAGER" : "GESTOR DJ"}</a>
       </nav>
 
       <div class="w-[3px] h-6 bg-text-dark opacity-30"></div>

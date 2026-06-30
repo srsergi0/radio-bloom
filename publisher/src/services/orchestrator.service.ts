@@ -4,6 +4,7 @@ import { EdgeTTS } from "edge-tts-universal";
 import type { Track } from "../domain/types";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { LiquidsoapService } from "./liquidsoap.service";
+import type { LocutorService } from "./locutor.service";
 
 interface DialogueMessage {
   role: "user" | "assistant" | "system" | "tool";
@@ -27,6 +28,7 @@ export class OrchestratorService {
   constructor(
     private readonly libraryRepo: LibraryRepository,
     private readonly liquidsoapService: LiquidsoapService,
+    private readonly locutorService: LocutorService,
     private readonly musicDir: string,
     private readonly dataDir: string
   ) {}
@@ -237,9 +239,20 @@ export class OrchestratorService {
       }
     }
 
+    const activeLocutor = this.locutorService.getActiveLocutorAtCurrentTime();
+    if (activeLocutor) {
+      console.log(
+        `[OrchestratorService] Active AI Locutor: "${activeLocutor.name}" (Voice: ${activeLocutor.voice})`
+      );
+    } else {
+      console.log(
+        "[OrchestratorService] No active scheduled locutor. Falling back to default DJ Bloom."
+      );
+    }
+
     console.log("[OrchestratorService] Queue is low. Triggering batch DJ agent...");
 
-    const batchResult = await this.runAgentLoop(status, queue, lastSong);
+    const batchResult = await this.runAgentLoop(status, queue, lastSong, activeLocutor);
 
     if (
       !batchResult ||
@@ -278,7 +291,7 @@ export class OrchestratorService {
 
       // 1. Synthesize DJ speech if present
       if (decision.dj_script && decision.dj_script.trim() !== "") {
-        const speechPath = await this.synthesizeSpeech(decision.dj_script);
+        const speechPath = await this.synthesizeSpeech(decision.dj_script, activeLocutor?.voice);
         if (speechPath) {
           console.log(`[OrchestratorService] Enqueuing synthesized DJ speech track: ${speechPath}`);
           const filename = speechPath.replace(/\\/g, "/").split("/").pop();
@@ -325,13 +338,17 @@ export class OrchestratorService {
   private async runAgentLoop(
     status: any,
     queue: any[],
-    _lastSong: Track | null
+    _lastSong: Track | null,
+    activeLocutor?: any
   ): Promise<{ decisions: { selected_song_id: string; dj_script: string }[] } | null> {
     const apiKey = process.env.OPENROUTER_API_KEY || "";
     const model = process.env.AI_DJ_OPENROUTER_MODEL || "google/gemini-2.5-flash";
-    const personality =
-      process.env.AI_DJ_PERSONALITY ||
-      "Un locutor de radio fresco, enérgico y cercano al público de Radio Bloom. Cuenta curiosidades rápidas y hace comentarios ingeniosos.";
+
+    const djName = activeLocutor ? activeLocutor.name : "DJ Bloom";
+    const personality = activeLocutor
+      ? activeLocutor.personality
+      : process.env.AI_DJ_PERSONALITY ||
+        "Un locutor de radio fresco, enérgico y cercano al público de Radio Bloom. Cuenta curiosidades rápidas y hace comentarios ingeniosos.";
 
     const allSongs = this.libraryRepo.getAllTracks("song");
     const candidates = allSongs.filter((song) => !this.recentHistory.includes(song.id));
@@ -357,7 +374,7 @@ export class OrchestratorService {
       minute: "2-digit",
     });
 
-    const systemPrompt = `Eres "DJ Bloom", el legendario, carismático y magnético locutor estrella de la emisora por internet 'Radio Bloom'.
+    const systemPrompt = `Eres "${djName}", el legendario, carismático y magnético locutor estrella de la emisora por internet 'Radio Bloom'.
 Tu personalidad al aire es: ${personality}
 
 La hora peruana actual de la emisora es: ${peruTime}. Usa esta hora para adecuar la vibra de tus locuciones (Mañana, Tarde, Noche/Madrugada).
@@ -605,14 +622,14 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
   /**
    * Synthesize script using Edge-TTS.
    */
-  private async synthesizeSpeech(scriptText: string): Promise<string | null> {
-    const voice = process.env.AI_DJ_VOICE || "es-ES-AlvaroNeural";
+  private async synthesizeSpeech(scriptText: string, voice?: string): Promise<string | null> {
+    const activeVoice = voice || process.env.AI_DJ_VOICE || "es-ES-AlvaroNeural";
     try {
       const filename = `ai_dj_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.mp3`;
       const interludiosDir = join(this.musicDir, "interludios");
       const localPath = join(interludiosDir, filename);
 
-      const tts = new EdgeTTS(scriptText, voice);
+      const tts = new EdgeTTS(scriptText, activeVoice);
       const result = await tts.synthesize();
       const arrayBuffer = await result.audio.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);

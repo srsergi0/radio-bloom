@@ -56,3 +56,21 @@ export interface ApiResponse<T = any> {
   data?: T;
   error?: string;
 }
+
+export interface Locutor {
+  id: string;
+  name: string;
+  voice: string;
+  personality: string;
+  isActive: boolean;
+  isDefault: boolean;
+}
+
+export interface LocutorSchedule {
+  id: string;
+  locutorId: string;
+  type: "daily" | "weekly";
+  dayOfWeek: number | null; // 0 = Sunday, 1 = Monday ... 6 = Saturday (null if type is 'daily')
+  startHour: string; // "HH:MM" e.g. "14:00"
+  duration: number; // in minutes
+}

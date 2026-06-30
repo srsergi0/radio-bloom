@@ -6,3 +6,4 @@ export type {
 } from "../node_modules/@modelcontextprotocol/sdk/dist/esm/server/webStandardStreamableHttp.js";
 
 export const WebStandardStreamableHTTPServerTransport = _Transport;
+export type WebStandardStreamableHTTPServerTransport = InstanceType<typeof _Transport>;

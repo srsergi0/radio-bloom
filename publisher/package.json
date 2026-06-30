@@ -9,7 +9,8 @@
     "test": "bun test",
     "lint": "biome lint src/",
     "format": "biome format --write src/",
-    "check": "biome check --write src/"
+    "check": "biome check --write src/",
+    "typecheck": "bun tsc --noEmit"
   },
   "bin": {
     "radio-bloom-mcp": "./src/mcp-entry.ts"

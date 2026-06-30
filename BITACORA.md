@@ -88,7 +88,8 @@ radio/
 │       │   ├── config.repo.ts            # Configuración del sistema
 │       │   ├── library.repo.ts           # CRUD de tracks en biblioteca
 │       │   ├── playback-state.repo.ts    # Estado de reproducción actual
-│       │   └── playlist.repo.ts          # CRUD de playlists y tracks
+│       │   ├── playlist.repo.ts          # CRUD de playlists y tracks
+│       │   └── locutor.repo.ts           # CRUD de locutores de IA y horarios
 │       │
 │       ├── services/                     # Lógica de Negocio
 │       │   ├── config.service.ts         # Gestión de configuración
@@ -96,6 +97,7 @@ radio/
 │       │   ├── liquidsoap.service.ts     # Órdenes Telnet sobre liquidsoap (queue, skip, play)
 │       │   ├── mcp.service.ts            # Herramientas MCP (15+ tools)
 │       │   ├── orchestrator.service.ts   # AI DJ & Programación automática (OpenRouter + Edge-TTS)
+│       │   ├── locutor.service.ts        # Lógica de guardarraíl de solapamiento y locutor activo
 │       │   └── metadata-enrichment.service.ts  # Enriquecimiento desde Spotify
 │       │
 │       └── scripts/                      # Scripts de utilidad
@@ -115,9 +117,11 @@ radio/
         ├── styles/
         │   └── global.css
         ├── pages/
-        │   ├── index.astro
+        │   ├── index.astro               # Landing Page (Inglés)
+        │   ├── admin.astro               # Panel de Gestión de Locutores de IA (Inglés)
         │   └── es/
-        │       └── index.astro
+        │       ├── index.astro           # Landing Page (Español)
+        │       └── admin.astro           # Panel de Gestión de Locutores de IA (Español)
         └── components/
             ├── EventBanner.astro
             ├── Features.astro
@@ -181,6 +185,19 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 | `DELETE` | `/api/playlists/:id/tracks/:trackId` | Eliminar track |
 | `PUT` | `/api/playlists/:id/tracks/reorder` | Reordenar tracks |
 
+---
+
+## 🎙️ API de Locutores de IA y Horarios
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/locutors` | Listar todos los locutores de IA con sus respectivos horarios |
+| `POST` | `/api/locutors` | Crear un nuevo locutor (body: `{ name, voice, personality, isActive?, isDefault? }`) |
+| `PUT` | `/api/locutors/:id` | Editar detalles del locutor (nombre, voz, prompt de personalidad, estado activo, toggle de reserva) |
+| `DELETE` | `/api/locutors/:id` | Eliminar locutor y todos sus horarios programados (cascada) |
+| `POST` | `/api/locutors/:id/schedules` | Programar horario diario o semanal (body: `{ type, dayOfWeek?, startHour, duration }`) con **guardarraíl de solapamiento** |
+| `DELETE` | `/api/locutors/:id/schedules/:scheduleId` | Eliminar un horario de emisión programado |
+
 ### Herramientas MCP
 
 | Herramienta | Descripción |
@@ -240,3 +257,12 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 - **Ángulos Creativos Dinámicos**: En cada locución se le exige al DJ un ángulo creativo aleatorio (reflexionar sobre la hora, datos del artista, sonoridad, puentes rítmicos, etc.) para romper con frases introductorias o locuciones repetitivas.
 - **Limpieza Activa**: El orquestador monitorea la reproducción y elimina automáticamente los archivos `.mp3` de locución generados tan pronto como salen de la cola de emisión.
 - **Filtro de Watcher**: Modificado el escáner y vigilante de `LibraryService` para ignorar los archivos que inician con `ai_dj_`, evitando contaminar el catálogo estable de la biblioteca.
+
+### 🎙️ Múltiples Locutores de IA y Agenda de Programación (Guardarraíl Anticolisiones)
+
+- **Gestión CRUD de Locutores de IA**: Se añadió soporte para registrar múltiples locutores de IA con nombres, voces neurales personalizadas de Microsoft Edge-TTS y prompts de personalidad únicos en la base de datos SQLite.
+- **Programación Horaria Flexible**: Los locutores pueden tener programas diarios o semanales con una hora de inicio ("HH:MM") y una duración configurable en minutos.
+- **Guardarraíl de Conflictos Cíclicos**: Implementado un algoritmo matemático robusto que transforma todas las agendas en minutos semanales del ciclo (10080 minutos) para detectar y bloquear envolturas o solapamientos en tiempo real (por ejemplo, previniendo choques entre shows diarios, shows semanales en el mismo día, y shows que se cruzan por la medianoche).
+- **Selección de DJ Dinámica en Tiempo Real**: El orquestador de radio calcula la hora exacta en la zona de Perú (`America/Lima`) en cada ciclo y carga la personalidad y voz del locutor programado. Si no hay programaciones activas en ese bloque, cae de forma segura en el locutor marcado como "Predeterminado de Reserva" (Fallback) o el locutor por defecto del entorno.
+- **Panel de Administración Brutalista**: Creadas dos interfaces de usuario independientes y premium con estilo brutalista en Astro en `/admin` (Inglés) y `/es/admin` (Español), integrando retroalimentación de conflictos, edición rápida de locutores y listado de horarios interactivo.
+

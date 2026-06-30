@@ -147,7 +147,10 @@ export class OrchestratorService {
       // 1. Clean up generated TTS files that already played
       await this.cleanupTempFiles(status, queue);
 
-      // 2. Queue new tracks if queue is dropping below 2 elements
+      // 2. Check if manual queue needs interludios injected
+      await this.checkAndInjectManualQueueInterludios(status, queue);
+
+      // 3. Queue new tracks if queue is dropping below 2 elements
       if (queue.length < 2) {
         console.log(
           `[OrchestratorService] Queue is low (${queue.length} items). Enqueuing next track...`
@@ -196,6 +199,153 @@ export class OrchestratorService {
         }
       }
     }
+  }
+
+  /**
+   * Detects manually queued songs (without interludios) and injects DJ speeches.
+   * This handles the case where user queues songs directly via API/MCP.
+   */
+  private async checkAndInjectManualQueueInterludios(status: any, queue: any[]): Promise<void> {
+    const songsBetween = parseInt(process.env.AI_DJ_SONGS_BETWEEN || "3", 10);
+
+    // Get all tracks in queue with their metadata
+    const queueWithMeta: Array<{
+      rid: string;
+      title: string;
+      artist: string;
+      filename: string;
+      isInterludio: boolean;
+    }> = [];
+
+    for (const item of queue) {
+      const meta = await this.liquidsoapService.getRequestMetadata(item.rid);
+      const filename = meta.filename || meta.initial_uri || "";
+      const isInterludio =
+        filename.includes("/interludios/") || item.title?.includes("/interludios/");
+      queueWithMeta.push({
+        rid: item.rid,
+        title: meta.title || item.title || "",
+        artist: meta.artist || item.artist || "",
+        filename,
+        isInterludio,
+      });
+    }
+
+    // Count consecutive songs without interludios
+    let consecutiveSongs = 0;
+    let lastSongIndex = -1;
+    const songIndices: number[] = [];
+
+    for (let i = 0; i < queueWithMeta.length; i++) {
+      const item = queueWithMeta[i];
+      if (!item.isInterludio && item.filename.includes("/songs/")) {
+        consecutiveSongs++;
+        songIndices.push(i);
+        lastSongIndex = i;
+      }
+    }
+
+    // If we have enough consecutive songs without interludios, inject them
+    if (consecutiveSongs >= songsBetween) {
+      console.log(
+        `[OrchestratorService] Detected ${consecutiveSongs} consecutive songs without interludios. Injecting DJ speeches...`
+      );
+
+      const activeLocutor = this.locutorService.getActiveLocutorAtCurrentTime();
+      if (activeLocutor) {
+        console.log(
+          `[OrchestratorService] Using locutor: "${activeLocutor.name}" (Voice: ${activeLocutor.voice})`
+        );
+      }
+
+      // Calculate positions where interludios should go (every songsBetween songs)
+      const positionsToInject: number[] = [];
+      for (let i = songsBetween - 1; i < songIndices.length; i += songsBetween) {
+        positionsToInject.push(songIndices[i]);
+      }
+
+      // Generate and inject interludios (in reverse order to maintain indices)
+      for (let i = positionsToInject.length - 1; i >= 0; i--) {
+        const insertAfterIndex = positionsToInject[i];
+        const songItem = queueWithMeta[insertAfterIndex];
+
+        // Generate a contextual script for this song
+        const script = await this.generateContextualScript(songItem, activeLocutor);
+
+        if (script) {
+          const speechPath = await this.synthesizeSpeech(script, activeLocutor?.voice);
+          if (speechPath) {
+            const filename = speechPath.replace(/\\/g, "/").split("/").pop();
+            // Insert after the song (so it plays before the next song)
+            const insertPosition = insertAfterIndex + 1;
+            console.log(
+              `[OrchestratorService] Injecting interludio at position ${insertPosition} after "${songItem.title}"`
+            );
+            const success = await this.liquidsoapService.queueInsert(
+              insertPosition,
+              `/music/interludios/${filename}`
+            );
+            if (success) {
+              this.tempFiles.add(speechPath);
+              this.dialogueHistory.push({
+                role: "assistant",
+                content: script,
+              });
+            }
+          }
+        }
+      }
+
+      // Limit dialogue history
+      if (this.dialogueHistory.length > 5) {
+        this.dialogueHistory = this.dialogueHistory.slice(-5);
+      }
+      this.saveHistory();
+    }
+  }
+
+  /**
+   * Generates a contextual script for a song based on the active locutor's personality.
+   */
+  private async generateContextualScript(
+    songItem: { title: string; artist: string },
+    activeLocutor: any
+  ): Promise<string | null> {
+    const personality = activeLocutor
+      ? activeLocutor.personality
+      : process.env.AI_DJ_PERSONALITY ||
+        "Un locutor de radio fresco, enérgico y cercano al público de Radio Bloom.";
+
+    const peruTime = new Date().toLocaleTimeString("es-PE", {
+      timeZone: "America/Lima",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
+    // Simple script generation based on time of day and song
+    const hour = new Date(
+      new Date().toLocaleString("en-US", { timeZone: "America/Lima" })
+    ).getHours();
+
+    let timeGreeting = "";
+    if (hour >= 6 && hour < 12) {
+      timeGreeting = "Buenos días";
+    } else if (hour >= 12 && hour < 20) {
+      timeGreeting = "Buenas tardes";
+    } else {
+      timeGreeting = "Buenas noches";
+    }
+
+    // Generate a natural, carismatic script (30-45 words)
+    const scripts = [
+      `${timeGreeting}, Radio Bloom. ${songItem.artist} llega con "${songItem.title}" para acompañarte en este momento. Disfruta la vibra.`,
+      `Y seguimos con la buena música. Ahora suena "${songItem.title}" de ${songItem.artist}. Quédate con nosotros, que lo mejor está por venir.`,
+      `${songItem.artist} y "${songItem.title}"... una combinación perfecta para este momento. Radio Bloom, tu station.`,
+      `La música no para y tú tampoco. "${songItem.title}" de ${songItem.artist} ahora en Radio Bloom. Siente el ritmo.`,
+      `Esto es Radio Bloom y seguimos moviéndote. ${songItem.artist} con "${songItem.title}". No te vayas, que tenemos más música.`,
+    ];
+
+    return scripts[Math.floor(Math.random() * scripts.length)];
   }
 
   /**

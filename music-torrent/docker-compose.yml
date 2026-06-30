@@ -1,0 +1,42 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.queue
+    restart: unless-stopped
+    command: ["python", "worker.py"]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DOWNLOAD_DIR=/data/music
+    volumes:
+      - downloads:/data/music
+    depends_on:
+      - redis
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.queue
+    restart: unless-stopped
+    command: ["python", "server_queue.py"]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DOWNLOAD_DIR=/data/music
+    volumes:
+      - downloads:/data/music
+    depends_on:
+      - redis
+    stdin_open: true
+    tty: true
+
+volumes:
+  redis_data:
+  downloads:

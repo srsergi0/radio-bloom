@@ -1,0 +1,18 @@
+FROM python:3.12-alpine
+
+RUN apk add --no-cache \
+    aria2 \
+    ffmpeg \
+    redis \
+    py3-pip
+
+WORKDIR /app
+
+COPY requirements-queue.txt .
+RUN pip install --no-cache-dir -r requirements-queue.txt
+
+COPY . .
+
+EXPOSE 6379 8000
+
+CMD ["sh", "-c", "redis-server --daemonize yes && python worker.py & python server.py"]

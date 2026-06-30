@@ -6,6 +6,7 @@
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "mcp": "bun src/mcp-entry.ts",
+    "worker": "bun src/worker.ts",
     "test": "bun test",
     "lint": "biome lint src/",
     "format": "biome format --write src/",
@@ -21,6 +22,7 @@
     "edge-tts-universal": "^1.4.0",
     "hi-base32": "^0.5.1",
     "hono": "^4.7.0",
+    "ioredis": "^5.4.0",
     "music-metadata": "^11.13.0",
     "otplib": "^13.4.1",
     "zod": "3"

@@ -7,9 +7,11 @@ import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import { WebStandardStreamableHTTPServerTransport } from "../webStandardStreamableHttp.js";
 import type { LibraryService } from "./library.service";
 import type { LiquidsoapService } from "./liquidsoap.service";
+import { TorrentService } from "./torrent.service";
 
 export class McpService {
   private readonly server: McpServer;
+  private readonly torrentService: TorrentService;
   private readonly sessions = new Map<
     string,
     {
@@ -28,6 +30,7 @@ export class McpService {
       name: "radio-bloom",
       version: "1.0.0",
     });
+    this.torrentService = new TorrentService();
     this.registerAllTools(this.server);
   }
 
@@ -326,6 +329,207 @@ export class McpService {
       await this.liquidsoapService.skipTrack();
       return { content: [{ type: "text", text: "Skip ejecutado" }] };
     });
+
+    // ========== Torrent Tools ==========
+
+    server.tool(
+      "torrent_search",
+      "Buscar torrents de música en The Pirate Bay. Retorna links magnet para descargar.",
+      {
+        query: z.string().describe("Término de búsqueda (artista - canción)"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(20)
+          .optional()
+          .default(5)
+          .describe("Número máximo de resultados (default: 5)"),
+      },
+      async ({ query, limit }) => {
+        try {
+          const results = await this.torrentService.search(query, limit);
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  results.length === 0
+                    ? "No se encontraron torrents"
+                    : JSON.stringify(
+                        {
+                          total: results.length,
+                          items: results.map((r, i) => ({
+                            position: i + 1,
+                            name: r.name,
+                            seeds: r.seeds,
+                            leechers: r.leechers,
+                            size: `${r.size.toFixed(1)} MB`,
+                            magnet: r.magnet,
+                          })),
+                        },
+                        null,
+                        2
+                      ),
+              },
+            ],
+          };
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        }
+      }
+    );
+
+    server.tool(
+      "torrent_queue_download",
+      "Agregar una descarga de torrent a la cola. Usa el magnet link de torrent_search.",
+      {
+        magnet: z.string().describe("Link magnet del torrent"),
+        name: z.string().describe("Nombre para la descarga"),
+      },
+      async ({ magnet, name }) => {
+        try {
+          const job = await this.torrentService.queueDownload(magnet, name);
+          const stats = await this.torrentService.getQueueStats();
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    ok: true,
+                    jobId: job.id,
+                    name: job.name,
+                    status: job.status,
+                    queuePosition: stats.pending,
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        }
+      }
+    );
+
+    server.tool(
+      "torrent_check_status",
+      "Verificar estado de una descarga en la cola",
+      {
+        jobId: z.string().describe("ID del trabajo (retornado por torrent_queue_download)"),
+      },
+      async ({ jobId }) => {
+        try {
+          const job = await this.torrentService.getJobStatus(jobId);
+          if (!job) {
+            return {
+              content: [{ type: "text", text: `Trabajo con ID '${jobId}' no encontrado` }],
+              isError: true,
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(job, null, 2),
+              },
+            ],
+          };
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        }
+      }
+    );
+
+    server.tool("torrent_queue_status", "Estado general de la cola de descargas", {}, async () => {
+      try {
+        const stats = await this.torrentService.getQueueStats();
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(stats, null, 2),
+            },
+          ],
+        };
+      } catch (err: any) {
+        return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+      }
+    });
+
+    server.tool(
+      "torrent_list_queue",
+      "Listar las descargas recientes en la cola",
+      {
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .default(10)
+          .describe("Número máximo de resultados (default: 10)"),
+      },
+      async ({ limit }) => {
+        try {
+          const jobs = await this.torrentService.listJobs(limit);
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  jobs.length === 0
+                    ? "No hay descargas en la cola"
+                    : JSON.stringify(
+                        {
+                          total: jobs.length,
+                          items: jobs.map((j) => ({
+                            id: j.id,
+                            name: j.name,
+                            status: j.status,
+                            progress: j.progress,
+                            createdAt: j.createdAt,
+                          })),
+                        },
+                        null,
+                        2
+                      ),
+              },
+            ],
+          };
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        }
+      }
+    );
+
+    server.tool(
+      "torrent_cancel",
+      "Cancelar una descarga en cola (solo si está en estado 'queued')",
+      {
+        jobId: z.string().describe("ID del trabajo a cancelar"),
+      },
+      async ({ jobId }) => {
+        try {
+          const cancelled = await this.torrentService.cancelJob(jobId);
+          return {
+            content: [
+              {
+                type: "text",
+                text: cancelled
+                  ? `Trabajo ${jobId} cancelado`
+                  : `No se pudo cancelar ${jobId} (puede que ya esté descargando)`,
+              },
+            ],
+          };
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        }
+      }
+    );
 
     server.tool(
       "radio_library_stats",

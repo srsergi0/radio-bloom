@@ -5,8 +5,13 @@ settings.server.telnet.port := 1234
 settings.server.telnet.bind_addr := "0.0.0.0"
 settings.harbor.bind_addrs := ["0.0.0.0"]
 
+# Request handling: prevent infinite retry loops on missing files
+settings.request.timeout := 10.
+settings.request.retries := 1
+
 # Background playlist (always available when queue is empty)
-music = playlist(mode="randomize", reload=30, "/music/songs/")
+# conservative=true avoids re-encoding when codec matches output
+music = playlist(mode="randomize", reload=60, conservative=true, "/music/songs/")
 radio = crossfade(duration=3.0, music)
 radio = mksafe(radio)
 

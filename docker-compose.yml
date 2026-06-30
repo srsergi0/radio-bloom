@@ -40,6 +40,11 @@ services:
       - PORT=${PUBLISHER_PORT}
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
       - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - AI_DJ_ENABLED=${AI_DJ_ENABLED}
+      - AI_DJ_OPENROUTER_MODEL=${AI_DJ_OPENROUTER_MODEL}
+      - AI_DJ_VOICE=${AI_DJ_VOICE}
+      - AI_DJ_SONGS_BETWEEN=${AI_DJ_SONGS_BETWEEN}
     volumes:
       - radio-music:/app/music/songs
       - radio-interludios:/app/music/interludios

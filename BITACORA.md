@@ -95,6 +95,7 @@ radio/
 │       │   ├── library.service.ts        # Escaneo + watcher de archivos + enriquecimiento Spotify
 │       │   ├── liquidsoap.service.ts     # Órdenes Telnet sobre liquidsoap (queue, skip, play)
 │       │   ├── mcp.service.ts            # Herramientas MCP (15+ tools)
+│       │   ├── orchestrator.service.ts   # AI DJ & Programación automática (OpenRouter + Edge-TTS)
 │       │   └── metadata-enrichment.service.ts  # Enriquecimiento desde Spotify
 │       │
 │       └── scripts/                      # Scripts de utilidad
@@ -224,3 +225,15 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 - **Inyección de Silencio en Caliente (Hot-Standby)**: Implementado bucle de inyección de frames de silencio MP3 estándar a 320kbps si la señal con Liquidsoap se cae. Esto mantiene el socket HTTP de los oyentes y plataformas como **Radio Garden** 100% activo, evitando desconexiones por inactividad.
 - **Cabeceras Anti-Proxy**: Integrados headers `"X-Accel-Buffering": "no"` y `"Content-Encoding": "identity"` en la respuesta del stream para prevenir que Cloudflare o Traefik almacenen en caché o compriman el stream, lo cual congelaba y tiraba las conexiones.
 - **Procesador DSP Multibanda (Calidad FM)**: Implementado un procesador de dinámica de 3 bandas (`compress.multiband`) en [radio.liq](file:///d:/cursos/SEED-AUDIO/radio/liquidsoap/radio.liq) para emular el sonido comercial "gordo" y consistente de las radios FM comerciales, equilibrando graves (punch), medios (voces) y agudos (aire/brillo).
+
+### 🎙️ AI DJ y Orquestación Inteligente Continua (Agente con Herramientas)
+
+- **Orquestador Central (`OrchestratorService`)**: Se implementó un bucle de control inteligente (cada 10s) que asegura un colchón mínimo de 2 canciones en la cola de Liquidsoap.
+- **Voz Neural con Edge-TTS**: Síntesis gratuita de voz neural de alta calidad de Microsoft Edge en tiempo real para las locuciones.
+- **Bucle de Llamada a Herramientas (Tool-use)**: El locutor de OpenRouter tiene la facultad de ejecutar llamadas a herramientas locales para planificar su locución o selección musical antes de emitirla:
+  - `search_library(query)`: Busca canciones locales en la base de datos de la radio.
+  - `get_stream_status()`: Consulta el stream activo y temas en cola para no repetir.
+  - `get_current_time()`: Consulta la hora de la emisora.
+- **Persistencia y Continuidad**: Guarda el historial de diálogos (máximo 20 mensajes entre locuciones y canciones) en `data/dj_history.json` para conservar un contexto coherente e hilar temas al hablar.
+- **Limpieza Activa**: El orquestador monitorea la reproducción y elimina automáticamente los archivos `.mp3` de locución generados tan pronto como salen de la cola de emisión.
+- **Filtro de Watcher**: Modificado el escáner y vigilante de `LibraryService` para ignorar los archivos que inician con `ai_dj_`, evitando contaminar el catálogo estable de la biblioteca.

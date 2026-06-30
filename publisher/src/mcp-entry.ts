@@ -2,8 +2,8 @@ console.log = console.error;
 
 import "./env";
 import { resolve } from "node:path";
-import { DatabaseConnection } from "./infrastructure/database";
 import { AudioMetadataClient } from "./infrastructure/audio-metadata.client";
+import { DatabaseConnection } from "./infrastructure/database";
 import { TelnetClient } from "./infrastructure/telnet.client";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
@@ -28,14 +28,9 @@ const libraryRepo = new LibraryRepository(dbConnection);
 const playlistRepo = new PlaylistRepository(dbConnection);
 
 const liquidsoapService = new LiquidsoapService(telnetClient, audioMetadataClient, MUSIC_MOUNT);
-const libraryService = new LibraryService(
-  libraryRepo,
-  audioMetadataClient,
-  MUSIC_DIR,
-  async () => {
-    await liquidsoapService.queueClear();
-  }
-);
+const libraryService = new LibraryService(libraryRepo, audioMetadataClient, MUSIC_DIR, async () => {
+  await liquidsoapService.queueClear();
+});
 
 const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liquidsoapService);
 

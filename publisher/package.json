@@ -17,6 +17,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "drizzle-orm": "^0.45.2",
+    "edge-tts-universal": "^1.4.0",
     "hi-base32": "^0.5.1",
     "hono": "^4.7.0",
     "music-metadata": "^11.13.0",

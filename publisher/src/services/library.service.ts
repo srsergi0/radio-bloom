@@ -43,13 +43,15 @@ export class LibraryService {
     try {
       for (const dir of [this.songsDir, this.interludiosDir]) {
         watch(dir, { recursive: true }, (_event, filename) => {
-          if (!filename || filename.startsWith(".")) return;
+          if (!filename || filename.startsWith(".") || filename.startsWith("ai_dj_")) return;
           this.scheduleWatchScan();
         });
       }
       console.log("[LibraryService] File watcher (recursive) + polling 15s");
     } catch {
-      console.log("[LibraryService] File watcher: polling 15s (recursive fs.watch no soportado en esta plataforma)");
+      console.log(
+        "[LibraryService] File watcher: polling 15s (recursive fs.watch no soportado en esta plataforma)"
+      );
     }
   }
 
@@ -78,7 +80,7 @@ export class LibraryService {
         const stat = statSync(filePath);
         if (stat.isDirectory()) {
           results = results.concat(this.getAllFiles(filePath));
-        } else if (AUDIO_EXTENSIONS.test(file)) {
+        } else if (AUDIO_EXTENSIONS.test(file) && !file.startsWith("ai_dj_")) {
           results.push(filePath);
         }
       }
@@ -144,7 +146,7 @@ export class LibraryService {
         const key = `${prefix}/${relPath}`;
         const existing = existingTracks.find((t) => t.file === key);
 
-        if (existing && new Date(stat.mtime.toISOString()) <= new Date(existing.addedAt)) {
+        if (existing?.mtime && stat.mtime.toISOString() === existing.mtime) {
           continue;
         }
 

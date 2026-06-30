@@ -16,13 +16,13 @@ export class MetadataEnrichmentService {
     // First search: title + artist only (more accurate)
     const queryBasic = artist ? `${title} ${artist}` : title;
     let results = await spotifySearch(queryBasic);
-    
+
     // If no result, try with album
     if (results.length === 0 && album) {
       const queryWithAlbum = `${title} ${artist || ""} ${album}`;
       results = await spotifySearch(queryWithAlbum);
     }
-    
+
     if (results.length === 0) return null;
 
     const track = results[0];

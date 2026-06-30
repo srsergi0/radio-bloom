@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
@@ -124,7 +123,8 @@ export function createApiRouter(deps: ApiDependencies): Hono {
       if (type !== "song" && type !== "interludio") {
         return c.json({ ok: false, error: "type debe ser 'song' o 'interludio'" }, 400);
       }
-      const targetDir = type === "song" ? join(deps.musicDir, "songs") : join(deps.musicDir, "interludios");
+      const targetDir =
+        type === "song" ? join(deps.musicDir, "songs") : join(deps.musicDir, "interludios");
       const fileName = fileField.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const filePath = join(targetDir, fileName);
       const buffer = await fileField.arrayBuffer();
@@ -364,8 +364,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   app.post("/api/playlists/:id/play", async (c) => {
     const playlist = deps.playlistRepo.get(c.req.param("id"));
     if (!playlist) return c.json({ ok: false, error: "Playlist not found" }, 404);
-    if (playlist.tracks.length === 0)
-      return c.json({ ok: false, error: "Playlist is empty" }, 400);
+    if (playlist.tracks.length === 0) return c.json({ ok: false, error: "Playlist is empty" }, 400);
 
     const body = await c.req.json().catch(() => ({}));
     const shuffle = body?.shuffle === true;

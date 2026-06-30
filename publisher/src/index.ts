@@ -1,8 +1,8 @@
 import "./env";
 import { resolve } from "node:path";
 import { createApiRouter } from "./api/router";
-import { DatabaseConnection } from "./infrastructure/database";
 import { AudioMetadataClient } from "./infrastructure/audio-metadata.client";
+import { DatabaseConnection } from "./infrastructure/database";
 import { TelnetClient } from "./infrastructure/telnet.client";
 import { ConfigRepository } from "./repositories/sqlite/config.repo";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
@@ -12,6 +12,7 @@ import { ConfigService } from "./services/config.service";
 import { LibraryService } from "./services/library.service";
 import { LiquidsoapService } from "./services/liquidsoap.service";
 import { McpService } from "./services/mcp.service";
+import { OrchestratorService } from "./services/orchestrator.service";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
@@ -51,24 +52,24 @@ const playbackStateRepo = new PlaybackStateRepository(dbConnection);
 const configService = new ConfigService(configRepo);
 const liquidsoapService = new LiquidsoapService(telnetClient, audioMetadataClient, MUSIC_MOUNT);
 
-const libraryService = new LibraryService(
-  libraryRepo,
-  audioMetadataClient,
-  MUSIC_DIR,
-  async () => {
-    await liquidsoapService.queueClear();
-  }
-);
+const libraryService = new LibraryService(libraryRepo, audioMetadataClient, MUSIC_DIR, async () => {
+  await liquidsoapService.queueClear();
+});
 
-const mcpService = new McpService(
+const mcpService = new McpService(libraryRepo, playlistRepo, libraryService, liquidsoapService);
+
+const orchestratorService = new OrchestratorService(
   libraryRepo,
-  playlistRepo,
-  libraryService,
-  liquidsoapService
+  liquidsoapService,
+  MUSIC_DIR,
+  DATA_DIR
 );
 
 // Initialize library service (creates dirs, scans, starts watcher)
 libraryService.init().catch((err) => console.error("[init] libraryService:", err));
+
+// Start AI DJ Orchestrator
+orchestratorService.start();
 
 // ============================================================
 // Playback State Persistence & Restore
@@ -167,9 +168,27 @@ const apiRouter = createApiRouter({
 // ============================================================
 // Standard Silent MP3 Frame at 320kbps, 44.1kHz, Stereo (~26ms of audio)
 const SILENT_MP3_FRAME = new Uint8Array([
-  0xFF, 0xFB, 0xE0, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0xff,
+  0xfb,
+  0xe0,
+  0x64,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
   ...new Array(1024).fill(0),
-  0x00, 0x00, 0x00, 0x00
+  0x00,
+  0x00,
+  0x00,
+  0x00,
 ]);
 
 class StreamBroadcaster {
@@ -200,7 +219,9 @@ class StreamBroadcaster {
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
-            console.log("[Broadcaster] Upstream connection closed. Switching to silent frames fallback...");
+            console.log(
+              "[Broadcaster] Upstream connection closed. Switching to silent frames fallback..."
+            );
             break;
           }
 
@@ -208,11 +229,13 @@ class StreamBroadcaster {
         }
       } catch (err: any) {
         console.error("[Broadcaster] Upstream connection failed:", err.message);
-        
+
         // Moonshot Fallback: Keep generating silent frames to maintain client connections alive
-        console.log("[Broadcaster] Initiating hot-standby silence loop to protect client connections.");
+        console.log(
+          "[Broadcaster] Initiating hot-standby silence loop to protect client connections."
+        );
         let silenceDurationMs = 0;
-        
+
         // Inject silence for up to 30 seconds before attempting full reconnect loop
         while (silenceDurationMs < 30000 && this.clients.size > 0) {
           this.pushData(SILENT_MP3_FRAME);
@@ -297,7 +320,7 @@ const _server = Bun.serve({
         headers: {
           "Content-Type": "audio/mpeg",
           "Cache-Control": "no-cache, no-store, must-revalidate, pre-check=0, post-check=0",
-          "Connection": "keep-alive",
+          Connection: "keep-alive",
           "X-Accel-Buffering": "no",
           "Content-Encoding": "identity",
           Pragma: "no-cache",
@@ -318,11 +341,13 @@ console.log(`[server] MCP:    http://localhost:${PORT}/mcp`);
 console.log(`[server] Radio Bloom Composition Root ready`);
 
 process.on("SIGINT", async () => {
+  orchestratorService.stop();
   libraryService.shutdown();
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
+  orchestratorService.stop();
   libraryService.shutdown();
   process.exit(0);
 });

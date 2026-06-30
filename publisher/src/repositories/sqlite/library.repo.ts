@@ -202,6 +202,7 @@ export class LibraryRepository {
       duration: row.duration,
       spotifyUrl: row.spotifyUrl || undefined,
       addedAt: row.addedAt,
+      mtime: row.mtime || undefined,
     };
   }
 }

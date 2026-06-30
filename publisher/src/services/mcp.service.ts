@@ -1,12 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { spotifySearch } from "../infrastructure/spotify.client";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import { WebStandardStreamableHTTPServerTransport } from "../webStandardStreamableHttp.js";
 import type { LibraryService } from "./library.service";
 import type { LiquidsoapService } from "./liquidsoap.service";
-import { spotifySearch } from "../infrastructure/spotify.client";
 
 export class McpService {
   private readonly server: McpServer;
@@ -185,9 +185,7 @@ export class McpService {
       {
         id: z
           .string()
-          .describe(
-            "ID del track en la biblioteca (campo 'id' que devuelve radio_search)"
-          ),
+          .describe("ID del track en la biblioteca (campo 'id' que devuelve radio_search)"),
       },
       async ({ id }) => {
         const track = this.libraryRepo.getTrackById(id);
@@ -520,7 +518,9 @@ export class McpService {
         libraryTrackId: z
           .string()
           .optional()
-          .describe("ID del track en la biblioteca (rellena automáticamente title, artist, file, duration)"),
+          .describe(
+            "ID del track en la biblioteca (rellena automáticamente title, artist, file, duration)"
+          ),
         title: z.string().optional().describe("Título (obligatorio si no se usa libraryTrackId)"),
         artist: z.string().optional().describe("Artista"),
         file: z
@@ -541,7 +541,12 @@ export class McpService {
           const libTrack = this.libraryRepo.getTrackById(libraryTrackId);
           if (!libTrack)
             return {
-              content: [{ type: "text", text: `Track con ID '${libraryTrackId}' no existe en la biblioteca` }],
+              content: [
+                {
+                  type: "text",
+                  text: `Track con ID '${libraryTrackId}' no existe en la biblioteca`,
+                },
+              ],
               isError: true,
             };
           resolvedTitle = libTrack.title;

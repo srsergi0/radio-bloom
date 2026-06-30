@@ -8,6 +8,7 @@ export interface Track {
   duration: number;
   spotifyUrl?: string;
   addedAt: string;
+  mtime?: string;
 }
 
 export interface StreamStatus {

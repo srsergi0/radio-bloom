@@ -22,7 +22,6 @@ export class OrchestratorService {
   private isProcessing = false;
   private recentHistory: string[] = []; // Last 15 song IDs queued
   private tempFiles = new Set<string>(); // Keep track of absolute paths of generated MP3s
-  private songsQueuedCount = 0; // Number of songs queued since last DJ speech
   private dialogueHistory: DialogueMessage[] = [];
 
   constructor(
@@ -85,8 +84,20 @@ export class OrchestratorService {
     if (existsSync(filePath)) {
       try {
         const content = readFileSync(filePath, "utf-8");
-        const data = JSON.parse(content) as DjHistory;
-        this.dialogueHistory = data.dialogueHistory || [];
+        const data = JSON.parse(content) as any;
+        if (data.dialogueHistory) {
+          this.dialogueHistory = data.dialogueHistory;
+        } else if (Array.isArray(data.recentEvents)) {
+          // Migrar formato recentEvents a formato DialogueMessage
+          this.dialogueHistory = data.recentEvents.map((e: any) => {
+            if (e.type === "speech") {
+              return { role: "assistant" as const, content: e.content };
+            }
+            return { role: "system" as const, content: e.content };
+          });
+        } else {
+          this.dialogueHistory = [];
+        }
         console.log(
           `[OrchestratorService] Loaded ${this.dialogueHistory.length} dialogue history items from dj_history.json`
         );
@@ -189,7 +200,6 @@ export class OrchestratorService {
    * Enqueues the next track, deciding between a DJ speech + song or just a song.
    */
   private async enqueueNext(status: any, queue: any[]): Promise<void> {
-    const songsBetween = parseInt(process.env.AI_DJ_SONGS_BETWEEN || "3", 10);
     const allSongs = this.libraryRepo.getAllTracks("song");
 
     if (allSongs.length === 0) {
@@ -227,91 +237,101 @@ export class OrchestratorService {
       }
     }
 
-    // Is it time for an AI DJ speech?
-    const isInterludeTime = this.songsQueuedCount >= songsBetween;
+    console.log("[OrchestratorService] Queue is low. Triggering batch DJ agent...");
 
-    console.log(
-      `[OrchestratorService] Triggering agent. Interlude time: ${isInterludeTime}. Songs queued since last DJ speech: ${this.songsQueuedCount}`
-    );
+    const batchResult = await this.runAgentLoop(status, queue, lastSong);
 
-    const agentResult = await this.runAgentLoop(isInterludeTime);
-
-    let nextSong: Track | null = null;
-    if (agentResult?.selectedSongId) {
-      nextSong = this.libraryRepo.getTrackById(agentResult.selectedSongId);
-      if (!nextSong) {
-        console.warn(
-          `[OrchestratorService] Agent selected an invalid song ID: ${agentResult.selectedSongId}. Falling back to random selection.`
-        );
-      }
-    }
-
-    // Fallback: pick a random song from DB not recently played
-    if (!nextSong) {
-      const candidates = allSongs.filter((song) => !this.recentHistory.includes(song.id));
-      const pool = candidates.length > 0 ? candidates : allSongs;
-      nextSong = pool[Math.floor(Math.random() * pool.length)];
-    }
-
-    if (!nextSong) return;
-
-    // Handle DJ speech if generated
-    if (isInterludeTime && agentResult?.djScript) {
-      const speechPath = await this.synthesizeSpeech(agentResult.djScript);
-      if (speechPath) {
-        console.log(`[OrchestratorService] Enqueuing synthesized DJ speech track: ${speechPath}`);
-        const filename = speechPath.replace(/\\/g, "/").split("/").pop();
-        const rid = await this.liquidsoapService.queuePush(`/music/interludios/${filename}`);
-        if (rid) {
-          this.tempFiles.add(speechPath);
+    if (
+      !batchResult ||
+      !Array.isArray(batchResult.decisions) ||
+      batchResult.decisions.length === 0
+    ) {
+      console.warn(
+        "[OrchestratorService] Agent loop failed to plan a batch. Falling back to local selection."
+      );
+      // Fallback: queue 5 random songs programmatically
+      for (let i = 0; i < 5; i++) {
+        const candidates = allSongs.filter((song) => !this.recentHistory.includes(song.id));
+        const pool = candidates.length > 0 ? candidates : allSongs;
+        const randomSong = pool[Math.floor(Math.random() * pool.length)];
+        if (randomSong) {
+          console.log(`[OrchestratorService] Fallback enqueuing: "${randomSong.title}"`);
+          const songRid = await this.liquidsoapService.queuePush(`/music/${randomSong.file}`);
+          if (songRid) {
+            this.recentHistory.push(randomSong.id);
+            if (this.recentHistory.length > 15) this.recentHistory.shift();
+          }
         }
+      }
+      return;
+    }
 
-        // Add to dialogue history
-        if (lastSong) {
+    // Process each decision in the batch
+    for (const decision of batchResult.decisions) {
+      const song = this.libraryRepo.getTrackById(decision.selected_song_id);
+      if (!song) {
+        console.warn(
+          `[OrchestratorService] Selected song ID not found in library: ${decision.selected_song_id}. Skipping.`
+        );
+        continue;
+      }
+
+      // 1. Synthesize DJ speech if present
+      if (decision.dj_script && decision.dj_script.trim() !== "") {
+        const speechPath = await this.synthesizeSpeech(decision.dj_script);
+        if (speechPath) {
+          console.log(`[OrchestratorService] Enqueuing synthesized DJ speech track: ${speechPath}`);
+          const filename = speechPath.replace(/\\/g, "/").split("/").pop();
+          const rid = await this.liquidsoapService.queuePush(`/music/interludios/${filename}`);
+          if (rid) {
+            this.tempFiles.add(speechPath);
+          }
+
+          // Add speech to history
           this.dialogueHistory.push({
-            role: "system",
-            content: `Sonó la canción: "${lastSong.title}" de ${lastSong.artist || "Desconocido"}`,
+            role: "assistant",
+            content: decision.dj_script,
           });
         }
-        this.dialogueHistory.push({
-          role: "assistant",
-          content: agentResult.djScript,
-        });
-
-        // Trim and save history
-        if (this.dialogueHistory.length > 20) {
-          this.dialogueHistory = this.dialogueHistory.slice(-20);
-        }
-        this.saveHistory();
       }
-      this.songsQueuedCount = 0; // Reset counter
-    } else {
-      // Increment counter for standard transition
-      this.songsQueuedCount++;
-    }
 
-    // Enqueue the selected song
-    console.log(
-      `[OrchestratorService] Enqueuing Song: "${nextSong.title}" by ${nextSong.artist || "Unknown"}`
-    );
-    const songRid = await this.liquidsoapService.queuePush(`/music/${nextSong.file}`);
-    if (songRid) {
-      this.recentHistory.push(nextSong.id);
-      if (this.recentHistory.length > 15) this.recentHistory.shift();
+      // 2. Queue the song
+      console.log(
+        `[OrchestratorService] Enqueuing Song: "${song.title}" by ${song.artist || "Unknown"}`
+      );
+      const songRid = await this.liquidsoapService.queuePush(`/music/${song.file}`);
+      if (songRid) {
+        this.recentHistory.push(song.id);
+        if (this.recentHistory.length > 15) this.recentHistory.shift();
+
+        // Add song metadata to history
+        this.dialogueHistory.push({
+          role: "system",
+          content: `Sonó la canción: "${song.title}" de ${song.artist || "Desconocido"}`,
+        });
+      }
+
+      // Limit dialogue history to 5 messages to avoid token bloat and repetitions
+      if (this.dialogueHistory.length > 5) {
+        this.dialogueHistory = this.dialogueHistory.slice(-5);
+      }
+      this.saveHistory();
     }
   }
 
   /**
-   * Run the LLM agentic tool-use loop.
+   * Run the LLM agentic single-turn completion with native tool call loop.
    */
   private async runAgentLoop(
-    isInterlude: boolean
-  ): Promise<{ selectedSongId: string; djScript?: string } | null> {
+    status: any,
+    queue: any[],
+    _lastSong: Track | null
+  ): Promise<{ decisions: { selected_song_id: string; dj_script: string }[] } | null> {
     const apiKey = process.env.OPENROUTER_API_KEY || "";
     const model = process.env.AI_DJ_OPENROUTER_MODEL || "google/gemini-2.5-flash";
     const personality =
       process.env.AI_DJ_PERSONALITY ||
-      "Un locutor de radio fresco, entusiasta, moderno y cercano al público de Radio Bloom. Cuenta curiosidades rápidas y hace comentarios ingeniosos.";
+      "Un locutor de radio fresco, enérgico y cercano al público de Radio Bloom. Cuenta curiosidades rápidas y hace comentarios ingeniosos.";
 
     const allSongs = this.libraryRepo.getAllTracks("song");
     const candidates = allSongs.filter((song) => !this.recentHistory.includes(song.id));
@@ -322,41 +342,67 @@ export class OrchestratorService {
       .map((s) => `- ID: "${s.id}", Título: "${s.title}", Artista: "${s.artist || "Desconocido"}"`)
       .join("\n");
 
+    const angles = [
+      "comentar brevemente sobre el artista de la canción seleccionada o su trayectoria",
+      "hacer una reflexión íntima, divertida o ingeniosa sobre el momento del día o la hora actual",
+      "enfocarte en la vibra musical, la instrumentación o la textura sonora de la canción seleccionada",
+      "lanzar un pensamiento filosófico de bolsillo o comentario existencial melómano",
+      "conectar el final de la canción anterior con el inicio de la nueva a través de un puente puramente rítmico o de estado de ánimo",
+    ];
+    const selectedAngle = angles[Math.floor(Math.random() * angles.length)];
+
+    const peruTime = new Date().toLocaleTimeString("es-PE", {
+      timeZone: "America/Lima",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
     const systemPrompt = `Eres "DJ Bloom", el legendario, carismático y magnético locutor estrella de la emisora por internet 'Radio Bloom'.
 Tu personalidad al aire es: ${personality}
 
-Tu tarea actual es programar la siguiente canción que sonará en el stream.
-${
-  isInterlude
-    ? "ATENCIÓN: Es hora de hablar al micrófono (DJ Speech). Debes seleccionar la siguiente canción de tu biblioteca local Y redactar el guión de locución que leerás en el aire antes de que suene."
-    : "ATENCIÓN: Solo debes seleccionar la siguiente canción de tu biblioteca local. No es necesario que escribas un guión de locución en esta ocasión (deja 'dj_script' como string vacío)."
-}
+La hora peruana actual de la emisora es: ${peruTime}. Usa esta hora para adecuar la vibra de tus locuciones (Mañana, Tarde, Noche/Madrugada).
 
-Canciones sugeridas disponibles actualmente (puedes elegir uno de sus IDs directamente o buscar otros usando tus herramientas):
-${suggestedSongsText}
-
-Puedes ejecutar herramientas de tu entorno para obtener información antes de decidir.
+Tu tarea es planificar un bloque continuo de las siguientes 5 canciones que se reproducirán en el stream, decidiendo si hablarás antes de cada una de ellas para hacer locución.
 
 Directrices de Locución Radial para un Flujo Magnético y Carismático:
 1. EVITA los saludos repetitivos. No empieces siempre diciendo "Hola" o "Bienvenidos a Radio Bloom". Entra directo a la idea, al gancho o al puente.
-2. HAZ PUENTES (BRIDGING): Conecta el final de la canción que acaba de sonar con la vibra, temática o detalles de la que está a punto de empezar.
-3. TONO CARISMÁTICO Y CONVERSACIONAL: Cero gritos, cero hipérboles de "energía de radio comercial". Queremos intimidad, inteligencia, humor sutil y elegancia. Habla como un amigo melómano y sofisticado con el que te tomarías una copa a las 2 de la mañana.
-4. ADAPTA TU VIBRA A LA HORA (puedes usar get_current_time):
-   - Mañana: Despertar amable, inteligente, ingenioso pero sin estridencias.
-   - Tarde: Compañero de sintonía fluido, dinámico y relajado.
-   - Noche/Madrugada: Cómplice noctámbulo, reflexivo, con voz pausada, cálida e íntima.
-5. ESCRIBE PARA EL OÍDO: Usa frases cortas, preguntas retóricas, expresiones naturales ("vaya tema", "se me eriza la piel", "cuidado con lo que viene"). La puntuación determina cómo lee la voz (usa comas para pausas breves, puntos suspensivos para expectación).
-6. LIMITACIÓN ESTRICTA: El 'dj_script' debe tener obligatoriamente entre 30 y 45 palabras. Debe ser conciso, memorable y sugerente. No incluyas acotaciones musicales ni hashtags.
-7. El 'selected_song_id' DEBE corresponder a una canción real existente en tu biblioteca. Usa tus herramientas para encontrar los IDs correctos.
-8. Mantén la continuidad del programa considerando el historial de tus últimas interacciones.`;
+2. HAZ PUENTES (BRIDGING): Conecta el final de la canción anterior con la vibra, temática o detalles de la que está a punto de empezar.
+3. TONO CARISMÁTICO Y CONVERSACIONAL: Cero gritos, cero hipérboles de "energía de radio comercial". Queremos intimidad, inteligencia, humor sutil and elegancia. Habla como un amigo melómano y sofisticado con el que te tomarías una copa a las 2 de la mañana.
+4. ADAPTA TU VIBRA A LA HORA:
+   - Mañana (06:00 - 12:00): Despertar amable, inteligente, ingenioso pero sin estridencias.
+   - Tarde (12:00 - 20:00): Compañero de sintonía fluido, dinámico y relajado.
+   - Noche/Madrugada (20:00 - 06:00): Cómplice noctámbulo, reflexivo, con voz pausada, cálida e íntima.
+5. ESCRIBE PARA EL OÍDO: Usa frases cortas, preguntas retóricas, expresiones naturales. La puntuación determina cómo lee la voz (comas para pausas breves, puntos suspensivos para expectación).
+6. LIMITACIÓN ESTRICTA DE PALABRAS: Si decides escribir un guión de locución ('dj_script'), este debe tener obligatoriamente entre 30 y 45 palabras. Debe ser conciso, memorable y sugerente. No incluyes acotaciones musicales ni hashtags.
+7. FRECUENCIA DE LOCUCIÓN: No es necesario locutar antes de todas las canciones. Se recomienda locutar sólo en 1 o 2 de las 5 canciones de la cola (deja 'dj_script' vacío en las demás).
+8. SELECCIÓN DE CANCIONES: Cada 'selected_song_id' DEBE ser un ID de canción real y válido de la biblioteca de música. Puedes elegir de la lista de sugerencias provista en el prompt del usuario o usar la herramienta 'search_library' para buscar canciones específicas de tu biblioteca.
 
-    const messages: any[] = [{ role: "system", content: systemPrompt }, ...this.dialogueHistory];
+Puedes ejecutar herramientas de tu entorno para obtener información antes de decidir. Responde utilizando el formato estructurado JSON.`;
 
-    const triggerText = isInterlude
-      ? "Es hora de tu locución y de programar el próximo tema. Utiliza herramientas si lo necesitas, selecciona la canción de la biblioteca y responde con el formato estructurado final."
-      : "Selecciona el próximo tema para programar en la cola. Utiliza herramientas si lo necesitas, y responde con el formato estructurado final (deja 'dj_script' vacío).";
+    const currentTrackText = status.title
+      ? `"${status.title}" de ${status.artist || "Desconocido"}`
+      : "Ninguna (silencio o transmisión en vivo)";
+    const queuedTracksText =
+      queue.length > 0 ? queue.map((q: any) => `"${q.title}"`).join(", ") : "Ninguna";
 
-    messages.push({ role: "user", content: triggerText });
+    const userPrompt = `INFORMACIÓN DEL ENTORNO:
+- Hora local de la emisora (Perú): ${peruTime}
+- Canción sonando actualmente: ${currentTrackText}
+- Canciones en cola: ${queuedTracksText}
+
+CANCIONES SUGERIDAS (puedes elegir uno de sus IDs directamente o usar la herramienta search_library para buscar otros):
+${suggestedSongsText}
+
+ÁNGULO CREATIVO PARA ESTA LOCUCIÓN (Obligatorio enfocarse en esto para no ser repetitivo en las locuciones que decidas escribir):
+*En tus intervenciones debes: ${selectedAngle}*
+
+Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el formato estructurado JSON.`;
+
+    const messages: any[] = [
+      { role: "system", content: systemPrompt },
+      ...this.dialogueHistory,
+      { role: "user", content: userPrompt },
+    ];
 
     const tools = [
       {
@@ -404,39 +450,39 @@ Directrices de Locución Radial para un Flujo Magnético y Carismático:
           },
         },
       },
-      {
-        type: "function",
-        function: {
-          name: "get_current_time",
-          description: "Obtiene la hora local exacta de la emisora.",
-          parameters: {
-            type: "object",
-            properties: {},
-            additionalProperties: false,
-          },
-        },
-      },
     ];
 
     const responseFormat = {
       type: "json_schema",
       json_schema: {
-        name: "dj_decision",
+        name: "dj_batch_decision",
         strict: true,
         schema: {
           type: "object",
           properties: {
-            selected_song_id: {
-              type: "string",
-              description: "El ID real de la canción elegida de la biblioteca de música.",
-            },
-            dj_script: {
-              type: "string",
+            decisions: {
+              type: "array",
               description:
-                "El guión completo en español para la locución radial del DJ (30-45 palabras), o string vacío si no toca locutar.",
+                "Lista ordenada de exactamente 5 programaciones consecutivas para el stream.",
+              items: {
+                type: "object",
+                properties: {
+                  selected_song_id: {
+                    type: "string",
+                    description: "El ID real de la canción elegida de la biblioteca de música.",
+                  },
+                  dj_script: {
+                    type: "string",
+                    description:
+                      "El guión completo en español para la locución radial del DJ (30-45 palabras), o string vacío si no toca locutar antes de esta canción.",
+                  },
+                },
+                required: ["selected_song_id", "dj_script"],
+                additionalProperties: false,
+              },
             },
           },
-          required: ["selected_song_id", "dj_script"],
+          required: ["decisions"],
           additionalProperties: false,
         },
       },
@@ -497,8 +543,7 @@ Directrices de Locución Radial para un Flujo Magnético y Carismático:
           console.log("[OrchestratorService] Native agent final response:", content);
           const parsed = JSON.parse(content);
           return {
-            selectedSongId: parsed.selected_song_id,
-            djScript: parsed.dj_script || undefined,
+            decisions: parsed.decisions || [],
           };
         }
 
@@ -548,9 +593,6 @@ Directrices de Locución Radial para un Flujo Magnético y Carismático:
             duration: status.duration,
             queue: queue.map((q) => q.title),
           });
-        }
-        case "get_current_time": {
-          return new Date().toLocaleTimeString("es-ES", { hour: "numeric", minute: "2-digit" });
         }
         default:
           return `Herramienta "${name}" no encontrada.`;

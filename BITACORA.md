@@ -229,11 +229,14 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 ### 🎙️ AI DJ y Orquestación Inteligente Continua (Agente con Herramientas)
 
 - **Orquestador Central (`OrchestratorService`)**: Se implementó un bucle de control inteligente (cada 10s) que asegura un colchón mínimo de 2 canciones en la cola de Liquidsoap.
+- **Planificación por Lotes (Batching)**: Se optimizó el flujo para que cuando la cola sea baja, el DJ planifique una tanda completa de **5 canciones consecutivas** con sus interludios y locuciones en una sola llamada a OpenRouter, lo cual reduce el consumo de tokens en aproximadamente un 80% y permite ganchos y transiciones más cohesionadas.
 - **Voz Neural con Edge-TTS**: Síntesis gratuita de voz neural de alta calidad de Microsoft Edge en tiempo real para las locuciones.
-- **Bucle de Llamada a Herramientas (Tool-use)**: El locutor de OpenRouter tiene la facultad de ejecutar llamadas a herramientas locales para planificar su locución o selección musical antes de emitirla:
+- **Bucle de Llamada a Herramientas (Tool-use)**: El locutor de OpenRouter tiene la facultad de ejecutar llamadas a herramientas locales para planificar su bloque de 5 temas o realizar búsquedas en su catálogo:
   - `search_library(query)`: Busca canciones locales en la base de datos de la radio.
+  - `get_library_stats()`: Obtiene el conteo total de temas locales.
   - `get_stream_status()`: Consulta el stream activo y temas en cola para no repetir.
-  - `get_current_time()`: Consulta la hora de la emisora.
-- **Persistencia y Continuidad**: Guarda el historial de diálogos (máximo 20 mensajes entre locuciones y canciones) en `data/dj_history.json` para conservar un contexto coherente e hilar temas al hablar.
+- **Hora Peruana Inyectada**: Se removió la herramienta de obtención de tiempo. En su lugar, el orquestador inyecta la hora actual calculada en la zona de Perú directamente en el prompt del sistema y el del usuario.
+- **Persistencia, Continuidad e Historial Acortado**: Guarda el historial de diálogos (formato chat `DialogueMessage[]`) en `data/dj_history.json` para conservar un contexto coherente e hilar temas al hablar, limitado estrictamente a un máximo de **5 mensajes** para evitar la repetición de canciones e ideas sin elevar el consumo de tokens.
+- **Ángulos Creativos Dinámicos**: En cada locución se le exige al DJ un ángulo creativo aleatorio (reflexionar sobre la hora, datos del artista, sonoridad, puentes rítmicos, etc.) para romper con frases introductorias o locuciones repetitivas.
 - **Limpieza Activa**: El orquestador monitorea la reproducción y elimina automáticamente los archivos `.mp3` de locución generados tan pronto como salen de la cola de emisión.
 - **Filtro de Watcher**: Modificado el escáner y vigilante de `LibraryService` para ignorar los archivos que inician con `ai_dj_`, evitando contaminar el catálogo estable de la biblioteca.

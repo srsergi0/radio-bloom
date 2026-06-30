@@ -11,7 +11,7 @@ settings.request.retries := 1
 
 # Background playlist (always available when queue is empty)
 # conservative=true avoids re-encoding when codec matches output
-music = playlist(mode="randomize", reload=60, conservative=true, "/music/songs/")
+music = playlist(mode="randomize", reload=60, "/music/songs/")
 radio = crossfade(duration=3.0, music)
 radio = mksafe(radio)
 

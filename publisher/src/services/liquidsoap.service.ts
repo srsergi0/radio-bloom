@@ -71,7 +71,7 @@ export class LiquidsoapService {
 
   public async getRequestMetadata(rid: string): Promise<Record<string, string>> {
     try {
-      const lines = await this.sendCommand(`request.metadata ${rid}`);
+      const lines = await this.sendCommand(`request.metadata ${rid}`, 5000);
       const meta: Record<string, string> = {};
       for (const line of lines) {
         const eqIndex = line.indexOf("=");
@@ -81,9 +81,27 @@ export class LiquidsoapService {
           if (value.startsWith('"') && value.endsWith('"')) {
             value = value.slice(1, -1);
           }
+          // Skip huge fields like lyrics/uslt to keep metadata lean
+          if (key === "uslt" || key === "lyrics" || value.length > 500) continue;
           meta[key] = value;
         }
       }
+
+      // In Liquidsoap v2.4+, idle requests have no title/artist metadata.
+      // Extract from filename as fallback: "/music/songs/SongTitle - Artist.mp3"
+      if (meta.filename && !meta.title) {
+        const filename = meta.filename.replace(/\\/g, "/").split("/").pop() || "";
+        const noExt = filename.replace(/\.[^.]+$/, "");
+        // Pattern: "Title - Artist" or just "Title"
+        const dashIdx = noExt.indexOf(" - ");
+        if (dashIdx > 0) {
+          meta.title = noExt.substring(0, dashIdx).trim();
+          meta.artist = noExt.substring(dashIdx + 3).trim();
+        } else {
+          meta.title = noExt;
+        }
+      }
+
       return meta;
     } catch {
       return {};

@@ -184,12 +184,9 @@ export class LibraryService {
 
           if (results.length > 0) {
             const track = results[0];
-            title = track.title;
-            artist = track.artist;
-            album = track.album;
-            duration = track.duration;
+            // Only use Spotify for the spotifyUrl. Never touch title/artist/album/duration.
             spotifyUrl = track.spotifyUrl;
-            console.log(`[LibraryService] ✅ Spotify found: ${title} — ${artist} (${album})`);
+            console.log(`[LibraryService] ✅ Spotify found: ${track.title} — ${track.artist} (${track.album})`);
           } else {
             console.log(`[LibraryService] Spotify not found: ${queryBasic}`);
           }

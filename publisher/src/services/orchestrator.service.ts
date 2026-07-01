@@ -440,8 +440,11 @@ export class OrchestratorService {
       return;
     }
 
-    // Process each decision in the batch
+    // Process each decision in the batch (max 2 songs to prevent queue bloat)
+    const maxSongsPerBatch = 2;
+    let songsAdded = 0;
     for (const decision of batchResult.decisions) {
+      if (songsAdded >= maxSongsPerBatch) break;
       const song = this.libraryRepo.getTrackById(decision.selected_song_id);
       if (!song) {
         console.warn(
@@ -475,6 +478,7 @@ export class OrchestratorService {
       );
       const songRid = await this.liquidsoapService.queuePush(`/music/${song.file}`);
       if (songRid) {
+        songsAdded++;
         this.recentHistory.push(song.id);
         if (this.recentHistory.length > 15) this.recentHistory.shift();
 

@@ -1,15 +1,16 @@
-#!/bin/bash
-# Fix volume permissions
+#!/bin/sh
+# Fix volume permissions before starting FTP server
 chown -R 1000:1000 "$FTP_USER_HOME/music/songs" "$FTP_USER_HOME/music/interludios" 2>/dev/null || true
 
-# Initialize puredb paths
+# Initialize puredb
+mkdir -p /etc/pure-ftpd/passwd
+chmod 777 /etc/pure-ftpd/passwd
 PASSWD_FILE="/etc/pure-ftpd/passwd/pureftpd.passwd"
 PUREDB_FILE="/etc/pure-ftpd/passwd/pureftpd.pdb"
-mkdir -p /etc/pure-ftpd/passwd
 touch "$PASSWD_FILE"
 
-# Create user if passwd file is empty or user doesn't exist
-if [ ! -s "$PASSWD_FILE" ] || ! grep -q "^${FTP_USER_NAME}:" "$PASSWD_FILE" 2>/dev/null; then
+# Create user if not already in puredb
+if ! pure-pw list -f "$PASSWD_FILE" 2>/dev/null | grep -q "^${FTP_USER_NAME}"; then
   echo "Creating FTP user: $FTP_USER_NAME"
   mkdir -p "$FTP_USER_HOME/music"
   PWD_FILE="$(mktemp)"
@@ -18,21 +19,14 @@ if [ ! -s "$PASSWD_FILE" ] || ! grep -q "^${FTP_USER_NAME}:" "$PASSWD_FILE" 2>/d
   rm -f "$PWD_FILE"
   pure-pw mkdb "$PUREDB_FILE" -f "$PASSWD_FILE"
   echo "FTP user $FTP_USER_NAME created."
-else
-  echo "FTP user $FTP_USER_NAME already exists, rebuilding puredb."
-  pure-pw mkdb "$PUREDB_FILE" -f "$PASSWD_FILE"
 fi
 
-# Start pure-ftpd in background and keep shell alive
-/usr/sbin/pure-ftpd \
+# Start pure-ftpd directly (skip run.sh to avoid user creation conflicts)
+exec pure-ftpd \
   -l puredb:$PUREDB_FILE \
   -P "$PUBLICHOST" \
-  -p "$FTP_PASSIVE_PORTS" \
+  -p "$FTP_PASSIVE_MIN:$FTP_PASSIVE_MAX" \
   -s -A -j -H -4 -R -G -X -x \
   -T 0 \
   -c "${FTP_MAX_CLIENTS:-50}" \
-  -C "${FTP_MAX_CONNECTIONS:-20}" &
-
-# Keep shell alive until pure-ftpd exits
-trap "kill \$! 2>/dev/null; exit" SIGTERM SIGINT
-wait
+  -C "${FTP_MAX_CONNECTIONS:-20}"

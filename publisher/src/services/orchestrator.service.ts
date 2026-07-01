@@ -64,6 +64,9 @@ export class OrchestratorService {
     console.log("[OrchestratorService] Starting AI DJ Orchestrator background loop...");
     this.startedAt = Date.now();
 
+    // Clear stale queue from previous session on startup
+    this.liquidsoapService.queueClear().catch(() => {});
+
     // Check every 10 seconds
     this.loopInterval = setInterval(() => {
       this.tick().catch((err) => console.error("[OrchestratorService] Error in tick loop:", err));

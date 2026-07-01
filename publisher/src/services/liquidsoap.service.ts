@@ -210,39 +210,15 @@ export class LiquidsoapService {
     }
   }
 
-  public queueRemove(rid: string): Promise<boolean> {
-    return this.withQueueLock(async () => {
-      try {
-        const lines = await this.sendCommand("queue.queue");
-        if (lines.length === 0) return false;
-        const queued = lines[0].split(/\s+/).filter(Boolean);
-        const idx = queued.indexOf(rid);
-        if (idx === -1) return false;
-
-        // Fetch metadata only for remaining items (skip the one being removed)
-        const remainingRids = queued.filter((_, i) => i !== idx);
-        const metas = await Promise.all(
-          remainingRids.map((r) => this.getRequestMetadata(r).catch(() => ({})))
-        );
-        const uris = metas.map((m) => m.initial_uri || m.filename || "").filter(Boolean);
-
-        await this.sendCommand("queue.clear");
-        await new Promise((r) => setTimeout(r, 200));
-
-        let pushedCount = 0;
-        for (const uri of uris) {
-          const result = await this.queuePush(uri).catch(() => null);
-          if (result) pushedCount++;
-        }
-        console.log(
-          `[LiquidsoapService] queueRemove: cleared and rebuilt queue with ${pushedCount}/${uris.length} items`
-        );
-        return true;
-      } catch (err: any) {
-        console.error(`[LiquidsoapService] queueRemove failed:`, err.message);
-        return false;
-      }
-    });
+  public async queueRemove(rid: string): Promise<boolean> {
+    try {
+      await this.sendCommand(`queue.remove ${rid}`);
+      console.log(`[LiquidsoapService] queueRemove: removed rid ${rid} via native command`);
+      return true;
+    } catch (err: any) {
+      console.error(`[LiquidsoapService] queueRemove failed:`, err.message);
+      return false;
+    }
   }
 
   public queueInsert(index: number, filepath: string): Promise<boolean> {

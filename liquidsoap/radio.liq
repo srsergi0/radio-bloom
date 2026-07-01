@@ -5,18 +5,14 @@ settings.server.telnet.port := 1234
 settings.server.telnet.bind_addr := "0.0.0.0"
 settings.harbor.bind_addrs := ["0.0.0.0"]
 
-# Request handling: prevent infinite retry loops on missing files
-settings.request.timeout := 10.
-settings.request.retries := 1
-
 # Background playlist (always available when queue is empty)
 # conservative=true avoids re-encoding when codec matches output
 music = playlist(mode="randomize", reload=60, "/music/songs/")
 radio = crossfade(duration=3.0, music)
 radio = mksafe(radio)
 
-# User queue for on-demand tracks
-queue = request.queue(id="queue")
+# User queue for on-demand tracks (timeout=10s to prevent stuck requests)
+queue = request.queue(id="queue", timeout=10.)
 
 # Live input via Icecast (Harbor)
 live = input.harbor(

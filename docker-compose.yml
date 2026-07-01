@@ -17,7 +17,7 @@ services:
   # Liquidsoap - Streaming Engine
   # ──────────────────────────────────────────────
   liquidsoap:
-    image: savonet/liquidsoap:v2.2.5
+    image: savonet/liquidsoap:v2.4.5
     restart: unless-stopped
     ports:
       - "${SRT_PORT}:8002/udp"

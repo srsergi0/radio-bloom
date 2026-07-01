@@ -35,7 +35,7 @@ export class LiquidsoapService {
   }
 
   public async clearAndPush(filepath: string): Promise<string | null> {
-    await this.sendCommand("queue.clear");
+    await this.queueClear();
     await new Promise((r) => setTimeout(r, 200));
     return this.queuePush(filepath);
   }
@@ -233,7 +233,10 @@ export class LiquidsoapService {
         const safeIndex = Math.max(0, Math.min(index, uris.length));
         uris.splice(safeIndex, 0, filepath);
 
-        await this.sendCommand("queue.clear");
+        // Clear via queue.remove (v2.4+ has no queue.clear)
+        for (const rid of queued) {
+          await this.sendCommand(`queue.remove ${rid}`).catch(() => {});
+        }
         await new Promise((r) => setTimeout(r, 200));
 
         let pushedCount = 0;
@@ -254,9 +257,16 @@ export class LiquidsoapService {
 
   public async queueClear(): Promise<void> {
     try {
-      await this.sendCommand("queue.clear");
+      // In Liquidsoap v2.4+, there's no queue.clear telnet command.
+      // Get all rids and remove them one by one.
+      const lines = await this.sendCommand("queue.queue");
+      if (lines.length === 0) return;
+      const rids = lines[0].split(/\s+/).filter(Boolean);
+      for (const rid of rids) {
+        await this.sendCommand(`queue.remove ${rid}`).catch(() => {});
+      }
       this.lastManualQueueClear = Date.now();
-      console.log("[LiquidsoapService] Queue cleared manually");
+      console.log(`[LiquidsoapService] Queue cleared: removed ${rids.length} items`);
     } catch {}
   }
 
@@ -278,8 +288,8 @@ export class LiquidsoapService {
 
   public async playFilesNow(filepaths: string[]): Promise<boolean> {
     try {
-      await this.sendCommand("queue.clear");
-      await new Promise((r) => setTimeout(r, 500));
+      await this.queueClear();
+      await new Promise((r) => setTimeout(r, 200));
       for (const filepath of filepaths) {
         await this.queuePush(filepath);
       }

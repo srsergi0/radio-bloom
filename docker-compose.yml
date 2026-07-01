@@ -79,18 +79,19 @@ services:
     volumes:
       - radio-music:/home/radio/music/songs
       - radio-interludios:/home/radio/music/interludios
+      - ftp-passwd:/etc/pure-ftpd/passwd
     environment:
       - PUBLICHOST=${FTP_PUBLIC_HOST}
       - FTP_USER_NAME=${FTP_USER_NAME}
       - FTP_USER_PASS=${FTP_USER_PASS}
       - FTP_USER_HOME=${FTP_USER_HOME}
-      - UMASK=${FTP_UMASK}
-      - TLS_CN=${FTP_PUBLIC_HOST}
-      - FTP_PASSIVE_MIN=${FTP_PASSIVE_MIN}
-      - FTP_PASSIVE_MAX=${FTP_PASSIVE_MAX}
+      - FTP_PASSIVE_PORTS=${FTP_PASSIVE_MIN}:${FTP_PASSIVE_MAX}
+      - FTP_MAX_CLIENTS=50
+      - FTP_MAX_CONNECTIONS=20
 
 volumes:
   radio-music:
   radio-interludios:
   radio-publisher-data:
   redis_data:
+  ftp-passwd:

@@ -8,7 +8,7 @@ services:
     image: alpine:latest
     volumes:
       - ./:/workspace
-    entrypoint: /bin/sh -c "mkdir -p /workspace/music/songs /workspace/music/interludios"
+    entrypoint: /bin/sh -c "mkdir -p /workspace/music/songs /workspace/music/interludios && chmod -R 755 /workspace/music/songs /workspace/music/interludios"
 
   # ──────────────────────────────────────────────
   # Redis - Queue & Caching

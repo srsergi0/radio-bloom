@@ -22,7 +22,7 @@ Puertos críticos:
 
 # Carpetas de Música
 
-Las carpetas `music/songs/` e `music/interludios/` deben existir antes de levantar el stack. El servicio `init` en `docker-compose.yml` las crea automáticamente si no existen. Si se eliminan manualmente, el sistema se romperá.
+Las carpetas `music/songs/` e `music/interludios/` deben existir y tener permisos de lectura (755) antes de levantar el stack. El servicio `init` en `docker-compose.yml` las crea y arregla permisos automáticamente. Si se eliminan manualmente o los permisos se rompen, el sistema falla con "Nonexistent file or ill-formed URI".
 
 # Git: No Auto-Commit or Push
 

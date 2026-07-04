@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:f
 import { basename, extname, join, relative } from "node:path";
 import type { Track } from "../domain/types";
 import type { AudioMetadataClient } from "../infrastructure/audio-metadata.client";
-import { spotifySearch } from "../infrastructure/spotify.client";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 
 const AUDIO_EXTENSIONS = /\.(mp3|wav|ogg|flac|m4a)$/i;
@@ -72,30 +71,9 @@ async function enrichMetadata(
   const artist = meta.artist || "";
   const album = meta.album || "";
   const duration = meta.duration || Math.floor(stat.size / ((192 * 1000) / 8));
-  let spotifyUrl = meta.spotifyUrl || "";
-
-  if (type === "song" && !spotifyUrl) {
-    spotifyUrl = await searchSpotify(title, artist, album);
-  }
+  const spotifyUrl = meta.spotifyUrl || "";
 
   return { title, artist, album, duration, spotifyUrl };
-}
-
-async function searchSpotify(title: string, artist: string, album: string): Promise<string> {
-  const queryBasic = artist ? `${title} ${artist}` : title;
-  let results = await spotifySearch(queryBasic);
-
-  if (results.length === 0 && album) {
-    results = await spotifySearch(`${title} ${artist} ${album}`);
-  }
-
-  if (results.length > 0) {
-    console.log(`[Library] Spotify found: ${results[0].title} — ${results[0].artist}`);
-    return results[0].spotifyUrl;
-  }
-
-  console.log(`[Library] Spotify not found: ${queryBasic}`);
-  return "";
 }
 
 async function upsertFiles(

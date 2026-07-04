@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { EdgeTTS } from "edge-tts-universal";
 import type { Track } from "../domain/types";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
+import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import type { LibraryService } from "./library.service";
 import type { LiquidsoapService } from "./liquidsoap.service";
 import type { LocutorService } from "./locutor.service";
@@ -42,6 +43,7 @@ export class OrchestratorService {
     private readonly libraryService: LibraryService,
     private readonly liquidsoapService: LiquidsoapService,
     private readonly locutorService: LocutorService,
+    private readonly playlistRepo: PlaylistRepository,
     private readonly musicDir: string,
     private readonly dataDir: string
   ) {}
@@ -182,12 +184,12 @@ export class OrchestratorService {
       // 2. Check if manual queue needs interludios injected
       await this.checkAndInjectManualQueueInterludios(status, queue);
 
-      // 3. Queue new tracks if queue is dropping below 2 elements
+      // 3. Queue new tracks if queue is dropping below 5 elements
       //    but never exceed 20 items to prevent unbounded growth
       //    Also skip if user recently cleared the queue manually
-      if (queue.length < 2 && queue.length < 20 && !this.liquidsoapService.isManualClearActive()) {
+      if (queue.length < 5 && queue.length < 20 && !this.liquidsoapService.isManualClearActive()) {
         console.log(
-          `[OrchestratorService] Queue is low (${queue.length} items). Enqueuing next track...`
+          `[OrchestratorService] Queue is low (${queue.length} items). Enqueuing next tracks...`
         );
         await this.enqueueNext(status, queue);
       }
@@ -387,7 +389,7 @@ export class OrchestratorService {
   }
 
   /**
-   * Enqueues the next track, deciding between a DJ speech + song or just a song.
+   * Enqueues tracks based on locutor's playlist or AI agent when no playlist exists.
    */
   private async enqueueNext(status: any, queue: any[]): Promise<void> {
     const allSongs = this.libraryRepo.getAllTracks("song");
@@ -397,34 +399,6 @@ export class OrchestratorService {
         "[OrchestratorService] No tracks found in the database catalog. Queue addition skipped."
       );
       return;
-    }
-
-    // Determine the last song queued or currently playing
-    let lastSong: Track | null = null;
-    if (queue.length > 0) {
-      const lastQueueItem = queue[queue.length - 1];
-      const meta = await this.liquidsoapService.getRequestMetadata(lastQueueItem.rid);
-      const filename = meta.filename || meta.initial_uri || "";
-      if (filename) {
-        const relativePath = filename
-          .replace(/\\/g, "/")
-          .replace(/^\/music\//, "")
-          .replace(/^\/app\/music\//, "")
-          .replace(/^app\/music\//, "");
-        lastSong = this.libraryRepo.getTrackByFile(relativePath);
-      }
-    }
-
-    if (!lastSong && status.playing && status.metadata) {
-      const filename = status.metadata.filename || status.metadata.initial_uri || "";
-      if (filename) {
-        const relativePath = filename
-          .replace(/\\/g, "/")
-          .replace(/^\/music\//, "")
-          .replace(/^\/app\/music\//, "")
-          .replace(/^app\/music\//, "");
-        lastSong = this.libraryRepo.getTrackByFile(relativePath);
-      }
     }
 
     const activeLocutor = this.locutorService.getActiveLocutorAtCurrentTime();
@@ -438,94 +412,485 @@ export class OrchestratorService {
       );
     }
 
-    console.log("[OrchestratorService] Queue is low. Triggering batch DJ agent...");
+    // 1. Try to find a playlist for this locutor
+    const playlist = activeLocutor
+      ? this.playlistRepo.findActivePlaylistForLocutor(activeLocutor.id)
+      : null;
 
-    const batchResult = await this.runAgentLoop(status, queue, lastSong, activeLocutor);
-
-    if (
-      !batchResult ||
-      !Array.isArray(batchResult.decisions) ||
-      batchResult.decisions.length === 0
-    ) {
-      console.warn(
-        "[OrchestratorService] Agent loop failed to plan a batch. Falling back to local selection."
+    if (playlist && playlist.tracks.length > 0) {
+      console.log(
+        `[OrchestratorService] Found playlist "${playlist.name}" for locutor "${activeLocutor!.name}" (${playlist.tracks.length} tracks)`
       );
-      // Fallback: queue 2 random songs programmatically (reduced from 5 to avoid queue bloat)
-      for (let i = 0; i < 2; i++) {
-        const candidates = allSongs.filter((song) => !this.recentHistory.includes(song.id));
-        const pool = candidates.length > 0 ? candidates : allSongs;
-        const randomSong = pool[Math.floor(Math.random() * pool.length)];
-        if (randomSong) {
-          console.log(`[OrchestratorService] Fallback enqueuing: "${randomSong.title}"`);
-          const songRid = await this.liquidsoapService.queuePush(`/music/${randomSong.file}`);
-          if (songRid) {
-            this.recentHistory.push(randomSong.id);
-            if (this.recentHistory.length > 15) this.recentHistory.shift();
-          }
-        }
-      }
+      await this.enqueueFromPlaylist(playlist, queue, status, activeLocutor);
       return;
     }
 
-    // Process each decision in the batch (max 2 songs to prevent queue bloat)
-    const maxSongsPerBatch = 2;
-    let songsAdded = 0;
-    for (const decision of batchResult.decisions) {
-      if (songsAdded >= maxSongsPerBatch) break;
-      const song = this.libraryRepo.getTrackById(decision.selected_song_id);
-      if (!song) {
-        console.warn(
-          `[OrchestratorService] Selected song ID not found in library: ${decision.selected_song_id}. Skipping.`
-        );
-        continue;
-      }
+    // 2. No playlist found → AI DJ Phase 2
+    console.log(
+      "[OrchestratorService] No playlist found for this locutor. Triggering AI DJ Phase 2..."
+    );
+    await this.runAgentPhase2(status, queue, activeLocutor);
+  }
 
-      // 1. Synthesize DJ speech if present
-      if (decision.dj_script && decision.dj_script.trim() !== "") {
-        const speechPath = await this.synthesizeSpeech(decision.dj_script, activeLocutor?.voice);
+  /**
+   * Calculates remaining time from the current queue (elapsed + remaining songs)
+   * and enqueues the right number of songs from a playlist to fill that time.
+   */
+  private async enqueueFromPlaylist(
+    playlist: { tracks: { file?: string; duration: number; script?: string }[] },
+    queue: any[],
+    status: any,
+    activeLocutor: any
+  ): Promise<void> {
+    // Calculate remaining time from the 2 songs closest to finishing in queue
+    let remainingTimeSec = 0;
+
+    if (queue.length > 0) {
+      // Use the first song in queue (closest to finishing) for time estimation
+      const firstQueueItem = queue[0];
+      try {
+        const meta = await this.liquidsoapService.getRequestMetadata(firstQueueItem.rid);
+        const elapsed = parseFloat(meta.elapsed || "0");
+        const duration = parseFloat(meta.duration || "0");
+        if (duration > 0) {
+          remainingTimeSec += Math.max(0, duration - elapsed);
+        }
+      } catch {}
+
+      // Add duration of remaining songs in queue (skip the first one, we already counted it)
+      for (let i = 1; i < queue.length; i++) {
+        try {
+          const meta = await this.liquidsoapService.getRequestMetadata(queue[i].rid);
+          const dur = parseFloat(meta.duration || "0");
+          if (dur > 0) remainingTimeSec += dur;
+        } catch {}
+      }
+    }
+
+    // If we couldn't estimate, default to 10 minutes
+    if (remainingTimeSec <= 0) {
+      remainingTimeSec = 600;
+    }
+
+    console.log(
+      `[OrchestratorService] Estimated remaining queue time: ${Math.round(remainingTimeSec)}s`
+    );
+
+    // Select songs from playlist that fit the remaining time
+    // Never cut a song — stop before the last one that would overflow
+    const selectedTracks: typeof playlist.tracks = [];
+    let totalTime = 0;
+
+    for (const track of playlist.tracks) {
+      if (!track.file) continue;
+      if (totalTime + track.duration > remainingTimeSec + 30) break; // 30s tolerance
+      selectedTracks.push(track);
+      totalTime += track.duration;
+    }
+
+    if (selectedTracks.length === 0) {
+      console.warn(
+        "[OrchestratorService] Playlist has no valid tracks with files. Falling back to random."
+      );
+      const allSongs = this.libraryRepo.getAllTracks("song");
+      await this.enqueueFallback(allSongs, 2);
+      return;
+    }
+
+    console.log(
+      `[OrchestratorService] Enqueuing ${selectedTracks.length} tracks from playlist (total: ~${Math.round(totalTime)}s)`
+    );
+
+    for (const track of selectedTracks) {
+      const filepath = `/music/${track.file}`;
+
+      // Synthesize script if present
+      if (track.script && track.script.trim() !== "") {
+        const speechPath = await this.synthesizeSpeech(track.script, activeLocutor?.voice);
         if (speechPath) {
-          console.log(`[OrchestratorService] Enqueuing synthesized DJ speech track: ${speechPath}`);
           const filename = speechPath.replace(/\\/g, "/").split("/").pop();
           const rid = await this.liquidsoapService.queuePush(`/music/interludios/${filename}`);
           if (rid) {
             this.tempFiles.add(speechPath);
+            this.dialogueHistory.push({ role: "assistant", content: track.script });
           }
-
-          // Add speech to history
-          this.dialogueHistory.push({
-            role: "assistant",
-            content: decision.dj_script,
-          });
         }
       }
 
-      // 2. Queue the song
-      console.log(
-        `[OrchestratorService] Enqueuing Song: "${song.title}" by ${song.artist || "Unknown"}`
-      );
-      const songRid = await this.liquidsoapService.queuePush(`/music/${song.file}`);
-      if (songRid) {
-        songsAdded++;
-        this.recentHistory.push(song.id);
+      const rid = await this.liquidsoapService.queuePush(filepath);
+      if (rid) {
+        this.recentHistory.push(filepath);
         if (this.recentHistory.length > 15) this.recentHistory.shift();
-
-        // Add song metadata to history
-        this.dialogueHistory.push({
-          role: "system",
-          content: `Sonó la canción: "${song.title}" de ${song.artist || "Desconocido"}`,
-        });
       }
+    }
 
-      // Limit dialogue history to 5 messages to avoid token bloat and repetitions
-      if (this.dialogueHistory.length > 5) {
-        this.dialogueHistory = this.dialogueHistory.slice(-5);
+    this.saveHistory().catch(() => {});
+  }
+
+  /**
+   * Enqueues fallback random songs when nothing else is available.
+   */
+  private async enqueueFallback(allSongs: Track[], count: number): Promise<void> {
+    for (let i = 0; i < count; i++) {
+      const candidates = allSongs.filter((song) => !this.recentHistory.includes(song.id));
+      const pool = candidates.length > 0 ? candidates : allSongs;
+      const randomSong = pool[Math.floor(Math.random() * pool.length)];
+      if (randomSong) {
+        console.log(`[OrchestratorService] Fallback enqueuing: "${randomSong.title}"`);
+        const songRid = await this.liquidsoapService.queuePush(`/music/${randomSong.file}`);
+        if (songRid) {
+          this.recentHistory.push(randomSong.id);
+          if (this.recentHistory.length > 15) this.recentHistory.shift();
+        }
       }
-      this.saveHistory().catch(() => {});
     }
   }
 
   /**
-   * Run the LLM agentic single-turn completion with native tool call loop.
+   * AI DJ Phase 2: When no playlist exists for the locutor, the LLM creates one.
+   * Receives: personality, voice, 10 recent songs from this locutor, 100 least-played songs.
+   * Creates a permanent playlist in BD and enqueues songs.
+   */
+  private async runAgentPhase2(
+    status: any,
+    queue: any[],
+    activeLocutor: any
+  ): Promise<void> {
+    const apiKey = process.env.OPENROUTER_API_KEY || "";
+    const model = process.env.AI_DJ_OPENROUTER_MODEL || "google/gemini-2.5-flash";
+
+    const djName = activeLocutor ? activeLocutor.name : "DJ Bloom";
+    const personality = activeLocutor
+      ? activeLocutor.personality
+      : process.env.AI_DJ_PERSONALITY ||
+        "Un locutor de radio fresco, enérgico y cercano al público de Radio Bloom.";
+
+    // 1. Get 10 recent songs played by this locutor (from playlist_tracks via playlists)
+    const recentSongs = this.getLocutorRecentSongs(activeLocutor?.id, 10);
+
+    // 2. Get 100 least-played songs (ordered by lastPlayedAt ASC, nulls first)
+    const leastPlayed = this.libraryRepo.getLeastPlayedTracks(100);
+
+    // 3. Get last 2 songs in queue for context
+    const lastTwoSongs = await this.getLastTwoQueueSongs(queue);
+
+    // Build context for the LLM
+    const recentSongsText = recentSongs.length > 0
+      ? recentSongs.map((s) => `- "${s.title}" de ${s.artist || "Desconocido"}`).join("\n")
+      : "Ninguna canción previa en programas de este locutor.";
+
+    const catalogText = leastPlayed
+      .map((s) => `- ID: "${s.id}", Título: "${s.title}", Artista: ${s.artist || "Desconocido"}, Duración: ${Math.round(s.duration)}s`)
+      .join("\n");
+
+    const lastTwoText = lastTwoSongs.length > 0
+      ? lastTwoSongs.map((s) => `"${s.title}" de ${s.artist || "Desconocido"}`).join(", ")
+      : "Ninguna";
+
+    const systemPrompt = `Eres "${djName}", el legendario, carismático y magnético locutor estrella de la emisora por internet 'Radio Bloom'.
+Tu personalidad al aire es: ${personality}
+
+Tu tarea es crear una playlist programada para tu bloque de transmisión. Debes seleccionar canciones del catálogo disponible y construir una playlist que encaje con tu vibra y personalidad.
+
+CONTEXTO:
+- Las últimas 2 canciones en cola son de OTRO programa (solo para referencia de continuidad, NO las repitas).
+- Las canciones que tocaste en programas anteriores son: ${recentSongsText}
+
+CATÁLOGO DISPONIBLE (100 canciones ordenadas por tiempo sin reproducirse, las que más llevan sin sonar primero):
+${catalogText}
+
+Directrices:
+1. Selecciona entre 5 y 15 canciones del catálogo que encajen con tu personalidad.
+2. Puedes incluir locuciones intermedias (guiones de 30-45 palabras) pero solo en 1-2 de cada 5 canciones.
+3. NO incluyas canciones que ya están en la cola reciente.
+4. Cada canción tiene una duración real en segundos — respétala, no la modifiques.
+5. Ordena las canciones para crear un flujo musical coherente.
+6. No es necesario locutar antes de todas las canciones.
+
+RESULTADO:
+Usa la herramienta 'create_program_playlist' para crear la playlist con las canciones seleccionadas.
+Llama a esta herramienta obligatoriamente como tu último paso.`;
+
+    const userPrompt = `INFORMACIÓN DEL ENTORNO:
+- Últimas 2 canciones en cola (de otro programa): ${lastTwoText}
+- Locutor: ${djName}
+- Personalidad: ${personality}
+
+Crea la playlist programada con las canciones del catálogo. Llama a create_program_playlist.`;
+
+    const messages: any[] = [
+      { role: "system", content: systemPrompt },
+      ...this.dialogueHistory.slice(-3),
+      { role: "user", content: userPrompt },
+    ];
+
+    const tools = [
+      {
+        type: "function",
+        function: {
+          name: "search_library",
+          description:
+            "Busca canciones en la biblioteca de la radio por texto (título, artista o álbum). Devuelve coincidencias con sus IDs.",
+          parameters: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "Término de búsqueda textual (ej. 'Rick Astley').",
+              },
+            },
+            required: ["query"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "create_program_playlist",
+          description:
+            "Crea una playlist programada para un bloque de transmisión. Incluye las canciones seleccionadas del catálogo con sus IDs reales.",
+          parameters: {
+            type: "object",
+            properties: {
+              name: {
+                type: "string",
+                description: "Nombre del programa o playlist.",
+              },
+              description: {
+                type: "string",
+                description: "Descripción corta de la playlist (máx 100 caracteres).",
+              },
+              tracks: {
+                type: "array",
+                description: "Lista ordenada de canciones seleccionadas del catálogo.",
+                items: {
+                  type: "object",
+                  properties: {
+                    library_track_id: {
+                      type: "string",
+                      description: "El ID real de la canción en library_tracks.",
+                    },
+                    script: {
+                      type: "string",
+                      description:
+                        "Guión de locución opcional (30-45 palabras) para reproducir antes de esta canción, o string vacío.",
+                    },
+                  },
+                  required: ["library_track_id"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["name", "tracks"],
+            additionalProperties: false,
+          },
+        },
+      },
+    ];
+
+    let playlistResult: any = null;
+
+    for (let turn = 0; turn < 6; turn++) {
+      try {
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          signal: AbortSignal.timeout(60000),
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/srsergi0/radio-bloom",
+            "X-Title": "Radio Bloom",
+          },
+          body: JSON.stringify({
+            model,
+            messages,
+            temperature: 0.7,
+            tools,
+          }),
+        });
+
+        if (!res.ok) {
+          throw new Error(`OpenRouter returned status ${res.status}: ${await res.text()}`);
+        }
+
+        const data = (await res.json()) as any;
+        const message = data.choices?.[0]?.message;
+        if (!message) break;
+
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          messages.push(message);
+
+          for (const call of message.tool_calls) {
+            const name = call.function.name;
+            const args = JSON.parse(call.function.arguments || "{}");
+            console.log(`[OrchestratorService] Phase 2 tool call: ${name}`);
+
+            let toolResult = "";
+            if (name === "create_program_playlist") {
+              playlistResult = args;
+              toolResult = JSON.stringify({
+                ok: true,
+                playlist_name: args.name,
+                track_count: args.tracks?.length || 0,
+                message: "Playlist creada exitosamente.",
+              });
+            } else if (name === "search_library") {
+              toolResult = await this.executeTool(name, args);
+            } else {
+              toolResult = `Herramienta "${name}" no disponible en Phase 2.`;
+            }
+
+            messages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              name,
+              content: toolResult,
+            });
+          }
+
+          if (playlistResult) break;
+          continue;
+        }
+
+        if (message.content) {
+          console.log("[OrchestratorService] Phase 2 final response:", message.content.trim());
+        }
+        break;
+      } catch (err: any) {
+        console.error(`[OrchestratorService] Error in Phase 2 turn ${turn}:`, err.message);
+        break;
+      }
+    }
+
+    if (!playlistResult || !playlistResult.tracks || playlistResult.tracks.length === 0) {
+      console.warn(
+        "[OrchestratorService] Phase 2 failed to create playlist. Falling back to random."
+      );
+      const allSongs = this.libraryRepo.getAllTracks("song");
+      await this.enqueueFallback(allSongs, 2);
+      return;
+    }
+
+    // Create the playlist in the database
+    const playlistName = playlistResult.name || `AI DJ - ${djName} - ${new Date().toLocaleDateString("es-PE")}`;
+    const playlist = this.playlistRepo.create(playlistName, {
+      description: playlistResult.description || `Playlist generada por IA para ${djName}`,
+      locutorId: activeLocutor?.id,
+    });
+
+    console.log(
+      `[OrchestratorService] Created playlist "${playlist.name}" (${playlist.id}) with ${playlistResult.tracks.length} tracks`
+    );
+
+    // Calculate total duration and add tracks to playlist
+    let totalDuration = 0;
+    for (const item of playlistResult.tracks) {
+      const libTrack = this.libraryRepo.getTrackById(item.library_track_id);
+      if (!libTrack) {
+        console.warn(`[OrchestratorService] Track not found: ${item.library_track_id}`);
+        continue;
+      }
+      totalDuration += libTrack.duration;
+      this.playlistRepo.addTrack(playlist.id, {
+        type: libTrack.type as "song" | "interludio",
+        file: libTrack.file,
+        title: libTrack.title,
+        artist: libTrack.artist,
+        duration: libTrack.duration,
+        spotifyUrl: libTrack.spotifyUrl,
+        script: item.script || "",
+      });
+    }
+
+    console.log(
+      `[OrchestratorService] Playlist "${playlist.name}" total duration: ${Math.round(totalDuration)}s`
+    );
+
+    // Enqueue songs from the newly created playlist
+    await this.enqueueFromPlaylist(
+      { tracks: playlistResult.tracks.map((t: any) => {
+        const libTrack = this.libraryRepo.getTrackById(t.library_track_id);
+        return {
+          file: libTrack?.file,
+          duration: libTrack?.duration || 0,
+          script: t.script || "",
+        };
+      }) },
+      queue,
+      status,
+      activeLocutor
+    );
+
+    this.dialogueHistory.push({
+      role: "system",
+      content: `Se creó la playlist "${playlist.name}" con ${playlistResult.tracks.length} canciones (${Math.round(totalDuration)}s)`,
+    });
+    if (this.dialogueHistory.length > 5) {
+      this.dialogueHistory = this.dialogueHistory.slice(-5);
+    }
+    this.saveHistory().catch(() => {});
+  }
+
+  /**
+   * Gets the last N songs played by a specific locutor from playlists.
+   */
+  private getLocutorRecentSongs(
+    locutorId: string | undefined,
+    limit: number
+  ): { title: string; artist: string }[] {
+    if (!locutorId) return [];
+
+    try {
+      const playlists = this.playlistRepo.list();
+      const locutorPlaylists = playlists.filter((p) => p.locutorId === locutorId);
+
+      const recentSongs: { title: string; artist: string }[] = [];
+      for (const pl of locutorPlaylists.slice(0, 3)) {
+        const full = this.playlistRepo.get(pl.id);
+        if (full) {
+          for (const track of full.tracks) {
+            if (recentSongs.length >= limit) break;
+            if (track.type === "song") {
+              recentSongs.push({
+                title: track.title,
+                artist: track.artist || "Desconocido",
+              });
+            }
+          }
+        }
+      }
+      return recentSongs;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Gets the last 2 songs from the queue for context.
+   */
+  private async getLastTwoQueueSongs(
+    queue: any[]
+  ): Promise<{ title: string; artist: string }[]> {
+    const songs: { title: string; artist: string }[] = [];
+    const startIdx = Math.max(0, queue.length - 2);
+
+    for (let i = startIdx; i < queue.length; i++) {
+      try {
+        const meta = await this.liquidsoapService.getRequestMetadata(queue[i].rid);
+        if (meta.title) {
+          songs.push({
+            title: meta.title,
+            artist: meta.artist || "Desconocido",
+          });
+        }
+      } catch {}
+    }
+    return songs;
+  }
+
+  /**
+   * Run the LLM agentic single-turn completion with native tool call loop (legacy Phase 1).
    */
   private async runAgentLoop(
     status: any,

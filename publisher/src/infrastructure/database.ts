@@ -112,12 +112,23 @@ export class DatabaseConnection {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         played INTEGER NOT NULL DEFAULT 0,
+        description TEXT DEFAULT '',
+        locutor_id TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (locutor_id) REFERENCES locutors(id) ON DELETE SET NULL
       )
     `);
     try {
       this.client.exec("ALTER TABLE playlists ADD COLUMN played INTEGER NOT NULL DEFAULT 0");
+    } catch {}
+
+    // Migrate playlists: add columns if missing
+    try {
+      this.client.exec("ALTER TABLE playlists ADD COLUMN description TEXT DEFAULT ''");
+    } catch {}
+    try {
+      this.client.exec("ALTER TABLE playlists ADD COLUMN locutor_id TEXT");
     } catch {}
 
     this.client.exec(`

@@ -102,6 +102,19 @@ export class LibraryRepository {
       .map((r) => this.mapTrackRow(r));
   }
 
+  public getLeastPlayedTracks(limit: number): Track[] {
+    return this.db.drizzle
+      .select()
+      .from(schema.libraryTracks)
+      .where(eq(schema.libraryTracks.type, "song"))
+      .orderBy(
+        sql`CASE WHEN ${schema.libraryTracks.lastPlayedAt} IS NULL OR ${schema.libraryTracks.lastPlayedAt} = '' THEN 0 ELSE 1 END ASC, ${schema.libraryTracks.lastPlayedAt} ASC`
+      )
+      .limit(limit)
+      .all()
+      .map((r) => this.mapTrackRow(r));
+  }
+
   public countTracks(type: "song" | "interludio"): number {
     const row = this.db.drizzle
       .select({ count: sql`count(*)` })

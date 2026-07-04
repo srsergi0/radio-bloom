@@ -91,8 +91,8 @@ services:
       - "${FTP_PORT}:21"
       - "${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}:${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}"
     volumes:
-      - radio-music:/home/vsftpd/radio/songs
-      - radio-interludios:/home/vsftpd/radio/interludios
+      - ./music/songs:/home/vsftpd/radio/songs
+      - ./music/interludios:/home/vsftpd/radio/interludios
     environment:
       - FTP_USER=${FTP_USER_NAME}
       - FTP_PASS=${FTP_USER_PASS}

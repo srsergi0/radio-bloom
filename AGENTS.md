@@ -39,6 +39,25 @@ This applies to all situations including fixes, features, experiments, and WIP. 
 
 If a commit was just made without permission, apologize and follow the rule going forward.
 
+# Git Pull → Rebuild Selectivo
+
+Después de ejecutar `git pull`, analiza los archivos modificados y pregunta al usuario si quiere hacer rebuild de Docker, **recomendando solo lo necesario** según los cambios:
+
+| Cambios en... | Rebuild sugerido |
+|---|---|
+| `publisher/src/**`, `publisher/Dockerfile`, `publisher/package.json` | `publisher` |
+| `web/src/**`, `web/Dockerfile`, `web/package.json` | `web` |
+| `liquidsoap/radio.liq` | `liquidsoap` (restart) |
+| `docker-compose.yml`, `.env` | Todo el stack (`docker compose up -d --build`) |
+| Solo `BITACORA.md`, `README.md`, `.gitignore`, docs | **Ninguno** |
+
+Formato de la pregunta:
+```
+Hay cambios en [archivos]. ¿Rebuild de [servicio(s)]?
+```
+
+Si el usuario confirma, ejecuta solo el rebuild del servicio afectado. Si los cambios tocan múltiples servicios, pregunta cuáles rebuildear o si quiere todo.
+
 # Subproject AGENTS.md
 
 This repo uses nested AGENTS.md files for subproject-specific instructions:

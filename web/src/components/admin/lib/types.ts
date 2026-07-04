@@ -15,6 +15,8 @@ export interface Playlist {
   id: string;
   name: string;
   played: boolean;
+  description?: string;
+  locutorId?: string;
   tracks: PlaylistTrack[];
   createdAt: string;
   updatedAt: string;

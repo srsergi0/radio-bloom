@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 import type { Playlist, PlaylistTrack } from "../../domain/types";
 import type { DatabaseConnection } from "../../infrastructure/database";
 import * as schema from "./schema";
@@ -6,14 +6,34 @@ import * as schema from "./schema";
 export class PlaylistRepository {
   constructor(private readonly db: DatabaseConnection) {}
 
-  public create(name: string): Playlist {
+  public create(
+    name: string,
+    options?: { description?: string; locutorId?: string }
+  ): Playlist {
     const id = `pl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
     this.db.drizzle
       .insert(schema.playlists)
-      .values({ id, name, played: 0, createdAt: now, updatedAt: now })
+      .values({
+        id,
+        name,
+        played: 0,
+        description: options?.description || "",
+        locutorId: options?.locutorId || null,
+        createdAt: now,
+        updatedAt: now,
+      })
       .run();
-    return { id, name, played: false, tracks: [], createdAt: now, updatedAt: now };
+    return {
+      id,
+      name,
+      played: false,
+      description: options?.description,
+      locutorId: options?.locutorId,
+      tracks: [],
+      createdAt: now,
+      updatedAt: now,
+    };
   }
 
   public list(): Playlist[] {
@@ -22,11 +42,40 @@ export class PlaylistRepository {
       .from(schema.playlists)
       .orderBy(desc(schema.playlists.updatedAt))
       .all();
+
+    // Fetch all tracks in one query and group by playlistId
+    const allTracks = this.db.drizzle
+      .select()
+      .from(schema.playlistTracks)
+      .orderBy(schema.playlistTracks.pos)
+      .all();
+
+    const tracksByPlaylist = new Map<string, typeof allTracks>();
+    for (const t of allTracks) {
+      const arr = tracksByPlaylist.get(t.playlistId) || [];
+      arr.push(t);
+      tracksByPlaylist.set(t.playlistId, arr);
+    }
+
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
       played: r.played === 1,
-      tracks: [],
+      description: r.description || undefined,
+      locutorId: r.locutorId || undefined,
+      tracks: (tracksByPlaylist.get(r.id) || []).map((t) => ({
+        id: t.id,
+        playlistId: t.playlistId,
+        pos: t.pos,
+        type: t.type as any,
+        file: t.file || undefined,
+        title: t.title,
+        artist: t.artist || undefined,
+        duration: t.duration,
+        spotifyUrl: t.spotifyUrl || undefined,
+        script: t.script || undefined,
+        addedAt: t.addedAt,
+      })),
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     }));
@@ -51,6 +100,8 @@ export class PlaylistRepository {
       id: row.id,
       name: row.name,
       played: row.played === 1,
+      description: row.description || undefined,
+      locutorId: row.locutorId || undefined,
       tracks: tracks.map((t) => ({
         id: t.id,
         playlistId: t.playlistId,
@@ -333,6 +384,119 @@ export class PlaylistRepository {
         .where(eq(schema.playlists.id, playlistId))
         .run();
     });
+    return true;
+  }
+
+  public findByLocutorAndTime(
+    locutorId: string,
+    dayOfWeek: number,
+    startHour: string
+  ): Playlist | null {
+    const row = this.db.drizzle
+      .select()
+      .from(schema.playlists)
+      .where(
+        and(
+          eq(schema.playlists.locutorId, locutorId),
+          or(
+            isNull(schema.playlists.locutorId),
+            eq(schema.playlists.locutorId, locutorId)
+          )
+        )
+      )
+      .orderBy(desc(schema.playlists.updatedAt))
+      .get();
+    if (!row) return null;
+
+    const tracks = this.db.drizzle
+      .select()
+      .from(schema.playlistTracks)
+      .where(eq(schema.playlistTracks.playlistId, row.id))
+      .orderBy(schema.playlistTracks.pos)
+      .all();
+
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description || undefined,
+      locutorId: row.locutorId || undefined,
+      tracks: tracks.map((t) => ({
+        id: t.id,
+        playlistId: t.playlistId,
+        pos: t.pos,
+        type: t.type as any,
+        file: t.file || undefined,
+        title: t.title,
+        artist: t.artist || undefined,
+        duration: t.duration,
+        spotifyUrl: t.spotifyUrl || undefined,
+        script: t.script || undefined,
+        addedAt: t.addedAt,
+      })),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  public findActivePlaylistForLocutor(locutorId: string): Playlist | null {
+    const row = this.db.drizzle
+      .select()
+      .from(schema.playlists)
+      .where(eq(schema.playlists.locutorId, locutorId))
+      .orderBy(desc(schema.playlists.updatedAt))
+      .get();
+    if (!row) return null;
+
+    const tracks = this.db.drizzle
+      .select()
+      .from(schema.playlistTracks)
+      .where(eq(schema.playlistTracks.playlistId, row.id))
+      .orderBy(schema.playlistTracks.pos)
+      .all();
+
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description || undefined,
+      locutorId: row.locutorId || undefined,
+      tracks: tracks.map((t) => ({
+        id: t.id,
+        playlistId: t.playlistId,
+        pos: t.pos,
+        type: t.type as any,
+        file: t.file || undefined,
+        title: t.title,
+        artist: t.artist || undefined,
+        duration: t.duration,
+        spotifyUrl: t.spotifyUrl || undefined,
+        script: t.script || undefined,
+        addedAt: t.addedAt,
+      })),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  public updateLocutorAndDescription(
+    id: string,
+    updates: { locutorId?: string; description?: string }
+  ): boolean {
+    const exists = this.db.drizzle
+      .select({ id: schema.playlists.id })
+      .from(schema.playlists)
+      .where(eq(schema.playlists.id, id))
+      .get();
+    if (!exists) return false;
+
+    const setValues: Record<string, any> = { updatedAt: sql`datetime('now')` };
+    if (updates.locutorId !== undefined) setValues.locutorId = updates.locutorId;
+    if (updates.description !== undefined) setValues.description = updates.description;
+
+    this.db.drizzle
+      .update(schema.playlists)
+      .set(setValues)
+      .where(eq(schema.playlists.id, id))
+      .run();
     return true;
   }
 

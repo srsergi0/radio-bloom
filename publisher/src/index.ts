@@ -91,6 +91,7 @@ const orchestratorService = new OrchestratorService(
   libraryService,
   liquidsoapService,
   locutorService,
+  playlistRepo,
   MUSIC_DIR,
   DATA_DIR
 );

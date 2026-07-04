@@ -26,6 +26,8 @@ export const playlists = sqliteTable("playlists", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   played: integer("played").notNull().default(0),
+  description: text("description").default(""),
+  locutorId: text("locutor_id").references(() => locutors.id, { onDelete: "set null" }),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });

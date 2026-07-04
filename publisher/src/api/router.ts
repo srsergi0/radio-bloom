@@ -489,7 +489,10 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   app.post("/api/playlists", async (c) => {
     const body = await c.req.json();
     if (!body.name) return c.json({ ok: false, error: "name is required" }, 400);
-    const playlist = deps.playlistRepo.create(body.name);
+    const playlist = deps.playlistRepo.create(body.name, {
+      description: body.description,
+      locutorId: body.locutorId,
+    });
     return c.json({ ok: true, data: playlist });
   });
 
@@ -505,17 +508,31 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
   app.put("/api/playlists/:id", async (c) => {
     const body = await c.req.json();
-    const updates: { name?: string; played?: boolean } = {};
+    const updates: Record<string, any> = {};
     if (body.name !== undefined) updates.name = body.name;
     if (body.played !== undefined) updates.played = body.played;
 
-    if (Object.keys(updates).length === 0) {
-      return c.json({ ok: false, error: "name or played is required" }, 400);
+    const id = c.req.param("id");
+
+    // Update name/played via generic update
+    if (body.name !== undefined || body.played !== undefined) {
+      const updates: { name?: string; played?: boolean } = {};
+      if (body.name !== undefined) updates.name = body.name;
+      if (body.played !== undefined) updates.played = body.played;
+      deps.playlistRepo.update(id, updates);
     }
 
-    const ok = deps.playlistRepo.update(c.req.param("id"), updates);
-    if (!ok) return c.json({ ok: false, error: "Playlist not found" }, 404);
-    return c.json({ ok: true, data: deps.playlistRepo.get(c.req.param("id")) });
+    // Update locutorId and/or description
+    if (body.locutorId !== undefined || body.description !== undefined) {
+      deps.playlistRepo.updateLocutorAndDescription(id, {
+        locutorId: body.locutorId,
+        description: body.description,
+      });
+    }
+
+    const playlist = deps.playlistRepo.get(id);
+    if (!playlist) return c.json({ ok: false, error: "Playlist not found" }, 404);
+    return c.json({ ok: true, data: playlist });
   });
 
   app.delete("/api/playlists/:id", (c) => {

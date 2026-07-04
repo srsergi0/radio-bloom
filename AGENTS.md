@@ -9,6 +9,24 @@ Never write credentials, API keys, tokens, or passwords in source files, config 
 
 This project uses Docker environment variables for all secrets (Spotify tokens, FTP passwords, etc.).
 
+# Puertos Fijos — No Cambiar
+
+Los puertos de Bloom están conectados a **Cloudflare Tunnel**. NO cambiar los puertos en `.env` ni en `docker-compose.yml` bajo ninguna circunstancia.
+
+Puertos críticos:
+- `9876` — API Publisher
+- `6379` — Redis
+- `8000` — Liquidsoap Harbour
+- `21` + `30000-30100` — FTP
+- `3000` — Publisher interno
+
+# Migración Coolify → Docker Local
+
+Los servicios actuales corren en Coolify en esta misma máquina. Para hacer el switch:
+1. El usuario **apaga manualmente** el proyecto en Coolify
+2. Se verifican que los puertos estén libres
+3. Se levanta el stack local con `docker compose up -d`
+
 # Git: No Auto-Commit or Push
 
 Never commit or push changes unless explicitly asked by the user. Even then, ask for double confirmation before executing:

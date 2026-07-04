@@ -11,6 +11,7 @@ import type { TorrentService } from "./torrent.service";
 export class McpService {
   private readonly server: McpServer;
   private httpTransport: HttpTransport | null = null;
+  private currentSessionId: string | null = null;
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
@@ -1087,19 +1088,38 @@ export class McpService {
   }
 
   public async handleHttpRequest(req: Request): Promise<Response> {
-    if (!this.httpTransport) {
-      this.httpTransport = new HttpTransport({
-        sessionIdGenerator: () => crypto.randomUUID(),
-        enableJsonResponse: true,
-        onsessioninitialized: (sessionId) => {
-          console.log(`[McpService] MCP Session initialized: ${sessionId}`);
-        },
-        onsessionclosed: (sessionId) => {
-          console.log(`[McpService] MCP Session closed: ${sessionId}`);
-        },
-      });
-      await this.server.connect(this.httpTransport);
+    const sessionId = req.headers.get("mcp-session-id");
+
+    // Existing session — reuse transport
+    if (sessionId && sessionId === this.currentSessionId && this.httpTransport) {
+      return this.httpTransport.handleRequest(req);
     }
-    return this.httpTransport.handleRequest(req);
+
+    // New session — create fresh transport
+    const transport = new HttpTransport({
+      sessionIdGenerator: () => crypto.randomUUID(),
+      enableJsonResponse: true,
+      onsessioninitialized: (sid) => {
+        this.currentSessionId = sid;
+      },
+      onsessionclosed: () => {
+        this.currentSessionId = null;
+        this.httpTransport = null;
+      },
+    });
+
+    // Close previous session if any
+    if (this.httpTransport) {
+      try {
+        await this.httpTransport.close();
+      } catch {}
+    }
+
+    // Reset server transport reference so connect() doesn't throw
+    (this.server.server as any)._transport = undefined;
+
+    this.httpTransport = transport;
+    await this.server.connect(transport);
+    return transport.handleRequest(req);
   }
 }

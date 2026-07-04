@@ -312,6 +312,14 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 
 ## Cambios Recientes
 
+### Control de Colisión y Estado de Playlists Reproducidas (Julio 2026)
+
+- **Problema**: Cuando la cola de Liquidsoap bajaba de un umbral, se desencadenaba una orden de reproducir o re-generar una playlist. Como el procesamiento de síntesis de voz (TTS) y el encolamiento de pistas en Liquidsoap ocurre de forma asíncrona mediante BullMQ, la cola seguía viéndose vacía durante unos segundos, lo que causaba que la playlist se enviara a reproducir múltiples veces en paralelo. Esto limpiaba la cola consecutivamente y provocaba bucles de 30 minutos reproduciendo la misma canción e interludio.
+- **Solución**:
+  1. **Estado `played` en Playlists**: Añadida una columna `played` (booleano/entero) a la tabla `playlists` para registrar si ya ha sido reproducida. Si se intenta reproducir una playlist ya emitida (`played = 1`), el endpoint `POST /api/playlists/:id/play` la bloquea con un error `400` para evitar llamadas redundantes de los agentes, permitiendo saltarse este bloqueo con el parámetro `{ "force": true }` desde la UI.
+  2. **Cola Combinada Activa**: Modificado `liquidsoapService.queueList()` para consultar tanto la cola de Liquidsoap como los trabajos activos y en espera de BullMQ (`liquidsoapQueueService`). Los trabajos asíncronos en preparación se muestran en la cola con el flag `pending: true`.
+  3. **Visualización en UI**: Actualizado el panel web (`StreamQueueIsland`) para pintar los elementos pendientes de síntesis con un borde amarillo parpadeante, la etiqueta "Procesando..." y ocultar su botón de eliminación. Se añadieron badges de "Reproducida" en las listas y vistas de detalle de playlists.
+
 ### Migración FTP: pure-ftpd → vsftpd (Julio 2026)
 
 - **Problema**: La imagen `stilliard/pure-ftpd:hardened` tenía múltiples bugs: permisos denegados al crear directorios, configuración compleja de chroot, errores de pure-pw useradd, y el entrypoint personalizado nunca se ejecutaba correctamente.

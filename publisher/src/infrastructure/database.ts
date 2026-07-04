@@ -111,10 +111,14 @@ export class DatabaseConnection {
       CREATE TABLE IF NOT EXISTS playlists (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        played INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `);
+    try {
+      this.client.exec("ALTER TABLE playlists ADD COLUMN played INTEGER NOT NULL DEFAULT 0");
+    } catch {}
 
     this.client.exec(`
       CREATE TABLE IF NOT EXISTS playlist_tracks (

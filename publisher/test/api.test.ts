@@ -126,21 +126,21 @@ const mockLiquidsoapQueueService = {
   })),
 };
 
-const playlistStore: Record<string, { id: string; name: string; tracks: any[]; createdAt: string; updatedAt: string }> = {
+const playlistStore: Record<string, { id: string; name: string; played: boolean; tracks: any[]; createdAt: string; updatedAt: string }> = {
   pl_songs: {
-    id: "pl_songs", name: "Songs Only", tracks: [
+    id: "pl_songs", name: "Songs Only", played: false, tracks: [
       { id: "pt1", playlistId: "pl_songs", pos: 0, type: "song", file: "songs/cancion1.mp3", title: "Canción 1", artist: "Artist A", duration: 200, addedAt: "2024-01-01" },
       { id: "pt2", playlistId: "pl_songs", pos: 1, type: "song", file: "songs/cancion2.mp3", title: "Canción 2", artist: "Artist B", duration: 180, addedAt: "2024-01-02" },
     ], createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z",
   },
   pl_scripts: {
-    id: "pl_scripts", name: "Scripts Only", tracks: [
+    id: "pl_scripts", name: "Scripts Only", played: false, tracks: [
       { id: "pt3", playlistId: "pl_scripts", pos: 0, type: "interludio", file: null, title: "Saludo", script: "Bienvenidos a la radio", duration: 0, addedAt: "2024-01-01" },
       { id: "pt4", playlistId: "pl_scripts", pos: 1, type: "interludio", file: null, title: "Despedida", script: "Gracias por escuchar", duration: 0, addedAt: "2024-01-01" },
     ], createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z",
   },
   pl_mixed: {
-    id: "pl_mixed", name: "Mixed", tracks: [
+    id: "pl_mixed", name: "Mixed", played: false, tracks: [
       { id: "pt5", playlistId: "pl_mixed", pos: 0, type: "song", file: "songs/cancion1.mp3", title: "Canción 1", artist: "Artist A", duration: 200, addedAt: "2024-01-01" },
       { id: "pt6", playlistId: "pl_mixed", pos: 1, type: "interludio", file: null, title: "Saludo", script: "Bienvenidos", duration: 0, addedAt: "2024-01-01" },
       { id: "pt7", playlistId: "pl_mixed", pos: 2, type: "song", file: "songs/cancion2.mp3", title: "Canción 2", artist: "Artist B", duration: 180, addedAt: "2024-01-02" },
@@ -148,21 +148,22 @@ const playlistStore: Record<string, { id: string; name: string; tracks: any[]; c
     ], createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z",
   },
   pl_empty: {
-    id: "pl_empty", name: "Empty", tracks: [], createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z",
+    id: "pl_empty", name: "Empty", played: false, tracks: [], createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z",
   },
 };
 
 const mockPlaylistRepo = {
-  create: mock((name: string) => ({ id: "pl_new", name, tracks: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })),
-  list: mock(() => Object.values(playlistStore).map(({ id, name, createdAt, updatedAt }) => ({ id, name, createdAt, updatedAt }))),
+  create: mock((name: string) => ({ id: "pl_new", name, played: false, tracks: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })),
+  list: mock(() => Object.values(playlistStore).map(({ id, name, played, createdAt, updatedAt }) => ({ id, name, played, createdAt, updatedAt }))),
   get: mock((id: string) => {
     const p = playlistStore[id];
     if (!p) return null;
     return { ...p };
   }),
-  updateName: mock((id: string, name: string) => {
+  update: mock((id: string, updates: { name?: string; played?: boolean }) => {
     if (!playlistStore[id]) return false;
-    playlistStore[id].name = name;
+    if (updates.name !== undefined) playlistStore[id].name = updates.name;
+    if (updates.played !== undefined) playlistStore[id].played = updates.played;
     return true;
   }),
   delete: mock((id: string) => {
@@ -240,6 +241,9 @@ beforeEach(() => {
   bullMqJobIdCounter = 0;
   mockLiquidsoapQueueService.add.mockClear();
   mockLiquidsoapQueueService.addTts.mockClear();
+  for (const pl of Object.values(playlistStore)) {
+    pl.played = false;
+  }
 });
 
 function req(method: string, path: string, body?: any) {

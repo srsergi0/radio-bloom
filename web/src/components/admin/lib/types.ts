@@ -14,6 +14,7 @@ export interface Track {
 export interface Playlist {
   id: string;
   name: string;
+  played: boolean;
   tracks: PlaylistTrack[];
   createdAt: string;
   updatedAt: string;
@@ -74,4 +75,5 @@ export interface StreamQueueItem {
   title: string;
   type?: "song" | "interludio";
   script?: string;
+  pending?: boolean;
 }

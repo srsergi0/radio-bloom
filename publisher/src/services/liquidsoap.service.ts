@@ -3,6 +3,7 @@ import type { AudioMetadataClient } from "../infrastructure/audio-metadata.clien
 import type { TelnetClient } from "../infrastructure/telnet.client";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
+import type { LiquidsoapQueueService } from "./liquidsoap-queue.service";
 
 function toDbPath(filepath: string): string {
   // Normalize: "/music/songs/file.mp3" → "songs/file.mp3"
@@ -22,6 +23,7 @@ export class LiquidsoapService {
   private static readonly MANUAL_CLEAR_COOLDOWN_MS = 120_000; // 2min after manual clear, don't auto-fill
   // Cache RID -> filepath for items we enqueue (Liquidsoap doesn't return metadata for queued items)
   private readonly ridToFile = new Map<string, string>();
+  private queueService: LiquidsoapQueueService | null = null;
 
   constructor(
     private readonly telnetClient: TelnetClient,
@@ -30,6 +32,10 @@ export class LiquidsoapService {
     private readonly libraryRepo?: LibraryRepository,
     private readonly playlistRepo?: PlaylistRepository
   ) {}
+
+  public setQueueService(queueService: LiquidsoapQueueService): void {
+    this.queueService = queueService;
+  }
 
   public isConnected(): boolean {
     return this.telnetClient.isConnected();
@@ -344,117 +350,160 @@ export class LiquidsoapService {
       title?: string;
       script?: string;
       file?: string;
+      pending?: boolean;
     }[];
     total: number;
   }> {
+    let pendingItems: any[] = [];
+    if (this.queueService) {
+      try {
+        const waitingJobs = await this.queueService.getQueue().getWaiting();
+        const activeJobs = await this.queueService.getQueue().getActive();
+        const pendingJobs = [...activeJobs, ...waitingJobs];
+
+        pendingItems = pendingJobs.map((job) => {
+          const { filepath, script } = job.data || {};
+          const isInterludio = !!script || (filepath && filepath.includes("/interludios/"));
+
+          let title = "";
+          let artist = "";
+          if (script) {
+            title = script;
+          } else if (filepath) {
+            const fname = filepath.replace(/\\/g, "/").split("/").pop() || "";
+            const noExt = fname.replace(/\.[^.]+$/, "");
+            const dashIdx = noExt.indexOf(" - ");
+            if (dashIdx > 0) {
+              title = noExt.substring(0, dashIdx).trim();
+              artist = noExt.substring(dashIdx + 3).trim();
+            } else {
+              title = noExt;
+            }
+          }
+
+          return {
+            rid: `pending-${job.id}`,
+            title: title || "Preparando audio...",
+            artist: artist || "",
+            type: isInterludio ? ("interludio" as const) : ("song" as const),
+            script,
+            pending: true,
+          };
+        });
+      } catch (err: any) {
+        console.error("[LiquidsoapService] Error fetching pending jobs:", err.message);
+      }
+    }
+
     try {
       const lines = await this.sendCommand("queue.queue");
-      if (lines.length === 0) return { items: [], total: 0 };
-      const rids = lines[0].split(/\s+/).filter(Boolean);
-      const total = rids.length;
+      const rids = lines.length > 0 ? lines[0].split(/\s+/).filter(Boolean) : [];
+      const totalLiquidsoap = rids.length;
       const ridsToFetch = limit ? rids.slice(0, limit) : rids;
 
-      // Phase 1: resolve filenames from cache (0 telnet calls)
-      const ridFilenames: Record<string, string> = {};
-      const uncachedRids: string[] = [];
+      let items: any[] = [];
 
-      for (const rid of ridsToFetch) {
-        const cached = this.ridToFile.get(rid);
-        if (cached) {
-          ridFilenames[rid] = cached;
-        } else {
-          uncachedRids.push(rid);
-        }
-      }
-      console.log(
-        `[Liquidsoap] queueList cached: ${Object.keys(ridFilenames).length}, uncached: ${uncachedRids.length}`
-      );
+      if (ridsToFetch.length > 0) {
+        // Phase 1: resolve filenames from cache (0 telnet calls)
+        const ridFilenames: Record<string, string> = {};
+        const uncachedRids: string[] = [];
 
-      // Phase 2: batch fetch uncached RIDs in parallel (only what's missing)
-      if (uncachedRids.length > 0) {
-        const metas = await Promise.all(
-          uncachedRids.map((rid) => this.getRequestMetadata(rid).catch(() => ({})))
-        );
-        for (let i = 0; i < uncachedRids.length; i++) {
-          const meta = metas[i] as Record<string, string>;
-          const filename = meta.filename || meta.initial_uri || "";
-          console.log(`[Liquidsoap] RID ${uncachedRids[i]} raw: ${filename}`);
-          if (filename) {
-            ridFilenames[uncachedRids[i]] = filename;
-            this.ridToFile.set(uncachedRids[i], filename);
-          }
-        }
-      }
-
-      // Phase 3: batch lookup all filenames in SQLite (1 query)
-      const allFiles = [...new Set(Object.values(ridFilenames).map(toDbPath))];
-      console.log(`[Liquidsoap] queueList allFiles:`, allFiles);
-      const libTracks = this.libraryRepo!.getTracksByFiles(allFiles);
-      console.log(`[Liquidsoap] queueList libTracks found:`, libTracks.size);
-
-      // Phase 4: build results with zero extra network calls
-      const items = ridsToFetch.map((rid) => {
-        const filename = ridFilenames[rid] || "";
-        const dbFile = toDbPath(filename);
-        const libTrack = libTracks.get(dbFile);
-        const isInterludio = dbFile.startsWith("interludios/");
-        console.log(
-          `[Liquidsoap] RID ${rid}: filename=${filename}, dbFile=${dbFile}, found=${!!libTrack}, script=${libTrack?.script || "null"}`
-        );
-
-        let title = libTrack?.title || "";
-        let artist = libTrack?.artist || "";
-        let script: string | undefined;
-
-        // Get script from libraryTracks (TTS interludios) or playlistTracks
-        if (libTrack?.script) {
-          script = libTrack.script;
-          // Use script as title for TTS interludios
-          title = script;
-        } else if (isInterludio && this.playlistRepo && filename) {
-          const foundScript = this.playlistRepo.findScriptByFile(dbFile);
-          if (foundScript) {
-            script = foundScript;
-            title = foundScript;
-          }
-        }
-
-        if (!title && filename) {
-          const fname = filename.replace(/\\/g, "/").split("/").pop() || "";
-          const noExt = fname.replace(/\.[^.]+$/, "");
-          const dashIdx = noExt.indexOf(" - ");
-          if (dashIdx > 0) {
-            title = noExt.substring(0, dashIdx).trim();
-            if (!artist) artist = noExt.substring(dashIdx + 3).trim();
+        for (const rid of ridsToFetch) {
+          const cached = this.ridToFile.get(rid);
+          if (cached) {
+            ridFilenames[rid] = cached;
           } else {
-            title = noExt;
+            uncachedRids.push(rid);
           }
         }
 
-        if (!rids.includes(rid)) this.ridToFile.delete(rid);
+        // Phase 2: batch fetch uncached RIDs in parallel (only what's missing)
+        if (uncachedRids.length > 0) {
+          const metas = await Promise.all(
+            uncachedRids.map((rid) => this.getRequestMetadata(rid).catch(() => ({})))
+          );
+          for (let i = 0; i < uncachedRids.length; i++) {
+            const meta = metas[i] as Record<string, string>;
+            const filename = meta.filename || meta.initial_uri || "";
+            if (filename) {
+              ridFilenames[uncachedRids[i]] = filename;
+              this.ridToFile.set(uncachedRids[i], filename);
+            }
+          }
+        }
 
-        // Simplified response for TTS interludios
-        if (isInterludio && script) {
+        // Phase 3: batch lookup all filenames in SQLite (1 query)
+        const allFiles = [...new Set(Object.values(ridFilenames).map(toDbPath))];
+        const libTracks = this.libraryRepo!.getTracksByFiles(allFiles);
+
+        // Phase 4: build results with zero extra network calls
+        items = ridsToFetch.map((rid) => {
+          const filename = ridFilenames[rid] || "";
+          const dbFile = toDbPath(filename);
+          const libTrack = libTracks.get(dbFile);
+          const isInterludio = dbFile.startsWith("interludios/");
+
+          let title = libTrack?.title || "";
+          let artist = libTrack?.artist || "";
+          let script: string | undefined;
+
+          // Get script from libraryTracks (TTS interludios) or playlistTracks
+          if (libTrack?.script) {
+            script = libTrack.script;
+            title = script;
+          } else if (isInterludio && this.playlistRepo && filename) {
+            const foundScript = this.playlistRepo.findScriptByFile(dbFile);
+            if (foundScript) {
+              script = foundScript;
+              title = foundScript;
+            }
+          }
+
+          if (!title && filename) {
+            const fname = filename.replace(/\\/g, "/").split("/").pop() || "";
+            const noExt = fname.replace(/\.[^.]+$/, "");
+            const dashIdx = noExt.indexOf(" - ");
+            if (dashIdx > 0) {
+              title = noExt.substring(0, dashIdx).trim();
+              if (!artist) artist = noExt.substring(dashIdx + 3).trim();
+            } else {
+              title = noExt;
+            }
+          }
+
+          if (!rids.includes(rid)) this.ridToFile.delete(rid);
+
+          // Simplified response for TTS interludios
+          if (isInterludio && script) {
+            return {
+              rid,
+              type: "interludio" as const,
+              script,
+            };
+          }
+
           return {
             rid,
-            type: "interludio" as const,
+            id: libTrack?.id,
+            artist,
+            title: title || filename || rid,
+            type: isInterludio ? ("interludio" as const) : ("song" as const),
             script,
+            file: filename || undefined,
           };
-        }
+        });
+      }
 
-        return {
-          rid,
-          id: libTrack?.id,
-          artist,
-          title: title || filename || rid,
-          type: isInterludio ? ("interludio" as const) : ("song" as const),
-          script,
-          file: filename || undefined,
-        };
-      });
-      return { items, total };
+      // Combine Liquidsoap items (already enqueued/playing next) with pending items (synthesizing/waiting)
+      // Since pending items are enqueued later, they go to the end
+      const combined = [...items, ...pendingItems];
+      const finalItems = limit ? combined.slice(0, limit) : combined;
+      const total = totalLiquidsoap + pendingItems.length;
+
+      return { items: finalItems, total };
     } catch {
-      return { items: [], total: 0 };
+      // In case sendCommand or parsing fails, still return pending items if they exist
+      return { items: pendingItems, total: pendingItems.length };
     }
   }
 

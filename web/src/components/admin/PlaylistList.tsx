@@ -74,9 +74,16 @@ export function PlaylistList() {
                   </p>
                 </div>
               </div>
-              <Badge variant="secondary" className="text-xs">
-                {new Date(pl.updatedAt).toLocaleDateString()}
-              </Badge>
+              <div className="flex items-center gap-2">
+                {pl.played && (
+                  <Badge variant="destructive" className="bg-red-900/50 text-red-200 border-red-800 text-[10px] py-0 h-5">
+                    Reproducida
+                  </Badge>
+                )}
+                <Badge variant="secondary" className="text-xs">
+                  {new Date(pl.updatedAt).toLocaleDateString()}
+                </Badge>
+              </div>
             </CardHeader>
           </Card>
         ))}

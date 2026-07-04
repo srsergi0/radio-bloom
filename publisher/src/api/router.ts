@@ -505,8 +505,15 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
   app.put("/api/playlists/:id", async (c) => {
     const body = await c.req.json();
-    if (!body.name) return c.json({ ok: false, error: "name is required" }, 400);
-    const ok = deps.playlistRepo.updateName(c.req.param("id"), body.name);
+    const updates: { name?: string; played?: boolean } = {};
+    if (body.name !== undefined) updates.name = body.name;
+    if (body.played !== undefined) updates.played = body.played;
+
+    if (Object.keys(updates).length === 0) {
+      return c.json({ ok: false, error: "name or played is required" }, 400);
+    }
+
+    const ok = deps.playlistRepo.update(c.req.param("id"), updates);
     if (!ok) return c.json({ ok: false, error: "Playlist not found" }, 404);
     return c.json({ ok: true, data: deps.playlistRepo.get(c.req.param("id")) });
   });
@@ -656,6 +663,14 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     const body = await c.req.json().catch(() => ({}));
     const mode = body?.mode || "ahora";
     const voice = body?.voice;
+    const force = body?.force === true;
+
+    if (playlist.played && !force) {
+      return c.json({ ok: false, error: "Playlist has already been played" }, 400);
+    }
+
+    // Mark as played immediately
+    deps.playlistRepo.update(playlist.id, { played: true });
 
     if (mode === "ahora") {
       await deps.liquidsoapService.queueClear().catch(() => {});

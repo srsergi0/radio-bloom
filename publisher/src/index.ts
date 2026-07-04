@@ -104,6 +104,7 @@ const liquidsoapQueueService = new LiquidsoapQueueService(
   audioMetadataClient
 );
 liquidsoapQueueService.startWorker();
+liquidsoapService.setQueueService(liquidsoapQueueService);
 
 // Initialize library service (creates dirs, scans, starts watcher)
 libraryService.init().catch((err) => console.error("[init] libraryService:", err));

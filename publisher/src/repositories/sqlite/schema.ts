@@ -25,6 +25,7 @@ export const libraryTracks = sqliteTable("library_tracks", {
 export const playlists = sqliteTable("playlists", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
+  played: integer("played").notNull().default(0),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });

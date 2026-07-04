@@ -8,6 +8,7 @@ import {
 } from "@dnd-kit/sortable";
 import { ArrowLeft, Play, Shuffle, Plus, Loader2 } from "lucide-react";
 import { Button } from "@/components/admin/ui/button";
+import { Badge } from "@/components/admin/ui/badge";
 import { ScrollArea } from "@/components/admin/ui/scroll-area";
 import { Separator } from "@/components/admin/ui/separator";
 import {
@@ -128,7 +129,7 @@ export function PlaylistDetail() {
   const handlePlay = async (shuffle: boolean = false) => {
     if (!id) return;
     setPlaying(true);
-    const res = await api.post(`/api/playlists/${id}/play`, { shuffle });
+    const res = await api.post(`/api/playlists/${id}/play`, { shuffle, force: true });
     setPlaying(false);
     if (res.ok) {
       toast.success(
@@ -158,7 +159,14 @@ export function PlaylistDetail() {
         <Button variant="ghost" size="icon" onClick={() => navigate("/")}>
           <ArrowLeft className="h-5 w-5" />
         </Button>
-        <h2 className="text-2xl font-bold flex-1">{playlist.name}</h2>
+        <h2 className="text-2xl font-bold flex-1 flex items-center gap-2">
+          {playlist.name}
+          {playlist.played && (
+            <Badge variant="destructive" className="bg-red-900/50 text-red-200 border-red-800 text-[10px] py-0 px-2 h-5">
+              Reproducida
+            </Badge>
+          )}
+        </h2>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="default" size="sm" disabled={playing || playlist.tracks.length === 0}>

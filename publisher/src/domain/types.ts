@@ -40,6 +40,7 @@ export interface SystemConfig {
 export interface Playlist {
   id: string;
   name: string;
+  played: boolean;
   tracks: PlaylistTrack[];
   createdAt: string;
   updatedAt: string;

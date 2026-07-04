@@ -251,6 +251,7 @@ export function StreamQueueIsland() {
             ) : (
               queue.map((item) => {
                 const isInter = item.type === "interludio";
+                const isPending = (item as any).pending === true;
                 const displayTitle = isInter && item.script
                   ? item.script.length > 60
                     ? `${item.script.substring(0, 60)}...`
@@ -264,34 +265,45 @@ export function StreamQueueIsland() {
                   <div
                     key={item.rid}
                     className={`flex items-center gap-3 px-3 py-2 bg-zinc-950 border rounded-lg min-w-[200px] max-w-[240px] shrink-0 relative group transition-all duration-150 ${
-                      isInter
+                      isPending
+                        ? "border-yellow-500/30 hover:border-yellow-500/60 animate-pulse"
+                        : isInter
                         ? "border-green-500/30 hover:border-green-500"
                         : "border-red-500/30 hover:border-red-500"
                     }`}
                   >
                     <div
                       className={`absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-md ${
-                        isInter ? "bg-green-500" : "bg-red-500"
+                        isPending ? "bg-yellow-500" : isInter ? "bg-green-500" : "bg-red-500"
                       }`}
                     />
                     <div className="flex-1 min-w-0 pl-1.5">
                       <h5 className="text-xs font-semibold text-zinc-200 truncate" title={isInter && item.script ? item.script : item.title}>
                         {displayTitle}
                       </h5>
-                      {displaySubtitle && (
-                        <p className="text-[10px] text-zinc-500 truncate mt-0.5" title={displaySubtitle}>
-                          {displaySubtitle}
+                      {isPending ? (
+                        <p className="text-[10px] text-yellow-500/80 flex items-center gap-1 mt-0.5">
+                          <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                          Procesando...
                         </p>
+                      ) : (
+                        displaySubtitle && (
+                          <p className="text-[10px] text-zinc-500 truncate mt-0.5" title={displaySubtitle}>
+                            {displaySubtitle}
+                          </p>
+                        )
                       )}
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-destructive hover:bg-destructive/10 transition-all rounded-md shrink-0"
-                      onClick={() => handleRemoveTrack(item.rid, item.title)}
-                    >
-                      <X className="h-3 w-3" />
-                    </Button>
+                    {!isPending && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-destructive hover:bg-destructive/10 transition-all rounded-md shrink-0"
+                        onClick={() => handleRemoveTrack(item.rid, item.title)}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    )}
                   </div>
                 );
               })

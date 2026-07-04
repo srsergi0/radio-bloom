@@ -11,9 +11,9 @@ export class PlaylistRepository {
     const now = new Date().toISOString();
     this.db.drizzle
       .insert(schema.playlists)
-      .values({ id, name, createdAt: now, updatedAt: now })
+      .values({ id, name, played: 0, createdAt: now, updatedAt: now })
       .run();
-    return { id, name, tracks: [], createdAt: now, updatedAt: now };
+    return { id, name, played: false, tracks: [], createdAt: now, updatedAt: now };
   }
 
   public list(): Playlist[] {
@@ -25,6 +25,7 @@ export class PlaylistRepository {
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
+      played: r.played === 1,
       tracks: [],
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
@@ -49,6 +50,7 @@ export class PlaylistRepository {
     return {
       id: row.id,
       name: row.name,
+      played: row.played === 1,
       tracks: tracks.map((t) => ({
         id: t.id,
         playlistId: t.playlistId,
@@ -67,7 +69,7 @@ export class PlaylistRepository {
     };
   }
 
-  public updateName(id: string, name: string): boolean {
+  public update(id: string, updates: { name?: string; played?: boolean }): boolean {
     const exists = this.db.drizzle
       .select({ id: schema.playlists.id })
       .from(schema.playlists)
@@ -75,9 +77,19 @@ export class PlaylistRepository {
       .get();
     if (!exists) return false;
 
+    const valuesToSet: Record<string, any> = {
+      updatedAt: sql`datetime('now')`,
+    };
+    if (updates.name !== undefined) {
+      valuesToSet.name = updates.name;
+    }
+    if (updates.played !== undefined) {
+      valuesToSet.played = updates.played ? 1 : 0;
+    }
+
     this.db.drizzle
       .update(schema.playlists)
-      .set({ name, updatedAt: sql`datetime('now')` })
+      .set(valuesToSet)
       .where(eq(schema.playlists.id, id))
       .run();
     return true;

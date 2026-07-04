@@ -82,26 +82,24 @@ services:
         condition: service_started
 
   # ──────────────────────────────────────────────
-  # FTP - Song Upload Server
+  # FTP - Song Upload Server (vsftpd)
   # ──────────────────────────────────────────────
   ftp:
-    build: ./ftp
+    image: fauria/vsftpd
     restart: unless-stopped
     ports:
       - "${FTP_PORT}:21"
       - "${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}:${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}"
     volumes:
-      - radio-music:/home/radio/music/songs
-      - radio-interludios:/home/radio/music/interludios
+      - radio-music:/home/vsftpd/radio/songs
+      - radio-interludios:/home/vsftpd/radio/interludios
     environment:
-      - PUBLICHOST=${FTP_PUBLIC_HOST}
-      - FTP_USER_NAME=${FTP_USER_NAME}
-      - FTP_USER_PASS=${FTP_USER_PASS}
-      - FTP_USER_HOME=${FTP_USER_HOME}
-      - UMASK=${FTP_UMASK}
-      - TLS_CN=${FTP_PUBLIC_HOST}
-      - FTP_PASSIVE_MIN=${FTP_PASSIVE_MIN}
-      - FTP_PASSIVE_MAX=${FTP_PASSIVE_MAX}
+      - FTP_USER=${FTP_USER_NAME}
+      - FTP_PASS=${FTP_USER_PASS}
+      - PASV_ADDRESS=${FTP_PUBLIC_HOST}
+      - PASV_MIN_PORT=${FTP_PASSIVE_MIN}
+      - PASV_MAX_PORT=${FTP_PASSIVE_MAX}
+      - LOG_STDOUT=YES
 
 volumes:
   radio-music:

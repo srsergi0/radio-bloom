@@ -20,8 +20,10 @@ El sistema está compuesto por 4 microservicios principales que se ejecutan en c
      - **Hacia `music/songs/` e `interludios/`**: Vigila cambios en tiempo real con `fs.watch`. Cuando se añade un archivo, extrae metadatos con `music-metadata` y los enriquece con Spotify si es posible. Cuando se elimina o renombra, actualiza la base de datos automáticamente.
 
 3. **`ftp` (Servidor de Carga de Canciones)**:
-   - **Puerto**: `21` (FTP).
-   - **Conexión**: Permite la carga directa de canciones vía cliente FTP. Los archivos subidos se guardan en el volumen compartido `music/songs/` o `music/interludios/`. El publisher detecta automáticamente los cambios y los indexa.
+   - **Puerto**: `21` (FTP) + `30000-30100` (pasivo).
+   - **Imagen**: `fauria/vsftpd` (vsftpd 3.0, CentOS 7, virtual users).
+   - **Conexión**: Permite la carga directa de canciones vía cliente FTP. Los archivos subidos se guardan en el volumen compartido `songs/` o `interludios/`. El publisher detecta automáticamente los cambios y los indexa.
+   - **Credenciales**: Usuario `radio`, contraseña `radiobloom` (configuradas en `.env`).
 
 4. **`liquidsoap` (Streaming Engine)**:
    - **Puerto**: `8000` (Harbor Output) / `8001` (Harbor Input Icecast) / `8002` (SRT) / `1234` (Telnet).
@@ -86,9 +88,8 @@ radio/
 │                   └── stores/
 │                       └── in-memory.js # InMemoryTaskStore + InMemoryTaskMessageQueue
 │
-├── ftp/                                  # Servidor FTP para subir canciones manualmente
-│   ├── Dockerfile                        # Dockerfile basado en stilliard/pure-ftpd
-│   └── entrypoint.sh                     # Corrige permisos de archivos cargados
+├── ftp/                                  # Servidor FTP para subir canciones (vsftpd)
+│   └── (usando imagen fauria/vsftpd, sin Dockerfile custom)
 │
 ├── liquidsoap/                           # Motor de Audio
 │   └── radio.liq                         # Script de Liquidsoap (playlist, queue, fallback, output.harbor)
@@ -310,6 +311,18 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 ---
 
 ## Cambios Recientes
+
+### Migración FTP: pure-ftpd → vsftpd (Julio 2026)
+
+- **Problema**: La imagen `stilliard/pure-ftpd:hardened` tenía múltiples bugs: permisos denegados al crear directorios, configuración compleja de chroot, errores de pure-pw useradd, y el entrypoint personalizado nunca se ejecutaba correctamente.
+- **Solución**: Se migró a `fauria/vsftpd`, una imagen mucho más popular y sencilla de configurar.
+- **Cambios realizados**:
+  - Se eliminó la carpeta `ftp/` (Dockerfile + entrypoint.sh) — ya no se necesita build custom.
+  - Se actualizó `docker-compose.yml`: el servicio FTP ahora usa `image: fauria/vsftpd` con variables de entorno directas (`FTP_USER`, `FTP_PASS`, `PASV_ADDRESS`, `PASV_MIN_PORT`, `PASV_MAX_PORT`).
+  - Se limpió `.env`: se eliminaron `FTP_USER_HOME` y `FTP_UMASK` (ya no aplican).
+  - Se actualizó `docker-compose.override.yml` para usar las rutas correctas (`/home/vsftpd/radio/songs`).
+  - Se actualizó `BITACORA.md` con la nueva arquitectura FTP.
+- **Resultado**: FTP funciona correctamente desde Windows Explorer. El usuario `radio` puede navegar `songs/` e `interludios/` y subir archivos sin errores de permisos.
 
 ### Ajustes de Parámetros en Liquidsoap (Julio 2026)
 

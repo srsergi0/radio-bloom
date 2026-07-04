@@ -20,5 +20,5 @@ services:
 
   ftp:
     volumes:
-      - ./music/songs:/home/radio/music/songs
-      - ./music/interludios:/home/radio/music/interludios
+      - ./music/songs:/home/vsftpd/radio/songs
+      - ./music/interludios:/home/vsftpd/radio/interludios

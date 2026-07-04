@@ -39,8 +39,7 @@ radio/
 ├── .env                                  # Archivo de configuración local con credenciales (ignorado en git)
 ├── .gitignore                            # Archivos excluidos del control de versiones git
 ├── package.json                          # Root monorepo (Bun workspaces: packages/*, publisher, web)
-├── docker-compose.yml                    # Docker Compose unificado (producción / Coolify)
-├── docker-compose.dev.yml                # Desarrollo local (Redis + Liquidsoap + Web)
+├── docker-compose.yml                    # Docker Compose unificado
 ├── docker-compose.override.yml           # Overrides para desarrollo local (bind mounts)
 ├── README.md                             # Guía del proyecto
 ├── AGENTS.md                             # Reglas globales de comportamiento para agentes IA
@@ -559,9 +558,8 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 ### Configuración de Monorepo con Docker Compose (Julio 2026)
 
 - **Dockerfile para web**: Multi-stage build con `oven/bun:1.2-alpine` para build + `nginx:alpine` para producción.
-- **docker-compose.dev.yml actualizado**: Servicios `redis`, `liquidsoap` y `web` para desarrollo local. El `web` usa bind mounts para hot reload.
 - **docker-compose.yml (producción)**: Servicio `web` agregado con nginx, dependiendo de `publisher`.
-- **Scripts monorepo**: `package.json` raíz con scripts para开发 (`dev`, `dev:web`, `dev:all`), infra (`dev:infra`, `docker:up`, `docker:down`, `docker:dev`, `docker:build`) y build (`build`, `build:all`, `lint`, `typecheck`).
+- **Scripts monorepo**: `package.json` raíz con scripts para dev (`dev`, `dev:web`, `dev:all`), infra (`docker:up`, `docker:down`, `docker:build`) y build (`build`, `build:all`, `lint`, `typecheck`).
 - **Variable de entorno**: `WEB_PORT` agregada a `.env.example` (default: 80).
 
 ### 🎙️ AI DJ Fase 1 y 2 — Playlist por Horario + Creación Autónoma con IA (Julio 2026)

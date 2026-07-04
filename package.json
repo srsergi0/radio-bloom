@@ -6,14 +6,12 @@
     "dev": "bun run --filter './publisher' dev",
     "dev:web": "bun run --filter './web' dev",
     "dev:all": "concurrently \"bun run dev\" \"bun run dev:web\"",
-    "dev:infra": "docker compose -f docker-compose.dev.yml up",
     "build": "bun run --filter './web' build",
     "build:all": "bun run --filter '*' build",
     "lint": "bun run --filter '*' lint",
     "typecheck": "bun run --filter '*' typecheck",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "docker:dev": "docker compose -f docker-compose.dev.yml up",
     "docker:build": "docker compose build"
   },
   "devDependencies": {

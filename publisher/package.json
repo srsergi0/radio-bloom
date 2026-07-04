@@ -4,7 +4,6 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
-    "dev:infra": "cd .. && docker compose -f docker-compose.dev.yml up",
     "start": "bun src/index.ts",
     "mcp": "bun src/mcp-entry.ts",
     "test": "bun test",

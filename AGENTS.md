@@ -20,12 +20,9 @@ Puertos críticos:
 - `21` + `30000-30100` — FTP
 - `3000` — Publisher interno
 
-# Migración Coolify → Docker Local
+# Carpetas de Música
 
-Los servicios actuales corren en Coolify en esta misma máquina. Para hacer el switch:
-1. El usuario **apaga manualmente** el proyecto en Coolify
-2. Se verifican que los puertos estén libres
-3. Se levanta el stack local con `docker compose up -d`
+Las carpetas `music/songs/` e `music/interludios/` deben existir antes de levantar el stack. El servicio `init` en `docker-compose.yml` las crea automáticamente si no existen. Si se eliminan manualmente, el sistema se romperá.
 
 # Git: No Auto-Commit or Push
 

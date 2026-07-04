@@ -1,7 +1,15 @@
-# Radio Bloom - Unified Docker Compose
-# All services in one stack for Coolify / production deployment
+# Radio Bloom - Docker Compose
 
 services:
+  # ──────────────────────────────────────────────
+  # Init - Create required directories
+  # ──────────────────────────────────────────────
+  init:
+    image: alpine:latest
+    volumes:
+      - ./:/workspace
+    entrypoint: /bin/sh -c "mkdir -p /workspace/music/songs /workspace/music/interludios"
+
   # ──────────────────────────────────────────────
   # Redis - Queue & Caching
   # ──────────────────────────────────────────────
@@ -19,13 +27,16 @@ services:
   liquidsoap:
     image: savonet/liquidsoap:v2.4.5
     restart: unless-stopped
+    depends_on:
+      init:
+        condition: service_completed_successfully
     ports:
       - "${SRT_PORT}:8002/udp"
       - "${LIVE_INPUT_PORT}:8001"
     volumes:
       - ./liquidsoap/radio.liq:/etc/liquidsoap/radio.liq
-      - radio-music:/music/songs
-      - radio-interludios:/music/interludios
+      - ./music/songs:/music/songs
+      - ./music/interludios:/music/interludios
     command: /etc/liquidsoap/radio.liq
     healthcheck:
       test: [ "CMD-SHELL", "timeout 3 bash -c '</dev/tcp/localhost/8000' || exit 1" ]
@@ -58,10 +69,12 @@ services:
       - AI_DJ_VOICE=${AI_DJ_VOICE}
       - AI_DJ_SONGS_BETWEEN=${AI_DJ_SONGS_BETWEEN}
     volumes:
-      - radio-music:/app/music/songs
-      - radio-interludios:/app/music/interludios
+      - ./music/songs:/app/music/songs
+      - ./music/interludios:/app/music/interludios
       - radio-publisher-data:/app/data
     depends_on:
+      init:
+        condition: service_completed_successfully
       redis:
         condition: service_started
       liquidsoap:
@@ -102,7 +115,5 @@ services:
       - LOG_STDOUT=YES
 
 volumes:
-  radio-music:
-  radio-interludios:
   radio-publisher-data:
   redis_data:

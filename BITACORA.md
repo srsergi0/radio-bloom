@@ -311,6 +311,14 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 
 ## Cambios Recientes
 
+### Simplificación del Docker Stack y Fix de Permisos (Julio 2026)
+
+- **Eliminados**: `docker-compose.override.yml`, `docker-compose.dev.yml`
+- **Coolify eliminado**: Todas las referencias a Coolify eliminadas de AGENTS.md, README.md y BITACORA.md
+- **Bind mounts directos**: `docker-compose.yml` ahora usa `./music/songs` y `./music/interludios` directamente en vez de volúmenes nombrados
+- **Servicio init**: Nuevo servicio `init` en docker-compose.yml que crea carpetas de música y arregla permisos (`chmod -R 755`) antes de iniciar los servicios. Esto previene errores de "Nonexistent file or ill-formed URI" causados por UIDs de volúmenes antiguos.
+- **Regla AGENTS.md**: Añadida sección "Carpetas de Música" documentando la dependencia del servicio init.
+
 ### Control de Colisión y Estado de Playlists Reproducidas (Julio 2026)
 
 - **Problema**: Cuando la cola de Liquidsoap bajaba de un umbral, se desencadenaba una orden de reproducir o re-generar una playlist. Como el procesamiento de síntesis de voz (TTS) y el encolamiento de pistas en Liquidsoap ocurre de forma asíncrona mediante BullMQ, la cola seguía viéndose vacía durante unos segundos, lo que causaba que la playlist se enviara a reproducir múltiples veces en paralelo. Esto limpiaba la cola consecutivamente y provocaba bucles de 30 minutos reproduciendo la misma canción e interludio.

@@ -555,3 +555,25 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 - **docker-compose.yml (producción)**: Servicio `web` agregado con nginx, dependiendo de `publisher`.
 - **Scripts monorepo**: `package.json` raíz con scripts para开发 (`dev`, `dev:web`, `dev:all`), infra (`dev:infra`, `docker:up`, `docker:down`, `docker:dev`, `docker:build`) y build (`build`, `build:all`, `lint`, `typecheck`).
 - **Variable de entorno**: `WEB_PORT` agregada a `.env.example` (default: 80).
+
+### 🎙️ AI DJ Fase 1 y 2 — Playlist por Horario + Creación Autónoma con IA (Julio 2026)
+
+- **Threshold de cola elevado a 5**: El orquestador ahora activa el DJ cuando quedan **5 canciones** en cola (antes eran 2), dando más tiempo para planificar y rellenar sin cortes.
+- **Vínculo Playlist-Locutor**: La tabla `playlists` ahora tiene columnas `locutor_id` (FK → locutors) y `description` (texto corto). Esto permite asignar playlists pre-armadas a locutores específicos.
+- **Búsqueda por horario**: Cuando la cola baja, el orquestador busca primero una playlist asignada al locutor activo (`findActivePlaylistForLocutor`). Si existe, calcula cuántas canciones encolar basándose en la duración restante de las canciones en cola (no corta canciones, tolerancia de 30s).
+- **AI DJ Phase 2 (sin playlist)**: Si NO hay playlist para el locutor activo, se activa el LLM con:
+  - **10 canciones recientes** del locutor (de playlists anteriores) para entender su feeling.
+  - **100 canciones menos reproducidas** del catálogo (ordenadas por `lastPlayedAt` ASC), con ID, título, artista y duración real.
+  - **Las 2 últimas canciones en cola** como contexto (sabe que son de otro programa).
+  - **Personalidad y voz del locutor** (de la tabla `locutors`).
+  - **NO recibe la hora** (porque no sabe cuánto duran los interludios generados).
+- **Herramienta `create_program_playlist`**: El LLM crea una playlist permanente en BD con los IDs reales del catálogo. El sistema guarda la playlist, calcula duración total, y la encola automáticamente.
+- **Método `getLeastPlayedTracks`**: Nuevo en `LibraryRepository` — ordena canciones por `lastPlayedAt` ASC (nulas primero) para dar prioridad a las que más tiempo llevan sin sonar.
+- **Archivos modificados**: `schema.ts`, `database.ts` (migración), `types.ts`, `playlist.repo.ts` (nuevos métodos), `orchestrator.service.ts` (Phase 2 + reescritura de `enqueueNext`), `router.ts` (endpoints actualizados), `library.repo.ts` (`getLeastPlayedTracks`), `index.ts` (DI), `web/types.ts`.
+
+### 🔧 Fix MCP Server — Reconexión desde MCP Inspector (Julio 2026)
+
+- **Error**: `Server already initialized` (`-32600`) al reconectar desde MCP Inspector v0.22.0 con transport Streamable HTTP.
+- **Causa**: `McpService.handleHttpRequest` creaba una sola instancia de `HttpTransport` y la reutilizaba para todas las sesiones. Al reconectar, el segundo `initialize` golpeaba el transport ya inicializado y era rechazado.
+- **Solución**: `mcp.service.ts` — Se creó un transport nuevo solo cuando llega una sesión nueva (nuevo `initialize`). Si el request trae un `mcp-session-id` que ya existe, reutiliza el transport actual. Se resetea `server._transport` para permitir `connect()` con el nuevo transport.
+- **Archivo modificado**: `publisher/src/services/mcp.service.ts` (nuevo campo `currentSessionId`, lógica de sesiones en `handleHttpRequest`).

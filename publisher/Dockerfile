@@ -14,13 +14,20 @@ FROM oven/bun:1.2-alpine
 
 RUN apk add --no-cache aria2
 
-WORKDIR /app/publisher
+WORKDIR /app
 
-COPY publisher/package.json publisher/bun.lock* ./
-# Usamos caché de BuildKit e instalamos SOLO dependencias de producción para aligerar la imagen
+# Copiar estructura del monorepo para resolver workspaces (mcp-lite, web)
+COPY package.json ./
+COPY packages/mcp-lite/package.json packages/mcp-lite/
+COPY web/package.json web/
+COPY publisher/package.json publisher/bun.lock* ./publisher/
+
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --production 2>&1
 
-COPY publisher/ .
+COPY packages/mcp-lite/ packages/mcp-lite/
+COPY publisher/ publisher/
+
+WORKDIR /app/publisher
 
 # Copiar los archivos estáticos de Astro generados en la Stage 1
 COPY --from=web-builder /app/web/dist /app/web/dist

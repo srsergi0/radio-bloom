@@ -22,8 +22,7 @@
       "drizzle-orm": ["./src/types/drizzle.js"],
       "drizzle-orm/*": ["./src/types/drizzle.js"],
       "music-metadata": ["./src/types/music-metadata.js"],
-      "edge-tts-universal": ["./src/types/edge-tts.js"],
-      "zod": ["./src/types/zod.d.ts"]
+      "edge-tts-universal": ["./src/types/edge-tts.js"]
     }
   },
   "include": ["src/**/*"],

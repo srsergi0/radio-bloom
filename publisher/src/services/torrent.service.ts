@@ -1,7 +1,7 @@
-import { Queue, Worker, type Job } from "bullmq";
-import * as path from "node:path";
-import * as fs from "node:fs";
 import { spawn } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { type Job, Queue, Worker } from "bullmq";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379/0";
 const DATA_DIR = process.env.DATA_DIR || "./data";
@@ -14,7 +14,10 @@ function parseRedisUrl(url: string) {
       host: parsed.hostname || "localhost",
       port: parsed.port ? parseInt(parsed.port, 10) : 6379,
       password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
-      db: parsed.pathname && parsed.pathname !== "/" ? parseInt(parsed.pathname.slice(1), 10) || 0 : 0,
+      db:
+        parsed.pathname && parsed.pathname !== "/"
+          ? parseInt(parsed.pathname.slice(1), 10) || 0
+          : 0,
       maxRetriesPerRequest: null,
     };
   } catch (err) {
@@ -56,15 +59,21 @@ export class TorrentService {
       fs.mkdirSync(musicSongsDir, { recursive: true });
     }
 
-    console.log(`[TorrentService] Starting worker. Temp downloads: ${tempDir}, Target songs: ${musicSongsDir}`);
+    console.log(
+      `[TorrentService] Starting worker. Temp downloads: ${tempDir}, Target songs: ${musicSongsDir}`
+    );
 
     this.worker = new Worker(
       this.queueName,
       async (job: Job) => {
         const { magnet, name } = job.data;
-        const safeName = name.replace(/[^a-zA-Z0-9 -_]/g, "").slice(0, 50).trim() || "download";
+        const safeName =
+          name
+            .replace(/[^a-zA-Z0-9 -_]/g, "")
+            .slice(0, 50)
+            .trim() || "download";
         const downloadPath = path.join(tempDir, `${job.id}-${safeName}`);
-        
+
         if (!fs.existsSync(downloadPath)) {
           fs.mkdirSync(downloadPath, { recursive: true });
         }
@@ -121,7 +130,9 @@ export class TorrentService {
             clearTimeout(safetyTimer);
             await job.log(`Error al lanzar aria2c: ${err.message}`);
             await fs.promises.rm(downloadPath, { recursive: true, force: true }).catch(() => {});
-            reject(new Error(`aria2c execution failed: ${err.message}. Ensure aria2 is installed.`));
+            reject(
+              new Error(`aria2c execution failed: ${err.message}. Ensure aria2 is installed.`)
+            );
           });
 
           child.on("close", async (code) => {
@@ -180,7 +191,9 @@ export class TorrentService {
     });
 
     this.worker.on("failed", (job, err) => {
-      console.error(`[TorrentWorker] Job failed: ${job?.id} - ${job?.data.name}. Error: ${err.message}`);
+      console.error(
+        `[TorrentWorker] Job failed: ${job?.id} - ${job?.data.name}. Error: ${err.message}`
+      );
     });
   }
 
@@ -212,16 +225,14 @@ export class TorrentService {
       ];
       const trackersStr = trackers.map((t) => `&tr=${encodeURIComponent(t)}`).join("");
 
-      return data
-        .slice(0, limit)
-        .map((item: any) => ({
-          name: item.name || "N/A",
-          seeds: parseInt(item.seeders || "0", 10),
-          leechers: parseInt(item.leechers || "0", 10),
-          size: Math.round((parseInt(item.size || "0", 10) / (1024 * 1024)) * 10) / 10, // MB
-          infoHash: item.info_hash || "",
-          magnet: `magnet:?xt=urn:btih:${item.info_hash}&dn=${encodeURIComponent(item.name)}${trackersStr}`,
-        }));
+      return data.slice(0, limit).map((item: any) => ({
+        name: item.name || "N/A",
+        seeds: parseInt(item.seeders || "0", 10),
+        leechers: parseInt(item.leechers || "0", 10),
+        size: Math.round((parseInt(item.size || "0", 10) / (1024 * 1024)) * 10) / 10, // MB
+        infoHash: item.info_hash || "",
+        magnet: `magnet:?xt=urn:btih:${item.info_hash}&dn=${encodeURIComponent(item.name)}${trackersStr}`,
+      }));
     } catch (error) {
       console.error("[TorrentService] Search error:", error);
       return [];
@@ -285,8 +296,13 @@ export class TorrentService {
    * List jobs
    */
   async listJobs(limit = 20) {
-    const jobs = await this.queue.getJobs(["waiting", "active", "completed", "failed"], 0, limit - 1, true);
-    
+    const jobs = await this.queue.getJobs(
+      ["waiting", "active", "completed", "failed"],
+      0,
+      limit - 1,
+      true
+    );
+
     return Promise.all(
       jobs.map(async (job) => ({
         id: job.id,
@@ -315,7 +331,7 @@ export class TorrentService {
   async cancelJob(jobId: string): Promise<boolean> {
     const job = await this.queue.getJob(jobId);
     if (!job) return false;
-    
+
     const state = await job.getState();
     if (state === "active") {
       try {

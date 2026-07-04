@@ -1,4 +1,4 @@
-import { eq, like, or, sql } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import type { Track } from "../../domain/types";
 import type { DatabaseConnection } from "../../infrastructure/database";
 import * as schema from "./schema";
@@ -43,11 +43,40 @@ export class LibraryRepository {
     return row ? this.mapTrackRow(row) : null;
   }
 
+  public getTracksByFiles(files: string[]): Map<string, Track> {
+    if (files.length === 0) return new Map();
+    const rows = this.db.drizzle
+      .select()
+      .from(schema.libraryTracks)
+      .where(sql`${schema.libraryTracks.file} in ${files}`)
+      .all();
+    const map = new Map<string, Track>();
+    for (const row of rows) {
+      const track = this.mapTrackRow(row);
+      map.set(track.file, track);
+    }
+    return map;
+  }
+
   public getTrackByUrl(spotifyUrl: string): Track | null {
     const row = this.db.drizzle
       .select()
       .from(schema.libraryTracks)
       .where(eq(schema.libraryTracks.spotifyUrl, spotifyUrl))
+      .get();
+    return row ? this.mapTrackRow(row) : null;
+  }
+
+  public getTrackByTitleAndArtist(title: string, artist: string): Track | null {
+    const row = this.db.drizzle
+      .select()
+      .from(schema.libraryTracks)
+      .where(
+        and(
+          eq(sql`lower(${schema.libraryTracks.title})`, title.toLowerCase().trim()),
+          eq(sql`lower(${schema.libraryTracks.artist})`, artist.toLowerCase().trim())
+        )
+      )
       .get();
     return row ? this.mapTrackRow(row) : null;
   }
@@ -75,7 +104,7 @@ export class LibraryRepository {
 
   public countTracks(type: "song" | "interludio"): number {
     const row = this.db.drizzle
-      .select({ count: sql<number>`count(*)` })
+      .select({ count: sql`count(*)` })
       .from(schema.libraryTracks)
       .where(eq(schema.libraryTracks.type, type))
       .get();
@@ -165,16 +194,78 @@ export class LibraryRepository {
     this.db.drizzle.delete(schema.libraryTracks).where(eq(schema.libraryTracks.file, file)).run();
   }
 
+  public upsertTtsInterludio(
+    file: string,
+    script: string,
+    duration: number = 0,
+    size: number = 0
+  ): void {
+    this.db.drizzle
+      .insert(schema.libraryTracks)
+      .values({
+        id: `tts_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        file,
+        type: "interludio",
+        title: "Interludio TTS",
+        artist: "",
+        duration,
+        script,
+        size,
+        mtime: "",
+      })
+      .onConflictDoUpdate({
+        target: schema.libraryTracks.file,
+        set: { script, duration, size },
+      })
+      .run();
+  }
+
+  public updateLastPlayedAt(id: string): void {
+    this.db.drizzle
+      .update(schema.libraryTracks)
+      .set({ lastPlayedAt: new Date().toISOString() })
+      .where(eq(schema.libraryTracks.id, id))
+      .run();
+  }
+
   public search(query: string, limit = 50, offset = 0): { items: Track[]; total: number } {
-    const q = `%${query}%`;
-    const where = or(
-      like(schema.libraryTracks.title, q),
-      like(schema.libraryTracks.artist, q),
-      like(schema.libraryTracks.album, q)
+    const normalize = (s: string) =>
+      s
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]/g, "");
+
+    const qNorm = normalize(query);
+    const words = qNorm.split(/\s+/).filter(Boolean);
+
+    const stripForMatch = (col: any) =>
+      sql`lower(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(${col},'á','a'),'é','e'),'í','i'),'ó','o'),'ú','u'),'ñ','n'),'ü','u'),' ',''),'-',''),'.',''))`;
+
+    const conditions = words.map((w) =>
+      or(
+        sql`${stripForMatch(schema.libraryTracks.title)} like ${`%${w}%`}`,
+        sql`${stripForMatch(schema.libraryTracks.artist)} like ${`%${w}%`}`,
+        sql`${stripForMatch(schema.libraryTracks.album)} like ${`%${w}%`}`
+      )
     );
 
+    const fullNorm = stripForMatch(schema.libraryTracks.title);
+    const fullNormArtist = stripForMatch(schema.libraryTracks.artist);
+    const fullNormAlbum = stripForMatch(schema.libraryTracks.album);
+
+    const where =
+      conditions.length > 0
+        ? or(
+            and(...conditions),
+            sql`${fullNorm} like ${`%${qNorm}%`}`,
+            sql`${fullNormArtist} like ${`%${qNorm}%`}`,
+            sql`${fullNormAlbum} like ${`%${qNorm}%`}`
+          )
+        : undefined;
+
     const totalRow = this.db.drizzle
-      .select({ count: sql<number>`count(*)` })
+      .select({ count: sql`count(*)` })
       .from(schema.libraryTracks)
       .where(where)
       .get();
@@ -203,6 +294,8 @@ export class LibraryRepository {
       spotifyUrl: row.spotifyUrl || undefined,
       addedAt: row.addedAt,
       mtime: row.mtime || undefined,
+      lastPlayedAt: row.lastPlayedAt || undefined,
+      script: row.script || undefined,
     };
   }
 }

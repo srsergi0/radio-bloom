@@ -59,6 +59,7 @@ export class PlaylistRepository {
         artist: t.artist || undefined,
         duration: t.duration,
         spotifyUrl: t.spotifyUrl || undefined,
+        script: t.script || undefined,
         addedAt: t.addedAt,
       })),
       createdAt: row.createdAt,
@@ -99,6 +100,7 @@ export class PlaylistRepository {
       artist?: string;
       duration: number;
       spotifyUrl?: string;
+      script?: string;
     },
     position?: number
   ): PlaylistTrack | null {
@@ -140,6 +142,7 @@ export class PlaylistRepository {
             artist: track.artist || "",
             duration: track.duration,
             spotifyUrl: track.spotifyUrl || "",
+            script: track.script || "",
             addedAt: now,
           })
           .run();
@@ -159,12 +162,13 @@ export class PlaylistRepository {
         artist: track.artist,
         duration: track.duration,
         spotifyUrl: track.spotifyUrl,
+        script: track.script,
         addedAt: now,
       };
     }
 
     const maxPosRow = this.db.drizzle
-      .select({ next: sql<number>`COALESCE(MAX(pos), -1) + 1` })
+      .select({ next: sql`COALESCE(MAX(pos), -1) + 1` })
       .from(schema.playlistTracks)
       .where(eq(schema.playlistTracks.playlistId, playlistId))
       .get();
@@ -182,6 +186,7 @@ export class PlaylistRepository {
           artist: track.artist || "",
           duration: track.duration,
           spotifyUrl: track.spotifyUrl || "",
+          script: track.script || "",
           addedAt: now,
         })
         .run();
@@ -201,6 +206,7 @@ export class PlaylistRepository {
       artist: track.artist,
       duration: track.duration,
       spotifyUrl: track.spotifyUrl,
+      script: track.script,
       addedAt: now,
     };
   }
@@ -214,6 +220,7 @@ export class PlaylistRepository {
       artist?: string;
       duration?: number;
       spotifyUrl?: string;
+      script?: string;
     }
   ): PlaylistTrack | null {
     const existing = this.db.drizzle
@@ -231,6 +238,7 @@ export class PlaylistRepository {
     if (updates.artist !== undefined) setValues.artist = updates.artist;
     if (updates.duration !== undefined) setValues.duration = updates.duration;
     if (updates.spotifyUrl !== undefined) setValues.spotifyUrl = updates.spotifyUrl;
+    if (updates.script !== undefined) setValues.script = updates.script;
 
     if (Object.keys(setValues).length === 0) return null;
 
@@ -263,6 +271,7 @@ export class PlaylistRepository {
       artist: updated.artist || undefined,
       duration: updated.duration,
       spotifyUrl: updated.spotifyUrl || undefined,
+      script: updated.script || undefined,
       addedAt: updated.addedAt,
     };
   }
@@ -313,5 +322,14 @@ export class PlaylistRepository {
         .run();
     });
     return true;
+  }
+
+  public findScriptByFile(file: string): string | null {
+    const row = this.db.drizzle
+      .select({ script: schema.playlistTracks.script })
+      .from(schema.playlistTracks)
+      .where(eq(schema.playlistTracks.file, file))
+      .get();
+    return row?.script || null;
   }
 }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, watch, type FSWatcher } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
 import type { Track } from "../domain/types";
 import type { AudioMetadataClient } from "../infrastructure/audio-metadata.client";
@@ -7,268 +7,247 @@ import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 
 const AUDIO_EXTENSIONS = /\.(mp3|wav|ogg|flac|m4a)$/i;
 
-export class LibraryService {
-  private readonly songsDir: string;
-  private readonly interludiosDir: string;
-  private watcherTimer: Timer | null = null;
-  private watchDebounceTimer: Timer | null = null;
-  private watchPending = false;
-  private watchHandles: FSWatcher[] = [];
-  private scanLock: Promise<void> = Promise.resolve();
+export interface LibraryDeps {
+  libraryRepo: LibraryRepository;
+  audioMetadataClient: AudioMetadataClient;
+  musicDir: string;
+  onDeleteCallback?: () => Promise<void>;
+}
 
-  constructor(
-    private readonly libraryRepo: LibraryRepository,
-    private readonly audioMetadataClient: AudioMetadataClient,
-    private readonly musicDir: string,
-    private readonly onDeleteCallback?: () => Promise<void>
-  ) {
-    this.songsDir = join(musicDir, "songs");
-    this.interludiosDir = join(musicDir, "interludios");
-  }
+export interface LibraryService {
+  init: () => Promise<void>;
+  shutdown: () => void;
+  scan: () => Promise<void>;
+  rescan: () => Promise<string>;
+  listSongs: () => Track[];
+  listSongsPage: (limit: number, offset: number) => { items: Track[]; total: number };
+  listInterludios: () => Track[];
+  listInterludiosPage: (limit: number, offset: number) => { items: Track[]; total: number };
+  getTrackById: (id: string) => Track | null;
+  getTrackByFile: (file: string) => Track | null;
+  getTrackByUrl: (url: string) => Track | null;
+  updateSpotifyUrl: (file: string, spotifyUrl: string) => string | null;
+  deleteTrack: (file: string) => boolean;
+  updateLastPlayedByFile: (file: string) => void;
+}
 
-  public async init(): Promise<void> {
-    this.ensureDirs();
-    await this.scan();
-    this.startWatching();
-  }
+function ensureDir(dir: string): void {
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+}
 
-  private ensureDirs(): void {
-    if (!existsSync(this.songsDir)) mkdirSync(this.songsDir, { recursive: true });
-    if (!existsSync(this.interludiosDir)) mkdirSync(this.interludiosDir, { recursive: true });
-  }
-
-  private startWatching(): void {
-    // Polling: reliable across all platforms incl. Docker volumes
-    this.watcherTimer = setInterval(() => this.scan(), 15000);
-
-    // fs.watch: fast notification on platforms that support recursive
-    try {
-      for (const dir of [this.songsDir, this.interludiosDir]) {
-        const handle = watch(dir, { recursive: true }, (_event, filename) => {
-          if (!filename || filename.startsWith(".") || filename.startsWith("ai_dj_")) return;
-          this.scheduleWatchScan();
-        });
-        this.watchHandles.push(handle);
+function getAllAudioFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const results: string[] = [];
+  try {
+    for (const entry of readdirSync(dir)) {
+      const fullPath = join(dir, entry);
+      const stat = statSync(fullPath);
+      if (stat.isDirectory()) {
+        results.push(...getAllAudioFiles(fullPath));
+      } else if (AUDIO_EXTENSIONS.test(entry) && !entry.startsWith("ai_dj_")) {
+        results.push(fullPath);
       }
-      console.log("[LibraryService] File watcher (recursive) + polling 15s");
-    } catch {
-      console.log(
-        "[LibraryService] File watcher: polling 15s (recursive fs.watch no soportado en esta plataforma)"
+    }
+  } catch (err: any) {
+    console.error(`[Library] Error reading ${dir}:`, err.message);
+  }
+  return results;
+}
+
+function fileToDbKey(filePath: string, baseDir: string, prefix: string): string {
+  const rel = relative(baseDir, filePath).replace(/\\/g, "/");
+  return `${prefix}/${rel}`;
+}
+
+async function enrichMetadata(
+  filePath: string,
+  type: "song" | "interludio",
+  client: AudioMetadataClient
+): Promise<{ title: string; artist: string; album: string; duration: number; spotifyUrl: string }> {
+  const name = basename(filePath, extname(filePath));
+  const stat = statSync(filePath);
+  const meta = await client.extractMetadata(filePath);
+
+  const title = meta.title || name;
+  const artist = meta.artist || "";
+  const album = meta.album || "";
+  const duration = meta.duration || Math.floor(stat.size / ((192 * 1000) / 8));
+  let spotifyUrl = meta.spotifyUrl || "";
+
+  if (type === "song" && !spotifyUrl) {
+    spotifyUrl = await searchSpotify(title, artist, album);
+  }
+
+  return { title, artist, album, duration, spotifyUrl };
+}
+
+async function searchSpotify(title: string, artist: string, album: string): Promise<string> {
+  const queryBasic = artist ? `${title} ${artist}` : title;
+  let results = await spotifySearch(queryBasic);
+
+  if (results.length === 0 && album) {
+    results = await spotifySearch(`${title} ${artist} ${album}`);
+  }
+
+  if (results.length > 0) {
+    console.log(`[Library] Spotify found: ${results[0].title} — ${results[0].artist}`);
+    return results[0].spotifyUrl;
+  }
+
+  console.log(`[Library] Spotify not found: ${queryBasic}`);
+  return "";
+}
+
+async function upsertFiles(
+  files: string[],
+  baseDir: string,
+  type: "song" | "interludio",
+  deps: LibraryDeps
+): Promise<void> {
+  const prefix = type === "song" ? "songs" : "interludios";
+  const existingTracks = deps.libraryRepo.getAllTracks(type);
+
+  for (const filePath of files) {
+    try {
+      const stat = statSync(filePath);
+      const key = fileToDbKey(filePath, baseDir, prefix);
+      const existing = existingTracks.find((t) => t.file === key);
+
+      if (existing?.mtime && stat.mtime.toISOString() === existing.mtime) continue;
+
+      const { title, artist, album, duration, spotifyUrl } = await enrichMetadata(
+        filePath,
+        type,
+        deps.audioMetadataClient
       );
-    }
-  }
 
-  private scheduleWatchScan(): void {
-    if (this.watchPending) return;
-    this.watchPending = true;
-    if (this.watchDebounceTimer) clearTimeout(this.watchDebounceTimer);
-    this.watchDebounceTimer = setTimeout(async () => {
-      this.watchPending = false;
-      await this.scan();
-    }, 2000);
-  }
-
-  public shutdown(): void {
-    if (this.watcherTimer) clearInterval(this.watcherTimer);
-    if (this.watchDebounceTimer) clearTimeout(this.watchDebounceTimer);
-    for (const handle of this.watchHandles) {
-      try { handle.close(); } catch {}
-    }
-    this.watchHandles = [];
-  }
-
-  private getAllFiles(dir: string): string[] {
-    let results: string[] = [];
-    if (!existsSync(dir)) return results;
-    try {
-      const list = readdirSync(dir);
-      for (const file of list) {
-        const filePath = join(dir, file);
-        const stat = statSync(filePath);
-        if (stat.isDirectory()) {
-          results = results.concat(this.getAllFiles(filePath));
-        } else if (AUDIO_EXTENSIONS.test(file) && !file.startsWith("ai_dj_")) {
-          results.push(filePath);
-        }
-      }
+      deps.libraryRepo.upsertTrack({
+        file: key,
+        type,
+        title,
+        artist,
+        album,
+        duration,
+        spotify_url: spotifyUrl,
+        size: stat.size,
+        mtime: stat.mtime.toISOString(),
+      });
     } catch (err: any) {
-      console.error(`[LibraryService] Error reading directory ${dir}:`, err.message);
+      console.error(`[Library] Failed to index ${filePath}:`, err.message);
     }
-    return results;
   }
+}
 
-  public scan(): Promise<void> {
-    const run = this.scanLock.then(() => this.doScan());
-    this.scanLock = run.then(() => {}, () => {});
+function removeOrphanedTracks(
+  dbTracks: Track[],
+  physicalKeys: Set<string>,
+  repo: LibraryRepository
+): void {
+  for (const track of dbTracks) {
+    // Only clean orphaned songs - interludios are managed by the queue service
+    if (track.type !== "song") continue;
+    if (!physicalKeys.has(track.file)) {
+      repo.removeTrack(track.file);
+      console.log(`[Library] Removed orphaned: ${track.file}`);
+    }
+  }
+}
+
+function buildPhysicalKeys(files: string[], baseDir: string, prefix: string): Set<string> {
+  return new Set(files.map((f) => fileToDbKey(f, baseDir, prefix)));
+}
+
+async function doScan(deps: LibraryDeps): Promise<void> {
+  const songsDir = join(deps.musicDir, "songs");
+
+  ensureDir(songsDir);
+
+  const songFiles = getAllAudioFiles(songsDir);
+
+  await upsertFiles(songFiles, songsDir, "song", deps);
+
+  removeOrphanedTracks(
+    deps.libraryRepo.getAllTracks("song"),
+    buildPhysicalKeys(songFiles, songsDir, "songs"),
+    deps.libraryRepo
+  );
+}
+
+export function createLibraryService(deps: LibraryDeps): LibraryService {
+  const songsDir = join(deps.musicDir, "songs");
+  const interludiosDir = join(deps.musicDir, "interludios");
+
+  let watcherTimer: Timer | null = null;
+  let scanLock: Promise<void> = Promise.resolve();
+
+  const scan = (): Promise<void> => {
+    const run = scanLock.then(() => doScan(deps));
+    scanLock = run.then(
+      () => {},
+      () => {}
+    );
     return run;
-  }
+  };
 
-  private async doScan(): Promise<void> {
-    this.ensureDirs();
+  return {
+    async init() {
+      ensureDir(songsDir);
+      ensureDir(interludiosDir);
+      await scan();
+      watcherTimer = setInterval(scan, 15000);
+      console.log("[Library] Polling 15s active");
+    },
 
-    const songFiles = this.getAllFiles(this.songsDir);
-    await this.scanAndUpsertFiles(songFiles, this.songsDir, "song");
+    shutdown() {
+      if (watcherTimer) clearInterval(watcherTimer);
+    },
 
-    const interludioFiles = this.getAllFiles(this.interludiosDir);
-    await this.scanAndUpsertFiles(interludioFiles, this.interludiosDir, "interludio");
+    scan,
 
-    const dbSongs = this.libraryRepo.getAllTracks("song");
-    const dbInterludios = this.libraryRepo.getAllTracks("interludio");
+    async rescan() {
+      await scan();
+      return "ok";
+    },
 
-    const physicalSongKeys = new Set(
-      songFiles.map((f) => {
-        const relPath = relative(this.songsDir, f).replace(/\\/g, "/");
-        return `songs/${relPath}`;
-      })
-    );
+    listSongs: () => deps.libraryRepo.getAllTracks("song"),
 
-    const physicalInterludioKeys = new Set(
-      interludioFiles.map((f) => {
-        const relPath = relative(this.interludiosDir, f).replace(/\\/g, "/");
-        return `interludios/${relPath}`;
-      })
-    );
+    listSongsPage: (limit, offset) => ({
+      items: deps.libraryRepo.getTracksPage("song", limit, offset),
+      total: deps.libraryRepo.countTracks("song"),
+    }),
 
-    for (const track of dbSongs) {
-      if (!physicalSongKeys.has(track.file)) {
-        this.libraryRepo.removeTrack(track.file);
-        console.log(`[LibraryService] Removed deleted song from DB: ${track.file}`);
-      }
-    }
+    listInterludios: () => deps.libraryRepo.getAllTracks("interludio"),
 
-    for (const track of dbInterludios) {
-      if (!physicalInterludioKeys.has(track.file)) {
-        this.libraryRepo.removeTrack(track.file);
-        console.log(`[LibraryService] Removed deleted interludio from DB: ${track.file}`);
-      }
-    }
-  }
+    listInterludiosPage: (limit, offset) => ({
+      items: deps.libraryRepo.getTracksPage("interludio", limit, offset),
+      total: deps.libraryRepo.countTracks("interludio"),
+    }),
 
-  private async scanAndUpsertFiles(
-    files: string[],
-    baseDir: string,
-    type: "song" | "interludio"
-  ): Promise<void> {
-    const prefix = type === "song" ? "songs" : "interludios";
-    const existingTracks = this.libraryRepo.getAllTracks(type);
+    getTrackById: (id) => deps.libraryRepo.getTrackById(id),
+    getTrackByFile: (file) => deps.libraryRepo.getTrackByFile(file),
+    getTrackByUrl: (url) => deps.libraryRepo.getTrackByUrl(url),
+    updateSpotifyUrl: (file, url) => deps.libraryRepo.updateSpotifyUrl(file, url),
 
-    for (const filePath of files) {
-      try {
-        const stat = statSync(filePath);
-        const relPath = relative(baseDir, filePath).replace(/\\/g, "/");
-        const key = `${prefix}/${relPath}`;
-        const existing = existingTracks.find((t) => t.file === key);
-
-        if (existing?.mtime && stat.mtime.toISOString() === existing.mtime) {
-          continue;
+    deleteTrack(file) {
+      const fullPath = join(deps.musicDir, file);
+      if (existsSync(fullPath)) {
+        try {
+          unlinkSync(fullPath);
+        } catch (err: any) {
+          console.error(`[Library] Failed to delete ${file}:`, err.message);
+          return false;
         }
-
-        const file = basename(filePath);
-        const name = basename(file, extname(file));
-        const meta = await this.audioMetadataClient.extractMetadata(filePath);
-
-        let title = meta.title || name;
-        let artist = meta.artist || "";
-        let album = meta.album || "";
-        let duration = meta.duration || Math.floor(stat.size / ((192 * 1000) / 8));
-        let spotifyUrl = meta.spotifyUrl || "";
-
-        if (type === "song" && !spotifyUrl) {
-          const queryBasic = artist ? `${title} ${artist}` : title;
-          let results = await spotifySearch(queryBasic);
-
-          if (results.length === 0 && album) {
-            const queryWithAlbum = `${title} ${artist} ${album}`;
-            results = await spotifySearch(queryWithAlbum);
-          }
-
-          if (results.length > 0) {
-            const track = results[0];
-            // Only use Spotify for the spotifyUrl. Never touch title/artist/album/duration.
-            spotifyUrl = track.spotifyUrl;
-            console.log(`[LibraryService] ✅ Spotify found: ${track.title} — ${track.artist} (${track.album})`);
-          } else {
-            console.log(`[LibraryService] Spotify not found: ${queryBasic}`);
-          }
-        }
-
-        this.libraryRepo.upsertTrack({
-          file: key,
-          type,
-          title,
-          artist,
-          album,
-          duration,
-          spotify_url: spotifyUrl,
-          size: stat.size,
-          mtime: stat.mtime.toISOString(),
-        });
-      } catch (err: any) {
-        console.error(`[LibraryService] Failed to index file ${filePath}:`, err.message);
       }
-    }
-  }
-
-  public async rescan(): Promise<string> {
-    await this.scan();
-    return "ok";
-  }
-
-  public listSongs(): Track[] {
-    return this.libraryRepo.getAllTracks("song");
-  }
-
-  public listSongsPage(limit: number, offset: number): { items: Track[]; total: number } {
-    return {
-      items: this.libraryRepo.getTracksPage("song", limit, offset),
-      total: this.libraryRepo.countTracks("song"),
-    };
-  }
-
-  public listInterludios(): Track[] {
-    return this.libraryRepo.getAllTracks("interludio");
-  }
-
-  public listInterludiosPage(limit: number, offset: number): { items: Track[]; total: number } {
-    return {
-      items: this.libraryRepo.getTracksPage("interludio", limit, offset),
-      total: this.libraryRepo.countTracks("interludio"),
-    };
-  }
-
-  public getTrackById(id: string): Track | null {
-    return this.libraryRepo.getTrackById(id);
-  }
-
-  public getTrackByFile(file: string): Track | null {
-    return this.libraryRepo.getTrackByFile(file);
-  }
-
-  public getTrackByUrl(url: string): Track | null {
-    return this.libraryRepo.getTrackByUrl(url);
-  }
-
-  public updateSpotifyUrl(file: string, spotifyUrl: string): string | null {
-    return this.libraryRepo.updateSpotifyUrl(file, spotifyUrl);
-  }
-
-  public deleteTrack(file: string): boolean {
-    const fullPath = join(this.musicDir, file);
-    if (!existsSync(fullPath)) {
-      this.libraryRepo.removeTrack(file);
+      deps.libraryRepo.removeTrack(file);
+      deps.onDeleteCallback?.().catch(() => {});
+      console.log(`[Library] Deleted: ${file}`);
       return true;
-    }
-    try {
-      unlinkSync(fullPath);
-      this.libraryRepo.removeTrack(file);
-      if (this.onDeleteCallback) {
-        this.onDeleteCallback().catch(() => {});
-      }
-      console.log(`[LibraryService] Deleted track from disk and catalog: ${file}`);
-      return true;
-    } catch (err: any) {
-      console.error(`[LibraryService] Failed to delete file ${file}:`, err.message);
-      return false;
-    }
-  }
+    },
+
+    updateLastPlayedByFile(file) {
+      const dbFile = file.replace(/^\/music\//, "");
+      const track = deps.libraryRepo.getTrackByFile(dbFile);
+      if (track) deps.libraryRepo.updateLastPlayedAt(track.id);
+    },
+  };
 }

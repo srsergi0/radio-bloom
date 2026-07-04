@@ -9,8 +9,9 @@ process.env.DATA_DIR = process.env.DATA_DIR || join(TEMP_DIR, "data");
 process.env.MUSIC_DIR = process.env.MUSIC_DIR || join(TEMP_DIR, "music");
 process.env.MUSIC_MOUNT = process.env.MUSIC_MOUNT || join(TEMP_DIR, "music");
 
-import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
+import { describe, expect, test, mock, beforeEach } from "bun:test";
 import type { Track, SystemConfig, LibraryStats } from "../src/domain/types";
+import { createApiRouter } from "../src/api/router";
 
 const mockSongs: Track[] = [
   { id: "s1", type: "song", file: "songs/cancion1.mp3", title: "Canción 1", artist: "Artist A", duration: 200, addedAt: "2024-01-01" },
@@ -22,7 +23,6 @@ const mockInterludios: Track[] = [
 ];
 
 const mockStats: LibraryStats = { totalSongs: 2, totalInterludios: 1, totalSizeBytes: 5000000, totalDurationSeconds: 410 };
-
 const mockConfig: SystemConfig = { streamBitrate: 320, streamSampleRate: 44100, crossfadeDuration: 3, playlistReloadSeconds: 30 };
 
 const mockStreamStatus = {
@@ -31,53 +31,57 @@ const mockStreamStatus = {
   duration: 200, elapsed: 42, metadata: { artist: "Artist A", title: "Canción 1" },
 };
 
-const realLibrary = require("../src/library.ts?real");
-const mockLibraryRaw = {
-  listSongs: mock(() => [...mockSongs]),
-  listInterludios: mock(() => [...mockInterludios]),
-  deleteTrack: mock((file: string) => file === "songs/exists.mp3"),
-  getLibraryStats: mock(() => ({ ...mockStats })),
-  scanLibrary: mock(() => ({ ...mockStats })),
-  getTrackByFile: mock((file: string) => {
-    const all = [...mockSongs, ...mockInterludios];
-    return all.find((t) => t.file === file) || null;
-  }),
-  getTrackByUrl: mock((url: string) => {
-    const all = [...mockSongs, ...mockInterludios];
-    return all.find((t) => t.spotifyUrl === url) || null;
+let queueStore: { rid: string; artist: string; title: string; type?: "song" | "interludio" }[] = [];
+let ridCounter = 0;
+let configStore = { ...mockConfig };
+let bullMqJobs: { id: string; type: "file" | "tts"; data: any }[] = [];
+let bullMqJobIdCounter = 0;
+
+const mockConfigService = {
+  get: mock(() => ({ ...configStore })),
+  update: mock((updates: Partial<SystemConfig>) => {
+    configStore = { ...configStore, ...updates };
+    return { ...configStore };
   }),
 };
 
-const mockLibrary = {};
-const allLibraryKeys = new Set([...Object.keys(mockLibraryRaw), ...Object.keys(realLibrary)]);
-for (const key of allLibraryKeys) {
-  mockLibrary[key] = mock((...args) => {
-    if (process.env.IS_INTEGRATION_TEST === "true") {
-      return realLibrary[key] ? realLibrary[key](...args) : undefined;
-    }
-    return mockLibraryRaw[key] ? mockLibraryRaw[key](...args) : undefined;
-  });
-}
+const mockLibraryRepo = {
+  getTrackById: mock((id: string) => {
+    const all = [...mockSongs, ...mockInterludios];
+    return all.find((t) => t.id === id) || null;
+  }),
+  search: mock((q: string) => {
+    const all = [...mockSongs, ...mockInterludios];
+    const items = all.filter((t) => t.title.toLowerCase().includes(q.toLowerCase()) || (t.artist?.toLowerCase() || "").includes(q.toLowerCase()));
+    return { items, total: items.length };
+  }),
+};
 
-mock.module("../src/library", () => mockLibrary);
+const mockLibraryService = {
+  listSongs: mock(() => [...mockSongs]),
+  listInterludios: mock(() => [...mockInterludios]),
+  getTrackById: mock((id: string) => {
+    const all = [...mockSongs, ...mockInterludios];
+    return all.find((t) => t.id === id) || null;
+  }),
+  deleteTrack: mock((file: string) => file === "songs/cancion1.mp3"),
+  rescan: mock(() => Promise.resolve({ ...mockStats })),
+};
 
-let queueStore: { rid: string; filepath: string }[] = [];
-let ridCounter = 0;
-
-const mockLiquidsoap = {
-  skipTrack: mock(() => Promise.resolve()),
-  pausePlayback: mock(() => Promise.resolve()),
+const mockLiquidsoapService = {
+  isConnected: mock(() => true),
   startPlayback: mock(() => Promise.resolve()),
-  getStreamStatus: mock(() => Promise.resolve({ ...mockStreamStatus })),
+  pausePlayback: mock(() => Promise.resolve()),
+  skipTrack: mock(() => Promise.resolve()),
   reloadPlaylist: mock(() => Promise.resolve()),
-  isLiquidsoapConnected: mock(() => true),
+  getCurrentTrack: mock(() => Promise.resolve({ ...mockStreamStatus })),
   queuePush: mock((filepath: string) => {
     ridCounter++;
     const rid = String(ridCounter);
-    queueStore.push({ rid, filepath });
+    queueStore.push({ rid, artist: "", title: filepath.split("/").pop() || filepath, type: filepath.includes("interludio") ? "interludio" : "song" });
     return Promise.resolve(rid);
   }),
-  queueList: mock(() => Promise.resolve(queueStore.map((q) => ({ rid: q.rid, artist: "", title: q.filepath.split("/").pop() || q.filepath })))),
+  queueList: mock(() => Promise.resolve({ items: [...queueStore], total: queueStore.length })),
   queueClear: mock(() => { queueStore = []; return Promise.resolve(); }),
   queueRemove: mock((rid: string) => {
     const idx = queueStore.findIndex((q) => q.rid === rid);
@@ -88,113 +92,154 @@ const mockLiquidsoap = {
   queueInsert: mock((index: number, filepath: string) => {
     const safeIdx = Math.max(0, Math.min(index, queueStore.length));
     ridCounter++;
-    queueStore.splice(safeIdx, 0, { rid: String(ridCounter), filepath });
+    queueStore.splice(safeIdx, 0, {
+      rid: String(ridCounter),
+      artist: "",
+      title: filepath.split("/").pop() || filepath,
+      type: filepath.includes("interludio") ? "interludio" : "song"
+    });
     return Promise.resolve(true);
   }),
   playFileNow: mock((filepath: string) => Promise.resolve(true)),
-  queueLength: mock(() => Promise.resolve(queueStore.length)),
-  sendCommand: mock((cmd: string) => Promise.resolve(["OK"])),
-  clearAndPush: mock((filepath: string) => {
-    queueStore = [];
-    ridCounter++;
-    const rid = String(ridCounter);
-    queueStore.push({ rid, filepath });
-    return Promise.resolve(rid);
-  }),
-  getRequestMetadata: mock((rid: string) => Promise.resolve({})),
-  initLiquidsoap: mock(() => {}),
+  getStreamStatus: mock(() => Promise.resolve({ ...mockStreamStatus })),
 };
 
-mock.module("../src/liquidsoap", () => mockLiquidsoap);
-
-let configStore = { ...mockConfig };
-
-const realDb = require("../src/db.ts?real");
-const mockDbRaw = {
-  searchLibrary: mock((q: string) => {
-    const all = [...mockSongs, ...mockInterludios];
-    const items = all.filter((t) => t.title.toLowerCase().includes(q.toLowerCase()) || (t.artist?.toLowerCase() || "").includes(q.toLowerCase()));
-    return { items, total: items.length };
+const mockLiquidsoapQueueService = {
+  add: mock((filepath: string) => {
+    bullMqJobIdCounter++;
+    const id = `bmq-file-${bullMqJobIdCounter}`;
+    bullMqJobs.push({ id, type: "file", data: { filepath } });
+    return Promise.resolve({ id, data: { filepath } });
   }),
-  createPlaylist: mock((name: string) => ({ id: "pl_1", name, tracks: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })),
-  listPlaylists: mock(() => []),
-  getPlaylist: mock((id: string) => id === "pl_exists" ? { id: "pl_exists", name: "Test", tracks: [], createdAt: "", updatedAt: "" } : null),
-  updatePlaylistName: mock((id: string) => id === "pl_exists"),
-  deletePlaylist: mock((id: string) => id === "pl_exists"),
-  addPlaylistTrack: mock((playlistId: string) => playlistId === "pl_exists" ? { id: "pt_1", playlistId, pos: 0, type: "song", title: "Test", duration: 100, addedAt: "" } : null),
-  removePlaylistTrack: mock((playlistId: string, trackId: string) => playlistId === "pl_exists" && trackId === "pt_exists"),
-  reorderPlaylistTracks: mock(() => true),
-  getLibraryTrack: mock((file: string) => {
-    const all = [...mockSongs, ...mockInterludios];
-    return all.find((t) => t.file === file) || null;
+  addTts: mock((script: string, voice?: string) => {
+    bullMqJobIdCounter++;
+    const id = `bmq-tts-${bullMqJobIdCounter}`;
+    bullMqJobs.push({ id, type: "tts", data: { script, voice } });
+    return Promise.resolve({ id, data: { script, voice } });
   }),
-  upsertLibraryTrack: mock(() => {}),
-  removeLibraryTrack: mock(() => {}),
-  getAllLibraryTracks: mock((type?: string) => type ? (type === "song" ? mockSongs : mockInterludios) : [...mockSongs, ...mockInterludios]),
-  getLibraryTracksPage: mock((type: string) => type === "song" ? mockSongs : mockInterludios),
-  countLibraryTracks: mock((type: string) => type === "song" ? mockSongs.length : mockInterludios.length),
-  getLibraryStats: mock(() => ({ ...mockStats })),
-  getLibraryTrackByUrl: mock((url: string) => {
-    return mockSongs.find((t) => t.spotifyUrl === url) || null;
-  }),
-  createDownload: mock((url: string) => ({ id: "dl_1", url, status: "queued", startedAt: new Date().toISOString() })),
-  updateDownload: mock(() => {}),
-  getDownload: mock((id: string) => null),
-  getAllDownloads: mock(() => []),
-  clearDownloads: mock(() => {}),
-  loadConfig: mock(() => ({ ...configStore })),
-  saveConfig: mock((config: SystemConfig) => { configStore = { ...config }; }),
-  updateConfig: mock((updates: Partial<SystemConfig>) => {
-    configStore = { ...configStore, ...updates };
-    return { ...configStore };
-  }),
-  getDB: mock(() => ({})),
-  initDB: mock(() => ({}) as any),
+  getQueue: mock(() => ({
+    name: "liquidsoap-queue",
+    client: {},
+    close: () => Promise.resolve(),
+    on: () => {},
+    metaValues: { version: "bullmq-mock" },
+  })),
 };
 
-const mockDb = {};
-const allDbKeys = new Set([...Object.keys(mockDbRaw), ...Object.keys(realDb)]);
-for (const key of allDbKeys) {
-  mockDb[key] = mock((...args) => {
-    if (process.env.IS_INTEGRATION_TEST === "true") {
-      return realDb[key] ? realDb[key](...args) : undefined;
-    }
-    return mockDbRaw[key] ? mockDbRaw[key](...args) : undefined;
-  });
-}
+const playlistStore: Record<string, { id: string; name: string; tracks: any[]; createdAt: string; updatedAt: string }> = {
+  pl_songs: {
+    id: "pl_songs", name: "Songs Only", tracks: [
+      { id: "pt1", playlistId: "pl_songs", pos: 0, type: "song", file: "songs/cancion1.mp3", title: "Canción 1", artist: "Artist A", duration: 200, addedAt: "2024-01-01" },
+      { id: "pt2", playlistId: "pl_songs", pos: 1, type: "song", file: "songs/cancion2.mp3", title: "Canción 2", artist: "Artist B", duration: 180, addedAt: "2024-01-02" },
+    ], createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z",
+  },
+  pl_scripts: {
+    id: "pl_scripts", name: "Scripts Only", tracks: [
+      { id: "pt3", playlistId: "pl_scripts", pos: 0, type: "interludio", file: null, title: "Saludo", script: "Bienvenidos a la radio", duration: 0, addedAt: "2024-01-01" },
+      { id: "pt4", playlistId: "pl_scripts", pos: 1, type: "interludio", file: null, title: "Despedida", script: "Gracias por escuchar", duration: 0, addedAt: "2024-01-01" },
+    ], createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z",
+  },
+  pl_mixed: {
+    id: "pl_mixed", name: "Mixed", tracks: [
+      { id: "pt5", playlistId: "pl_mixed", pos: 0, type: "song", file: "songs/cancion1.mp3", title: "Canción 1", artist: "Artist A", duration: 200, addedAt: "2024-01-01" },
+      { id: "pt6", playlistId: "pl_mixed", pos: 1, type: "interludio", file: null, title: "Saludo", script: "Bienvenidos", duration: 0, addedAt: "2024-01-01" },
+      { id: "pt7", playlistId: "pl_mixed", pos: 2, type: "song", file: "songs/cancion2.mp3", title: "Canción 2", artist: "Artist B", duration: 180, addedAt: "2024-01-02" },
+      { id: "pt8", playlistId: "pl_mixed", pos: 3, type: "interludio", file: "interludios/pausa1.mp3", title: "Pausa 1", duration: 30, addedAt: "2024-01-01" },
+    ], createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z",
+  },
+  pl_empty: {
+    id: "pl_empty", name: "Empty", tracks: [], createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z",
+  },
+};
 
-mock.module("../src/db", () => mockDb);
-
-mock.module("../src/config", () => ({
-  loadConfig: mock(() => ({ ...configStore })),
-  saveConfig: mock((config: SystemConfig) => { configStore = { ...config }; }),
-  updateConfig: mock((updates: Partial<SystemConfig>) => {
-    configStore = { ...configStore, ...updates };
-    return { ...configStore };
+const mockPlaylistRepo = {
+  create: mock((name: string) => ({ id: "pl_new", name, tracks: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })),
+  list: mock(() => Object.values(playlistStore).map(({ id, name, createdAt, updatedAt }) => ({ id, name, createdAt, updatedAt }))),
+  get: mock((id: string) => {
+    const p = playlistStore[id];
+    if (!p) return null;
+    return { ...p };
   }),
-}));
-
-mock.module("../src/mcp", () => ({
-  handleMcpHttpRequest: mock(() => new Response("MCP transport not initialized", { status: 503 })),
-  getHttpTransport: mock(() => null),
-  createHttpTransport: mock(() => {}),
-  server: { connect: mock(() => {}) },
-}));
-
-mock.module("../src/spotdl", () => ({
-  downloadFromSpotify: mock((url: string, onComplete?: (track: Track) => void) => {
-    const track: Track = { id: "dl_track", type: "song", file: "songs/downloaded.mp3", title: "Downloaded", duration: 180, spotifyUrl: url, addedAt: new Date().toISOString() };
-    if (onComplete) onComplete(track);
-    return Promise.resolve({ id: "dl_1", url, status: "done", result: track, startedAt: "", completedAt: new Date().toISOString() });
+  updateName: mock((id: string, name: string) => {
+    if (!playlistStore[id]) return false;
+    playlistStore[id].name = name;
+    return true;
   }),
-}));
+  delete: mock((id: string) => {
+    if (!playlistStore[id]) return false;
+    delete playlistStore[id];
+    return true;
+  }),
+  addTrack: mock((playlistId: string, trackData: any, position?: number) => {
+    if (!playlistStore[playlistId]) return null;
+    return { id: "pt_new", playlistId, pos: position || 0, type: trackData.type || "song", title: trackData.title, duration: trackData.duration || 0, addedAt: new Date().toISOString() };
+  }),
+  removeTrack: mock((playlistId: string, trackId: string) => {
+    const pl = playlistStore[playlistId];
+    if (!pl) return false;
+    const idx = pl.tracks.findIndex((t: any) => t.id === trackId);
+    if (idx === -1) return false;
+    pl.tracks.splice(idx, 1);
+    return true;
+  }),
+  reorderTracks: mock(() => true),
+  updateTrack: mock((playlistId: string, trackId: string, updates: any) => {
+    const pl = playlistStore[playlistId];
+    if (!pl) return null;
+    const track = pl.tracks.find((t: any) => t.id === trackId);
+    if (!track) return null;
+    Object.assign(track, updates);
+    return { ...track };
+  }),
+};
 
-const app = (await import("../src/api")).default;
+const mockLocutorService = {
+  getActiveLocutorAtCurrentTime: mock(() => null),
+  listLocutors: mock(() => []),
+  listSchedules: mock(() => []),
+};
+
+const mockMcpService = {
+  handleHttpRequest: mock(() => Promise.resolve(new Response("MCP transport not initialized", { status: 503 }))),
+};
+const mockTorrentService = {
+  listTorrents: mock(() => []),
+  addTorrentUrl: mock(() => Promise.resolve({ id: "t1" })),
+  deleteTorrent: mock(() => Promise.resolve(true)),
+  getQueue: mock(() => ({
+    name: "test-queue",
+    client: {},
+    close: () => Promise.resolve(),
+    on: () => {},
+    metaValues: { version: "bullmq-mock" },
+  })),
+  getQueueStats: mock(() => Promise.resolve({ active: 0, waiting: 0, completed: 0, failed: 0 })),
+};
+const mockTtsService = {};
+
+const app = createApiRouter({
+  configService: mockConfigService as any,
+  libraryRepo: mockLibraryRepo as any,
+  libraryService: mockLibraryService as any,
+  liquidsoapService: mockLiquidsoapService as any,
+  liquidsoapQueueService: mockLiquidsoapQueueService as any,
+  playlistRepo: mockPlaylistRepo as any,
+  locutorService: mockLocutorService as any,
+  mcpService: mockMcpService as any,
+  torrentService: mockTorrentService as any,
+  musicDir: TEMP_DIR,
+  distDir: TEMP_DIR,
+  ttsService: mockTtsService as any,
+});
 
 beforeEach(() => {
   queueStore = [];
   ridCounter = 0;
   configStore = { ...mockConfig };
+  bullMqJobs = [];
+  bullMqJobIdCounter = 0;
+  mockLiquidsoapQueueService.add.mockClear();
+  mockLiquidsoapQueueService.addTts.mockClear();
 });
 
 function req(method: string, path: string, body?: any) {
@@ -277,60 +322,47 @@ describe("Library endpoints", () => {
     expect(json.data).toHaveLength(1);
   });
 
-  test("GET /api/library/stats", async () => {
-    const res = await req("GET", "/api/library/stats");
+  test("GET /api/library", async () => {
+    const res = await req("GET", "/api/library");
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data.totalSongs).toBe(2);
+    expect(json.data.songs).toHaveLength(2);
+    expect(json.data.interludios).toHaveLength(1);
   });
 
-  test("GET /api/library/track?file=... - found", async () => {
-    const res = await req("GET", "/api/library/track?file=songs/cancion1.mp3");
+  test("GET /api/library/track/:id - found", async () => {
+    const res = await req("GET", "/api/library/track/s1");
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data.title).toBe("Canción 1");
   });
 
-  test("GET /api/library/track - missing file param", async () => {
-    const res = await req("GET", "/api/library/track");
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.ok).toBe(false);
-  });
-
-  test("GET /api/library/track?file=... - not found", async () => {
-    const res = await req("GET", "/api/library/track?file=nonexistent.mp3");
+  test("GET /api/library/track/:id - not found", async () => {
+    const res = await req("GET", "/api/library/track/nonexistent");
     expect(res.status).toBe(404);
     const json = await res.json();
     expect(json.ok).toBe(false);
   });
 
-  test("DELETE /api/library/track?file=... - missing file param", async () => {
-    const res = await req("DELETE", "/api/library/track");
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.ok).toBe(false);
-  });
-
-  test("DELETE /api/library/track?file=... - not found", async () => {
-    const res = await req("DELETE", "/api/library/track?file=nonexistent.mp3");
+  test("DELETE /api/library/track/:id - not found", async () => {
+    const res = await req("DELETE", "/api/library/track/nonexistent");
     expect(res.status).toBe(404);
     const json = await res.json();
     expect(json.ok).toBe(false);
   });
 
-  test("DELETE /api/library/track?file=... - found", async () => {
-    const res = await req("DELETE", "/api/library/track?file=songs/exists.mp3");
+  test("DELETE /api/library/track/:id - found", async () => {
+    const res = await req("DELETE", "/api/library/track/s1");
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.ok).toBe(true);
   });
 
-  test("POST /api/library/scan", async () => {
-    const res = await req("POST", "/api/library/scan");
+  test("GET /api/library/rescan", async () => {
+    const res = await req("GET", "/api/library/rescan");
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data.totalSongs).toBe(2);
+    expect(json.data.rescanned).toBe(true);
   });
 
   test("GET /api/library/search?q=... - found", async () => {
@@ -410,7 +442,7 @@ describe("Stream control endpoints", () => {
 });
 
 // ============================================================
-// QUEUE
+// QUEUE (via BullMQ)
 // ============================================================
 describe("Queue endpoints", () => {
   test("GET /api/stream/queue - empty", async () => {
@@ -420,25 +452,56 @@ describe("Queue endpoints", () => {
     expect(json.data).toEqual([]);
   });
 
-  test("POST /api/stream/queue - missing url", async () => {
+  test("POST /api/stream/queue - success with id", async () => {
+    const res = await req("POST", "/api/stream/queue", { id: "s1" });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.ok).toBe(true);
+    expect(Array.isArray(json.data)).toBe(true);
+    expect(json.data[0].jobId).toMatch(/^bmq-file-/);
+    expect(json.data[0].type).toBe("song");
+    expect(mockLiquidsoapQueueService.add).toHaveBeenCalledTimes(1);
+  });
+
+  test("POST /api/stream/queue - success with script", async () => {
+    const res = await req("POST", "/api/stream/queue", { script: "Hola radio", voice: "es-ES-AlvaroNeural" });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.ok).toBe(true);
+    expect(json.data[0].jobId).toMatch(/^bmq-tts-/);
+    expect(json.data[0].type).toBe("interludio");
+    expect(mockLiquidsoapQueueService.addTts).toHaveBeenCalledWith("Hola radio", "es-ES-AlvaroNeural");
+  });
+
+  test("POST /api/stream/queue - missing id and script returns 200 with empty data", async () => {
     const res = await req("POST", "/api/stream/queue", {});
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data).toEqual([]);
+  });
+
+  test("POST /api/stream/queue - invalid id returns 400", async () => {
+    const res = await req("POST", "/api/stream/queue", { id: "nonexistent" });
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json.ok).toBe(false);
+    expect(json.error).toContain("not found");
   });
 
-  test("POST /api/stream/queue - from library", async () => {
-    const res = await req("POST", "/api/stream/queue", { url: "https://open.spotify.com/track/mock1" });
+  test("POST /api/stream/queue - multiple items preserve order", async () => {
+    const res = await req("POST", "/api/stream/queue", [
+      { id: "s1" },
+      { script: "Anuncio", voice: "es-ES-AlvaroNeural" },
+      { id: "s2" },
+    ]);
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data.source).toBe("download");
-  });
-
-  test("POST /api/stream/queue - download when not in library", async () => {
-    const res = await req("POST", "/api/stream/queue", { url: "https://open.spotify.com/track/new" });
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.data.source).toBe("download");
+    expect(json.data).toHaveLength(3);
+    expect(json.data[0].type).toBe("song");
+    expect(json.data[1].type).toBe("interludio");
+    expect(json.data[2].type).toBe("song");
+    expect(mockLiquidsoapQueueService.add).toHaveBeenCalledTimes(2);
+    expect(mockLiquidsoapQueueService.addTts).toHaveBeenCalledTimes(1);
   });
 
   test("DELETE /api/stream/queue - clear queue", async () => {
@@ -456,7 +519,7 @@ describe("Queue endpoints", () => {
   });
 
   test("DELETE /api/stream/queue/:rid - found", async () => {
-    await req("POST", "/api/stream/queue", { url: "https://open.spotify.com/track/q1" });
+    await mockLiquidsoapService.queuePush("/music/songs/test.mp3");
     const res = await req("DELETE", "/api/stream/queue/1");
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -471,21 +534,7 @@ describe("Queue endpoints", () => {
   });
 
   test("POST /api/stream/queue/insert - success", async () => {
-    const res = await req("POST", "/api/stream/queue/insert", { index: 0, url: "https://open.spotify.com/track/mock1" });
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.ok).toBe(true);
-  });
-
-  test("POST /api/stream/play/url - missing url", async () => {
-    const res = await req("POST", "/api/stream/play/url", {});
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.ok).toBe(false);
-  });
-
-  test("POST /api/stream/play/url - success", async () => {
-    const res = await req("POST", "/api/stream/play/url", { url: "https://open.spotify.com/track/mock1" });
+    const res = await req("POST", "/api/stream/queue/insert", { index: 0, id: "s1" });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.ok).toBe(true);
@@ -510,11 +559,11 @@ describe("Playlist endpoints", () => {
     expect(json.data.name).toBe("Test Playlist");
   });
 
-  test("GET /api/playlists - empty", async () => {
+  test("GET /api/playlists - returns all playlists", async () => {
     const res = await req("GET", "/api/playlists");
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data).toEqual([]);
+    expect(json.data.length).toBeGreaterThanOrEqual(4);
   });
 
   test("GET /api/playlists/:id - not found", async () => {
@@ -524,15 +573,16 @@ describe("Playlist endpoints", () => {
     expect(json.ok).toBe(false);
   });
 
-  test("GET /api/playlists/:id - found", async () => {
-    const res = await req("GET", "/api/playlists/pl_exists");
+  test("GET /api/playlists/:id - found includes tracks", async () => {
+    const res = await req("GET", "/api/playlists/pl_songs");
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data.name).toBe("Test");
+    expect(json.data.name).toBe("Songs Only");
+    expect(json.data.tracks).toHaveLength(2);
   });
 
   test("PUT /api/playlists/:id - missing name", async () => {
-    const res = await req("PUT", "/api/playlists/pl_exists", {});
+    const res = await req("PUT", "/api/playlists/pl_songs", {});
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json.ok).toBe(false);
@@ -546,10 +596,13 @@ describe("Playlist endpoints", () => {
   });
 
   test("PUT /api/playlists/:id - success", async () => {
-    const res = await req("PUT", "/api/playlists/pl_exists", { name: "Updated" });
+    const originalName = playlistStore.pl_songs.name;
+    const res = await req("PUT", "/api/playlists/pl_songs", { name: "Updated Name" });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.ok).toBe(true);
+    expect(json.data.name).toBe("Updated Name");
+    playlistStore.pl_songs.name = originalName;
   });
 
   test("DELETE /api/playlists/:id - not found", async () => {
@@ -560,73 +613,259 @@ describe("Playlist endpoints", () => {
   });
 
   test("DELETE /api/playlists/:id - success", async () => {
-    const res = await req("DELETE", "/api/playlists/pl_exists");
+    const res = await req("DELETE", "/api/playlists/pl_empty");
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.ok).toBe(true);
+    playlistStore.pl_empty = { id: "pl_empty", name: "Empty", tracks: [], createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z" };
   });
 
   test("POST /api/playlists/:id/tracks - missing title", async () => {
-    const res = await req("POST", "/api/playlists/pl_exists/tracks", {});
+    const res = await req("POST", "/api/playlists/pl_songs/tracks", {});
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json.ok).toBe(false);
   });
 
-  test("POST /api/playlists/:id/tracks - playlist not found", async () => {
-    const res = await req("POST", "/api/playlists/nonexistent/tracks", { title: "Test" });
-    expect(res.status).toBe(404);
-    const json = await res.json();
-    expect(json.ok).toBe(false);
-  });
-
-  test("POST /api/playlists/:id/tracks - success", async () => {
-    const res = await req("POST", "/api/playlists/pl_exists/tracks", { title: "New Track" });
+  test("POST /api/playlists/:id/tracks - playlist not found reports as failed", async () => {
+    const res = await req("POST", "/api/playlists/nonexistent/tracks", { tracks: [{ title: "Test" }] });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.ok).toBe(true);
+    expect(json.data.failed).toBe(1);
+    expect(json.data.added).toBe(0);
+    expect(json.data.results[0].error).toContain("Playlist not found");
+  });
+
+  test("POST /api/playlists/:id/tracks - success with single track", async () => {
+    const res = await req("POST", "/api/playlists/pl_songs/tracks", { tracks: [{ title: "New Track" }] });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.ok).toBe(true);
+    expect(json.data.added).toBe(1);
+    expect(json.data.failed).toBe(0);
+    expect(json.data.total).toBe(1);
+  });
+
+  test("POST /api/playlists/:id/tracks - success with multiple tracks", async () => {
+    const res = await req("POST", "/api/playlists/pl_songs/tracks", {
+      tracks: [
+        { libraryTrackId: "s1" },
+        { type: "interludio", title: "Saludo", script: "Hola" },
+      ],
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.ok).toBe(true);
+    expect(json.data.added).toBe(2);
+    expect(json.data.failed).toBe(0);
   });
 
   test("DELETE /api/playlists/:id/tracks/:trackId - not found", async () => {
-    const res = await req("DELETE", "/api/playlists/pl_exists/tracks/nonexistent");
+    const res = await req("DELETE", "/api/playlists/pl_songs/tracks/nonexistent");
     expect(res.status).toBe(404);
     const json = await res.json();
     expect(json.ok).toBe(false);
   });
 
   test("DELETE /api/playlists/:id/tracks/:trackId - success", async () => {
-    const res = await req("DELETE", "/api/playlists/pl_exists/tracks/pt_exists");
+    const res = await req("DELETE", "/api/playlists/pl_songs/tracks/pt1");
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.ok).toBe(true);
+    playlistStore.pl_songs.tracks.unshift({ id: "pt1", playlistId: "pl_songs", pos: 0, type: "song", file: "songs/cancion1.mp3", title: "Canción 1", artist: "Artist A", duration: 200, addedAt: "2024-01-01" });
   });
 
   test("PUT /api/playlists/:id/tracks/reorder - missing trackIds", async () => {
-    const res = await req("PUT", "/api/playlists/pl_exists/tracks/reorder", {});
+    const res = await req("PUT", "/api/playlists/pl_songs/tracks/reorder", {});
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json.ok).toBe(false);
   });
 
   test("PUT /api/playlists/:id/tracks/reorder - success", async () => {
-    const res = await req("PUT", "/api/playlists/pl_exists/tracks/reorder", { trackIds: ["pt1", "pt2"] });
+    const res = await req("PUT", "/api/playlists/pl_songs/tracks/reorder", { trackIds: ["pt1", "pt2"] });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.ok).toBe(true);
   });
 
-  test("POST /api/playlists/:id/load - playlist not found", async () => {
-    const res = await req("POST", "/api/playlists/nonexistent/load");
+  test("POST /api/playlists/:id/play - playlist not found", async () => {
+    const res = await req("POST", "/api/playlists/nonexistent/play");
     expect(res.status).toBe(404);
     const json = await res.json();
     expect(json.ok).toBe(false);
   });
 
-  test("POST /api/playlists/:id/load - empty playlist", async () => {
-    const res = await req("POST", "/api/playlists/pl_exists/load");
+  test("POST /api/playlists/:id/play - empty playlist", async () => {
+    const res = await req("POST", "/api/playlists/pl_empty/play");
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.ok).toBe(false);
+  });
+});
+
+// ============================================================
+// PLAYLIST PLAY (BullMQ integration, order preservation)
+// ============================================================
+describe("POST /api/playlists/:id/play with BullMQ", () => {
+  test("queues file tracks via BullMQ add()", async () => {
+    const res = await req("POST", "/api/playlists/pl_songs/play");
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.ok).toBe(true);
+    expect(json.data.queued).toBe(2);
+    expect(json.data.skipped).toBe(0);
+    expect(json.data.failed).toBe(0);
+    expect(json.data.total).toBe(2);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(mockLiquidsoapQueueService.add).toHaveBeenCalledTimes(2);
+    expect(mockLiquidsoapQueueService.addTts).toHaveBeenCalledTimes(0);
+    expect(mockLiquidsoapQueueService.add).toHaveBeenNthCalledWith(1, "/music/songs/cancion1.mp3");
+    expect(mockLiquidsoapQueueService.add).toHaveBeenNthCalledWith(2, "/music/songs/cancion2.mp3");
+    for (const r of json.data.results) {
+      expect(r.status).toBe("queued");
+    }
+  });
+
+  test("queues script tracks via BullMQ addTts()", async () => {
+    const res = await req("POST", "/api/playlists/pl_scripts/play");
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.ok).toBe(true);
+    expect(json.data.queued).toBe(2);
+    expect(json.data.skipped).toBe(0);
+    expect(json.data.failed).toBe(0);
+    expect(json.data.total).toBe(2);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(mockLiquidsoapQueueService.add).toHaveBeenCalledTimes(0);
+    expect(mockLiquidsoapQueueService.addTts).toHaveBeenCalledTimes(2);
+    expect(mockLiquidsoapQueueService.addTts).toHaveBeenNthCalledWith(1, "Bienvenidos a la radio", undefined);
+    expect(mockLiquidsoapQueueService.addTts).toHaveBeenNthCalledWith(2, "Gracias por escuchar", undefined);
+    for (const r of json.data.results) {
+      expect(r.status).toBe("queued");
+    }
+  });
+
+  test("queues mixed playlist in correct order", async () => {
+    const res = await req("POST", "/api/playlists/pl_mixed/play");
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.ok).toBe(true);
+    expect(json.data.queued).toBe(4);
+    expect(json.data.skipped).toBe(0);
+    expect(json.data.failed).toBe(0);
+
+    await new Promise((r) => setTimeout(r, 5));
+    expect(mockLiquidsoapQueueService.add).toHaveBeenCalledTimes(3);
+    expect(mockLiquidsoapQueueService.addTts).toHaveBeenCalledTimes(1);
+    expect(mockLiquidsoapQueueService.add.mock.calls[0][0]).toBe("/music/songs/cancion1.mp3");
+    expect(mockLiquidsoapQueueService.addTts.mock.calls[0][0]).toBe("Bienvenidos");
+    expect(mockLiquidsoapQueueService.add.mock.calls[1][0]).toBe("/music/songs/cancion2.mp3");
+    expect(mockLiquidsoapQueueService.add.mock.calls[2][0]).toBe("/music/interludios/pausa1.mp3");
+
+    expect(json.data.results).toHaveLength(4);
+    expect(json.data.results[0].title).toBe("Canción 1");
+    expect(json.data.results[0].jobId).toMatch(/^bmq-file-/);
+    expect(json.data.results[1].title).toBe("Saludo");
+    expect(json.data.results[1].jobId).toMatch(/^bmq-tts-/);
+    expect(json.data.results[2].title).toBe("Canción 2");
+    expect(json.data.results[2].jobId).toMatch(/^bmq-file-/);
+    expect(json.data.results[3].title).toBe("Pausa 1");
+    expect(json.data.results[3].jobId).toMatch(/^bmq-file-/);
+    expect(json.data.results[3].pos).toBe(3);
+  });
+
+  test("accepts voice parameter for TTS", async () => {
+    const res = await req("POST", "/api/playlists/pl_scripts/play", { voice: "es-ES-CarolinaNeural" });
+    expect(res.status).toBe(200);
+    expect(mockLiquidsoapQueueService.addTts).toHaveBeenCalledWith("Bienvenidos a la radio", "es-ES-CarolinaNeural");
+    expect(mockLiquidsoapQueueService.addTts).toHaveBeenCalledWith("Gracias por escuchar", "es-ES-CarolinaNeural");
+  });
+
+  test("play with mode='ahora' clears queue and plays", async () => {
+    const res = await req("POST", "/api/playlists/pl_songs/play", { mode: "ahora" });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.mode).toBe("ahora");
+    expect(json.data.queued).toBe(2);
+    expect(mockLiquidsoapQueueService.add).toHaveBeenCalledTimes(2);
+    expect(mockLiquidsoapService.queueClear).toHaveBeenCalled();
+  });
+
+  test("play with mode='encolar' does not clear queue", async () => {
+    mockLiquidsoapService.queueClear.mockClear();
+    const res = await req("POST", "/api/playlists/pl_songs/play", { mode: "encolar" });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.mode).toBe("encolar");
+    expect(json.data.queued).toBe(2);
+    expect(mockLiquidsoapService.queueClear).not.toHaveBeenCalled();
+  });
+
+  test("returns jobId for every queued track", async () => {
+    const res = await req("POST", "/api/playlists/pl_mixed/play");
+    const json = await res.json();
+    for (const r of json.data.results) {
+      expect(r.jobId).toBeDefined();
+      expect(typeof r.jobId).toBe("string");
+      expect(r.jobId.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("interludio with both file and script uses file path (not TTS)", async () => {
+    const res = await req("POST", "/api/playlists/pl_mixed/play");
+    expect(res.status).toBe(200);
+    const calls = bullMqJobs.filter((j) => j.type === "file");
+    const fileUrls = calls.map((c) => c.data.filepath);
+    expect(fileUrls).toContain("/music/interludios/pausa1.mp3");
+  });
+
+  test("reports failed tracks with error message when add() throws", async () => {
+    mockLiquidsoapQueueService.add.mockImplementationOnce(() => Promise.reject(new Error("BullMQ connection refused")));
+    const res = await req("POST", "/api/playlists/pl_songs/play");
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.queued).toBe(1);
+    expect(json.data.failed).toBe(1);
+    expect(json.data.total).toBe(2);
+    const failed = json.data.results.find((r: any) => r.status === "failed");
+    expect(failed).toBeDefined();
+    expect(failed.error).toBe("BullMQ connection refused");
+    expect(failed.title).toBe("Canción 1");
+    const queued = json.data.results.find((r: any) => r.status === "queued");
+    expect(queued).toBeDefined();
+    expect(queued.title).toBe("Canción 2");
+  });
+
+  test("reports failed tracks with error message when addTts() throws", async () => {
+    mockLiquidsoapQueueService.addTts.mockImplementationOnce(() => Promise.reject(new Error("TTS synthesis quota exceeded")));
+    const res = await req("POST", "/api/playlists/pl_scripts/play");
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.failed).toBe(1);
+    expect(json.data.queued).toBe(1);
+    const failed = json.data.results.find((r: any) => r.status === "failed");
+    expect(failed.error).toBe("TTS synthesis quota exceeded");
+  });
+
+  test("marks track as skipped when it has no file and no script", async () => {
+    const badPlaylist = {
+      id: "pl_bad", name: "Bad Tracks", tracks: [
+        { id: "pt_bad1", playlistId: "pl_bad", pos: 0, type: "song", file: null, title: "Empty Track", duration: 0, addedAt: "2024-01-01" },
+        { id: "pt_bad2", playlistId: "pl_bad", pos: 1, type: "interludio", file: null, title: "No script either", duration: 0, addedAt: "2024-01-01" },
+      ], createdAt: "", updatedAt: "",
+    };
+    const originalGet = mockPlaylistRepo.get;
+    mockPlaylistRepo.get.mockImplementationOnce((id: string) => id === "pl_bad" ? badPlaylist : originalGet(id));
+    const res = await req("POST", "/api/playlists/pl_bad/play");
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.queued).toBe(0);
+    expect(json.data.skipped).toBe(2);
+    expect(json.data.failed).toBe(0);
+    expect(json.data.results[0].error).toBe("no file or script");
+    expect(json.data.results[1].error).toBe("no file or script");
   });
 });
 

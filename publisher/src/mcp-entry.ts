@@ -7,7 +7,7 @@ import { DatabaseConnection } from "./infrastructure/database";
 import { TelnetClient } from "./infrastructure/telnet.client";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
-import { LibraryService } from "./services/library.service";
+import { createLibraryService } from "./services/library.service";
 import { LiquidsoapService } from "./services/liquidsoap.service";
 import { McpService } from "./services/mcp.service";
 import { TorrentService } from "./services/torrent.service";
@@ -29,8 +29,13 @@ const libraryRepo = new LibraryRepository(dbConnection);
 const playlistRepo = new PlaylistRepository(dbConnection);
 
 const liquidsoapService = new LiquidsoapService(telnetClient, audioMetadataClient, MUSIC_MOUNT);
-const libraryService = new LibraryService(libraryRepo, audioMetadataClient, MUSIC_DIR, async () => {
-  await liquidsoapService.queueClear();
+const libraryService = createLibraryService({
+  libraryRepo,
+  audioMetadataClient,
+  musicDir: MUSIC_DIR,
+  onDeleteCallback: async () => {
+    await liquidsoapService.queueClear();
+  },
 });
 
 const torrentService = new TorrentService();

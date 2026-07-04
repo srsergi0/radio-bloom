@@ -36,11 +36,55 @@ radio/
 ├── .env.example                          # Plantilla de variables de entorno (Spotify API, puertos, contraseñas)
 ├── .env                                  # Archivo de configuración local con credenciales (ignorado en git)
 ├── .gitignore                            # Archivos excluidos del control de versiones git
+├── package.json                          # Root monorepo (Bun workspaces: packages/*, publisher, web)
 ├── docker-compose.yml                    # Docker Compose unificado (producción / Coolify)
+├── docker-compose.dev.yml                # Desarrollo local (Redis + Liquidsoap + Web)
 ├── docker-compose.override.yml           # Overrides para desarrollo local (bind mounts)
 ├── README.md                             # Guía del proyecto
 ├── AGENTS.md                             # Reglas globales de comportamiento para agentes IA
 ├── opencode.json                         # Configuración OpenCode (MCP local/remoto)
+│
+├── packages/                             # Paquetes del monorepo (publicables independientemente)
+│   └── mcp-lite/                         # mcp-lite — MCP server extraído del SDK v1.29.0
+│       ├── package.json                  # Deps: zod, zod-to-json-schema, content-type, cross-spawn
+│       ├── README.md                     # Quick start y API reference
+│       ├── FEATURES.md                   # Características completas y limitaciones conocidas
+│       ├── tsconfig.json
+│       └── src/
+│           ├── index.js                  # Barrel exports (McpServer, HttpTransport, etc.)
+│           ├── index.d.ts                # Barrel type declarations
+│           ├── types-base.js             # Non-Zod exports (ErrorCode, McpError, type guards) — 0ms load
+│           ├── types-base.d.ts           # Non-Zod type declarations
+│           ├── types.js                  # MCP protocol types/schemas (usa zod/v4, lazy-loaded)
+│           ├── inMemory.js              # InMemoryTransport
+│           ├── server/
+│           │   ├── mcp.js               # McpServer class (.tool, .resource, .prompt, .connect)
+│           │   ├── index.js             # Server class (bajo nivel)
+│           │   ├── stdio.js             # StdioServerTransport
+│           │   ├── webStandardStreamableHttp.js  # HTTP transport (web standards, sin Express)
+│           │   ├── completable.js       # Completable helper
+│           │   ├── zod-compat.js        # Zod v3/v4 compatibility
+│           │   ├── zod-json-schema-compat.js  # Zod → JSON Schema conversion
+│           │   └── auth/
+│           │       └── types.d.ts        # AuthInfo type stub (OAuth stripped)
+│           ├── shared/
+│           │   ├── protocol.js          # Protocol base class (lifecycle, capability negotiation)
+│           │   ├── transport.js         # Transport interface
+│           │   ├── stdio.js             # Shared stdio helpers
+│           │   ├── uriTemplate.js       # URI template parsing
+│           │   ├── toolNameValidation.js # Tool name validation
+│           │   ├── metadataUtils.js     # Metadata helpers
+│           │   └── responseMessage.js   # Response message helpers
+│           ├── validation/
+│           │   ├── ajv-provider.js       # PassthroughJsonSchemaValidator (reemplaza ajv)
+│           │   ├── ajv-provider.d.ts     # PassthroughJsonSchemaValidator types
+│           │   ├── types.d.ts           # Validation interface types
+│           │   └── index.js             # Validation barrel
+│           └── experimental/
+│               └── tasks/               # Task-augmented execution support
+│                   ├── client.js        # Client task support (experimental)
+│                   └── stores/
+│                       └── in-memory.js # InMemoryTaskStore + InMemoryTaskMessageQueue
 │
 ├── ftp/                                  # Servidor FTP para subir canciones manualmente
 │   ├── Dockerfile                        # Dockerfile basado en stilliard/pure-ftpd
@@ -68,8 +112,7 @@ radio/
 │   └── src/
 │       ├── index.ts                      # Servidor principal (Bun.serve, DI, StreamBroadcaster)
 │       ├── env.ts                        # Valores por defecto de variables de entorno
-│       ├── webStandardStreamableHttp.ts  # Soporte de streaming HTTP estándar web
-│       ├── mcp-entry.ts                  # Integración del protocolo MCP para agentes IA
+│       ├── mcp-entry.ts                  # Integración del protocolo MCP para agentes IA (modo stdio)
 │       │
 │       ├── api/
 │       │   └── router.ts                 # Rutas REST (Hono): biblioteca, cola, playlists, subida de archivos
@@ -110,6 +153,7 @@ radio/
     ├── package.json
     ├── tsconfig.json
     ├── astro.config.mjs
+    ├── Dockerfile                        # Dockerfile multi-stage (build + nginx)
     ├── AGENTS.md
     ├── public/                           # Archivos estáticos
     └── src/
@@ -117,25 +161,46 @@ radio/
         │   └── Layout.astro
         ├── styles/
         │   └── global.css
-        ├── pages/
-        │   ├── index.astro               # Landing Page (Inglés)
-        │   ├── admin.astro               # Panel de Gestión de Locutores de IA (Inglés)
-        │   └── es/
-        │       ├── index.astro           # Landing Page (Español)
-        │       └── admin.astro           # Panel de Gestión de Locutores de IA (Español)
-        └── components/
-            ├── EventBanner.astro
-            ├── Features.astro
-            ├── Footer.astro
-            ├── Header.astro
-            ├── Hero.astro
-            ├── LiveShow.astro
-            ├── ProgramList.astro
-            ├── Player.astro
-            └── ui/
-                ├── Badge.astro
-                ├── Button.astro
-                └── Card.astro
+    ├── pages/
+    │   ├── index.astro               # Landing Page (Inglés)
+    │   ├── admin.astro               # Admin SPA (React + shadcn/ui + dnd-kit) — Biblioteca, Playlists e Interludios
+    │   └── es/
+    │       └── index.astro           # Landing Page (Español)
+    ├── lib/
+    │   └── utils.ts                  # cn() helper para shadcn/ui (tailwind-merge + clsx)
+    └── components/
+        ├── EventBanner.astro
+        ├── Features.astro
+        ├── Footer.astro
+        ├── Header.astro
+        ├── Hero.astro
+        ├── LiveShow.astro
+        ├── ProgramList.astro
+        ├── Player.astro
+        ├── ui/
+        │   ├── Badge.astro
+        │   ├── Button.astro
+        │   └── Card.astro
+        └── admin/
+            ├── AdminApp.tsx          # Root SPA: BrowserRouter + layout (sidebar + main)
+            ├── SidebarTree.tsx        # Árbol de canciones y interludios (GET /api/library/tree), draggable
+            ├── PlaylistList.tsx       # Lista de playlists + crear nueva
+            ├── PlaylistDetail.tsx     # Detalle de playlist con cola drag & drop (DndContext)
+            ├── PlaylistTrackItem.tsx  # Item de cola (song/interludio), sortable, menú editar/eliminar
+            ├── InterludioEditor.tsx   # Dialog para crear/editar interludios de texto (script)
+            ├── lib/
+            │   ├── api.ts             # Cliente fetch tipado
+            │   └── types.ts           # Tipos TS: Track, Playlist, PlaylistTrack, FileTreeNode
+            └── ui/                    # Componentes shadcn/ui (React + Tailwind)
+                ├── badge.tsx
+                ├── button.tsx
+                ├── card.tsx
+                ├── dialog.tsx
+                ├── dropdown-menu.tsx
+                ├── input.tsx
+                ├── scroll-area.tsx
+                ├── separator.tsx
+                └── tooltip.tsx
 ```
 
 ---
@@ -167,7 +232,7 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 
 1. **Guardado automático**: Cada 15 segundos, el publisher guarda el estado actual (archivo, título, artista, posición, duración) en SQLite dentro del volumen `radio-publisher-data`.
 2. **Al reiniciar**: El publisher espera 3 segundos, luego reintenta conectarse a Liquidsoap (hasta 60s).
-3. **Restore**: Hace `queuePush` del track guardado → `queue.skip` → `seek` a la posición exacta.
+3. **Restore**: Recupera la cola completa desde SQLite y la restaura en Liquidsoap (ya no solo el track actual).
 4. **Si la canción ya habría terminado**: Limpia el estado y empieza fresco con la playlist de fondo.
 
 ---
@@ -246,6 +311,126 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 
 ## Cambios Recientes
 
+### Ajustes de Parámetros en Liquidsoap (Julio 2026)
+
+- **Cambios**:
+  - En [radio.liq](file:///d:/cursos/SEED-AUDIO/radio/liquidsoap/radio.liq), se modificaron los siguientes parámetros:
+    - `internal_quality` de la salida MP3 de `0` a `2`.
+    - El intervalo de recarga de la lista de reproducción (`reload`) de `60` a `300` segundos.
+    - La duración de la transición `crossfade` (`duration`) de `3.0` a `1.5` segundos.
+
+### Corrección de Resolución de Dependencias del Workspace `mcp-lite` (Julio 2026)
+
+- **Problema**: `bun run dev` fallaba al no encontrar el módulo `mcp-lite` desde `publisher`.
+- **Causas**:
+  1. Las rutas del objeto `"exports"` en [package.json](file:///d:/cursos/SEED-AUDIO/radio/packages/mcp-lite/package.json) del paquete MCP no empezaban por `./`, lo que impedía que Bun resolviese los ficheros correctamente como rutas relativas.
+  2. Había alias de rutas redundantes en el `paths` de [tsconfig.json](file:///d:/cursos/SEED-AUDIO/radio/publisher/tsconfig.json) que apuntaban a ficheros `.js` inexistentes (por ejemplo, `"mcp-lite": ["./src/types/mcp-server.js"]`), lo que confundía al resolutor en tiempo de ejecución de Bun.
+  3. Existían múltiples directorios `node_modules` e hilos de bloqueo `bun.lock` inconexos en subcarpetas del proyecto (resultado de `bun install` ejecutados localmente en `publisher` o `web` de forma aislada).
+- **Soluciones**:
+  - Se corrigió el `"exports"` de [packages/mcp-lite/package.json](file:///d:/cursos/SEED-AUDIO/radio/packages/mcp-lite/package.json) prefijando las rutas con `./`.
+  - Se eliminó el mapeo redundante de `mcp-lite` en el `paths` de [publisher/tsconfig.json](file:///d:/cursos/SEED-AUDIO/radio/publisher/tsconfig.json).
+  - Se limpiaron los directorios `node_modules` locales y archivos `bun.lock` aislados, ejecutando `bun install` desde la raíz para unificar la resolución del monorepo.
+
+### Migración a mcp-lite — Extracción Ligera del SDK Oficial (Julio 2026)
+
+- **Problema**: `@modelcontextprotocol/sdk` arrastraba **Express 5 + ajv + jose + cors** (~150-200MB de heap permanente). El publisher consumía ~492MB de RAM.
+- **Enfoque original (descartado)**: Se intentó reescribir el MCP server desde cero sobre Hono+Bun+Zod (~500 líneas). Se descartó por ser incompleto y no garantizar compliance total con el protocolo MCP.
+- **Solución final**: Se extrajo el código compilado del SDK oficial v1.29.0, copiando solo los archivos `.js` y `.d.ts` necesarios, eliminando Express/OAuth/ajv/jose/cors. Se creó `mcp-lite` como paquete independiente del monorepo (`packages/mcp-lite/`).
+- **Monorepo Bun Workspaces**: `package.json` raíz con `"workspaces": ["packages/*", "publisher", "web"]`. El publisher referencia el paquete via `"mcp-lite": "workspace:*"`.
+- **Archivos copiados del SDK** (sin Express/OAuth/middleware):
+  - `server/mcp.js` — McpServer class
+  - `server/index.js` — Server class
+  - `server/stdio.js` — StdioServerTransport
+  - `server/webStandardStreamableHttp.js` — WebStandardStreamableHTTPServerTransport
+  - `server/completable.js`, `server/zod-compat.js`, `server/zod-json-schema-compat.js`
+  - `shared/protocol.js`, `shared/transport.js`, `shared/stdio.js`, `shared/uriTemplate.js`, `shared/toolNameValidation.js`, `shared/metadataUtils.js`, `shared/responseMessage.js`
+  - `experimental/tasks/*` (interfaces, helpers, mcp-server, server, types, inMemory)
+  - `types.js` (protocol schemas — usa `zod/v4`)
+  - `inMemory.js` (InMemoryTransport)
+- **Reemplazo de Ajv**: Se creó `validation/ajv-provider.js` con `PassthroughJsonSchemaValidator` — validador JSON Schema passthrough que reemplaza ajv (~1.3MB disk, ~5-10MB heap saved). Users pueden inyectar custom validator via `ServerOptions.jsonSchemaValidator`.
+- **Eliminados del SDK**:
+  - `shared/auth.js` (OAuth schemas — importaba `zod/v4` innecesariamente)
+  - `server/express.js`, `server/auth/*`, `server/middleware/*` (Express, cors, jose)
+  - `server/expressMiddleware.js`
+- **API pública del paquete**: `McpServer`, `Server`, `WebStandardStreamableHTTPServerTransport` (+ alias `HttpTransport`), `StdioServerTransport` (+ alias `StdioTransport`), `InMemoryTransport`, `ResourceTemplate`, `completable`, `isCompletable`, y todos los tipos MCP.
+- **Dependencias del paquete**: `zod ^3.25.0 || ^4.0.0`, `zod-to-json-schema ^3.25.1`, `content-type ^1.0.5`, `cross-spawn ^7.0.5`. Cero Express, cero ajv, cero jose, cero cors.
+- **Cambios en el publisher**:
+  - Se eliminó `@modelcontextprotocol/sdk` de `package.json`
+  - Se eliminó el path mapping `@modelcontextprotocol/sdk/*` del tsconfig
+  - Se eliminaron `src/webStandardStreamableHttp.ts` y `src/types/mcp.d.ts`
+  - Se creó `src/types/mcp-server.d.ts` con tipos simplificados para el publisher
+  - `src/services/mcp.service.ts` ahora importa `McpServer`, `HttpTransport`, `StdioTransport` desde `mcp-lite`
+  - Se eliminaron `maxSessions` y `sessionTimeoutMs` del transport options (no existen en el SDK oficial)
+- **Verificaciones**: Typecheck de publisher y mcp-server pasan. Smoke test de imports en runtime OK. Todos los exports (McpServer, HttpTransport, StdioTransport, Server, InMemoryTransport, ResourceTemplate, completable) cargan correctamente.
+
+### Optimización Fase 1 — Module Load Moonshot (Julio 2026)
+
+- **Objetivo**: Reducir el tiempo de arranque del mcp-server y el heap base eliminando imports innecesarios del hot path.
+- **Cambios aplicados**:
+  1. **Inline `isTerminal` en `protocol.js`**: Se inyectó la función `isTerminal()` (1 línea: `status === 'completed' || status === 'failed' || status === 'cancelled'`) directamente en `shared/protocol.js`, eliminando el import de `experimental/tasks/interfaces.js`. Esto corta la cadena de imports experimentales desde `protocol.js`.
+  2. **Lazy-load task helpers en `server/index.js`**: `assertToolsCallTaskCapability` y `assertClientRequestTaskCapability` ahora se importan dinámicamente (`await import()`) solo cuando se llaman `assertTaskCapability()` / `assertTaskHandlerHandler()` — que solo ocurren en request handlers async. Se eliminó el import estático de `experimental/tasks/helpers.js`.
+  3. **Lazy-load `zod/v4-mini` en `zod-json-schema-compat.js`**: `zod/v4-mini` (~57ms de carga) ahora se importa dinámicamente solo cuando se encuentra un schema v4. El import fire-and-forget en el barrel asegura que se precargue en background. Para publishers que solo usan Zod v3, el módulo nunca se bloquea.
+  4. **Eliminar `ZodOptional` import de `mcp.js`**: Se reemplazó `field instanceof ZodOptional` con duck-typing (`field._def?.typeName === 'ZodOptional' || field._zod?.def?.type === 'optional'`). Esto elimina el import de `import { ZodOptional } from 'zod'` que cargaba el módulo completo de Zod.
+- **Resultados medidos**:
+  - Module load: **188ms → 129ms** (-59ms, **-31%**)
+  - Heap base: **0.9MB → 0.2MB** (-0.7MB, **-78%**)
+  - 10 McpServers: **6ms → 1ms** (-5ms, **-83%**)
+  - Publisher RSS: **143MB → 127MB** (-16MB, **-11%**)
+- **Fase completada** (Phase 2 → Per-Instance Moonshot, Phase 3 → Lazy Zod Compilation)
+
+### Optimización Fase 2 — Per-Instance Moonshot (Julio 2026)
+
+- **Objetivo**: Reducir el heap por cada instancia McpServer/Server eliminando allocations innecesarias.
+- **Cambios aplicados**:
+  1. **Protocol Maps lazy-init**: Los 7 Maps/Set del constructor de `Protocol` (`_requestHandlerAbortControllers`, `_responseHandlers`, `_progressHandlers`, `_timeoutInfo`, `_pendingDebouncedNotifications`, `_taskProgressTokens`, `_requestResolvers`) ahora se crean bajo demanda con getters lazy (`_getRequestResolvers()`, etc.). Solo `_requestHandlers` y `_notificationHandlers` se crean eager (se usan en el constructor). `_onclose()` tiene guards `if (this._xxx)` para evitar crear Maps innecesariamente al cerrar.
+  2. **Registry Object→Map**: Los 4 registros de McpServer (`_registeredTools`, `_registeredResources`, `_registeredResourceTemplates`, `_registeredPrompts`) se convirtieron de plain Objects a Maps. Todas las 34 referencias (lecturas, escrituras, deletes, iteraciones, existence checks) se actualizaron a la API de Map (`.get()`, `.set()`, `.has()`, `.delete()`, `.entries()`).
+- **Resultados medidos**:
+  - 50 McpServers (5 tools cada uno): **3.3MB RSS total** (~66KB por instancia)
+  - Per-instance: **~66KB** (vs ~55KB antes — la diferencia es por el overhead de Map vs Object, pero Map es más eficiente en operaciones)
+  - Typecheck y smoke test pasan correctamente
+- **Fase completada** (Phase 3 → Lazy Zod Compilation Moonshot)
+
+### Optimización Fase 3 — Lazy Zod Compilation Moonshot (Julio 2026)
+
+- **Objetivo**: Deferir la carga de `zod/v4` y las 80+ compilaciones de schemas Zod hasta el primer uso real (primer mensaje recibido), no al importar el módulo.
+- **Cambios aplicados**:
+  1. **`types-base.js` (~100 líneas, SIN Zod)**: Se extrajeron todas las exportaciones que no necesitan Zod: `ErrorCode`, `McpError`, `UrlElicitationRequiredError`, version constants (`LATEST_PROTOCOL_VERSION`, `SUPPORTED_PROTOCOL_VERSIONS`, etc.), type guards (`isJSONRPCRequest`, `isJSONRPCNotification`, `isJSONRPCResultResponse`, `isJSONRPCErrorResponse`, `isInitializeRequest`, `isInitializedNotification`, `isTaskAugmentedRequestParams`), y assert functions. Los type guards se reemplazaron de `Zod.safeParse().success` a property-checks simples (más rápidos y sin Zod).
+  2. **String method names en handlers**: `protocol.js` y `server/index.js` ahora usan strings (`'ping'`, `'notifications/cancelled'`, `'initialize'`, etc.) en vez de schemas Zod para registrar handlers en el constructor. Esto elimina la necesidad de schemas compilados durante la construcción del servidor.
+  3. **Lazy-loaded schemas**: Los schemas Zod (`CallToolRequestSchema`, `CreateTaskResultSchema`, `LoggingLevelSchema`, etc.) ahora se cargan via `await import('../types.js')` solo cuando se necesitan para validación de mensajes — no al importar el módulo.
+  4. **Barrel `index.js` actualizado**: Se reemplazó `export * from "./types.js"` por `export * from "./types-base.js"`, eliminando la carga forzosa de Zod al importar el paquete.
+  5. **Type guards sin Zod**: `isJSONRPCRequest`, `isJSONRPCNotification`, etc. ahora usan property-checks simples (`typeof value === 'object' && value.jsonrpc === '2.0' && ...`) en vez de `Zod.safeParse()`. Más rápidos y sin dependencia de Zod.
+- **Resultados medidos**:
+  - Module load: **188ms → 93.1ms** (-94.9ms, **-50% total**)
+  - types-base.js load: **0.1ms** (sin Zod)
+  - types.js load (Zod): **90.3ms** (diferido al primer uso)
+  - Typecheck y smoke test pasan correctamente
+
+### Completado de Tipos TypeScript para `mcp-lite` (Julio 2026)
+
+- **Objetivo**: Soporte completo de tipos para cualquier desarrollador que use el paquete.
+- **Problemas encontrados**:
+  1. `types-base.d.ts` no existía — 0% cobertura para exports no-Zod (ErrorCode, McpError, type guards)
+  2. `auth/types.js` no existía — 4 archivos `.d.ts` importaban `AuthInfo` de una ruta rota
+  3. `validation/ajv-provider.d.ts` no existía — workaround frágil en `package.json`
+  4. Barrel `index.d.ts` no re-exportaba `types-base.js` directamente
+  5. `AnySchema` usaba tipos nominales de `zod/v3` y `zod/v4/core` que no coincidían con `zod` v3 del publisher (diferentes `node_modules`)
+- **Soluciones aplicadas**:
+  1. Creado `types-base.d.ts` con declaraciones completas: constants, ErrorCode enum, McpError, UrlElicitationRequiredError, 7 type guards, 2 assert functions
+  2. Creado `server/auth/types.d.ts` con tipo `AuthInfo` (stub para auth custom)
+  3. Creado `validation/ajv-provider.d.ts` con declaraciones directas
+  4. Actualizado `index.d.ts` para re-exportar `types-base.js` directamente
+  5. `AnySchema = any` + `SchemaOutput<S>` fallback = `any` para compatibilidad cross-version de Zod
+- **Resultado**: Typecheck del publisher pasa correctamente. Cobertura de tipos ~100%.
+
+### Completado de Paridad 1:1 con SDK Oficial (Julio 2026)
+
+- **Objetivo**: Cerrar todos los gaps de funcionalidad entre `mcp-lite` y el SDK oficial v1.29.0.
+- **Gaps encontrados y corregidos**:
+  1. `experimental/tasks/client.js` no existía — import roto en `experimental/tasks/index.js` → Creado `ExperimentalClientTasks` con soporte completo de client-side tasks (callToolStream, getTask, listTasks, cancelTask)
+  2. `experimental/tasks/stores/in-memory.js` no existía — import roto → Creado `InMemoryTaskStore` + `InMemoryTaskMessageQueue` con TTL cleanup automático
+  3. `validation/index.js` exportaba de `./types.js` (solo `.d.ts`) → Cambiado a exportar desde `./ajv-provider.js`
+- **Resultado**: Paridad 1:1 en funcionalidades core (McpServer, Server, Protocol, transports, tools, resources, prompts, completions, experimental tasks). Typecheck pasa.
+
 ### Integración de Búsqueda y Descarga de Torrents en Publisher (BullMQ + Bull-Board)
 
 - **Eliminación de `music-torrent` (Python)**: Se eliminó por completo el microservicio `music-torrent` en Python.
@@ -302,5 +487,58 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 - **Extracción de JSON Tolerante a Conversación**: Implementado un extractor por subcadenas (empleando `indexOf("{")` y `lastIndexOf("}")`) previo a ejecutar `JSON.parse`. Esto previene fallas si el LLM incluye prefacios de texto o explicaciones antes del bloque estructurado JSON.
 - **Entrega de Decisiones mediante Herramienta (`submit_decisions`)**: Se introdujo una herramienta nativa para que la IA devuelva su planificación estructurada como argumentos de una función. Esto maximiza la compatibilidad en OpenRouter entre diferentes proveedores (como DeepSeek y Gemini) que a veces fallan o ignoran el parámetro `response_format` inyectando texto libre junto al JSON, eliminando por completo cualquier riesgo de parseo erróneo de texto.
 - **Optimización de Rendimiento del MCP `radio_status`**: Se identificó un cuello de botella crítico con problema N+1 en `queueList()` — cada rid en la cola hacía un request telnet secuencial. Con 30 canciones = ~34 llamadas de red en serie. Soluciones: (1) Paralelización de metadata fetches con `Promise.all()` en `queueList()`, `queueRemove()` e `queueInsert()`; (2) Ejecución paralela de `getStreamStatus()` y `queueList()` en el tool `radio_status`; (3) Nuevo parámetro `limit` en `queueList()` para solo buscar metadata de los items necesarios; (4) `queueList()` ahora retorna `{ items, total }` para evitar fetches innecesarios.
-- **Auditoría de Estabilidad del Server (28 issues)**: Se realizó un análisis exhaustivo de riesgos de crash. Fixes aplicados: (1) `AbortSignal.timeout(60s)` en fetch de OpenRouter para evitar que el orquestador se congele permanentemente; (2) SQLite cambiado a WAL mode + busy_timeout de 5s para manejar escrituras concurrentes; (3) Restore de playback envuelto en try/catch para prevenir unhandled rejections; (4) Mutex (`withQueueLock`) en `queueRemove`/`queueInsert` para prevenir race conditions que vaciaban la cola; (5) TelnetClient con `commandQueue` limitado a 50, buffer limitado a 1MB, y reconexión que para tras 100 intentos; (6) `fs.watch` handles se cierran en `shutdown()`; (7) `scan()` del library con mutex para evitar scans concurrentes; (8) Sesiones MCP con timeout de 30min y límite de 20 sesiones; (9) Upload endpoint con límite de 200MB; (10) Rate limiting básico (120 req/min por IP); (11) `durationCache` con evict de entradas stale; (12) StreamBroadcaster con límite de 500 clientes; (13) aria2c con safety timeout de 10min + cleanup de temp dirs en fallo; (14) `writeFileSync` reemplazado por `fsPromises.writeFile` async; (15) Graceful shutdown con `_server.stop()`; (16) Null check en `findSpotifyUrl`.
+### Admin de Biblioteca, Playlists e Interludios (React + shadcn/ui + dnd-kit)
 
+- **Nuevo Admin SPA**: Se reemplazó el `admin.astro` brutalista (gestor de locutores) por un SPA React (shadcn/ui + @dnd-kit) integrado en Astro vía `@astrojs/react`.
+- **Stack del admin**: React 19, react-router-dom, shadcn/ui (new-york), Tailwind v4, @dnd-kit (core + sortable), sonner (toasts), lucide-react.
+- **Árbol de biblioteca** (`GET /api/library/tree`): Nuevo endpoint en el publisher que devuelve la estructura de carpetas anidada de `songs/` e `interludios/` como árbol (`FileTreeNode`), facilitando navegación y drag & drop desde la sidebar.
+- **Drag & drop a playlists**: Se puede arrastrar cualquier track del árbol de biblioteca (sidebar izquierda, siempre visible) hacia la cola de una playlist. Internamente usa `POST /api/playlists/:id/tracks` con el nuevo campo `libraryTrackId`.
+- **Reordenamiento en cola**: Los tracks de la playlist se reordenan con @dnd-kit/sortable, persistiendo con `PUT /api/playlists/:id/tracks/reorder`.
+- **Interludios de texto con TTS**: Se añadió soporte para interludios sin archivo de audio, con un campo `script` (texto) en `playlist_tracks`. Al reproducir la playlist (`POST /api/playlists/:id/play`), los interludios con `script` y sin `file` se sintetizan a audio vía Edge-TTS (`ai_dj_pl_*.mp3`) y se encolan en Liquidsoap. Servicio reutilizable `TtsService`.
+- **Esquema DB**: Columna `script TEXT` añadida a `playlist_tracks` con migración idempotente en `database.ts`.
+- **Validación de `type`**: `POST /api/playlists/:id/tracks` ahora valida que `type` sea `song` o `interludio`; un interludio debe tener `file` o `script`.
+- **`libraryTrackId`**: El endpoint `POST /api/playlists/:id/tracks` acepta `libraryTrackId` para autorrellenar `title/artist/file/duration/type` desde la biblioteca.
+- **SPA fallback**: En el router del publisher, cualquier ruta `/admin/*` (excepto `/admin/queues` de Bull-Board) sirve `admin/index.html` para que el client-side routing de React Router funcione en refresh.
+- **Config web**: `astro.config.mjs` integra `@astrojs/react` y proxy Vite (`/api` -> `http://localhost:9876`) para desarrollo local. `tsconfig.json` con `jsx: react-jsx` y path alias `@/*`.
+- **Estilos**: `admin.css` independiente con tokens shadcn (no interfiere con el `global.css` brutalista de las landing pages).
+- **Eliminado `es/admin.astro`**: El admin ya no tiene duplicación i18n (es herramienta interna, sin i18n).
+
+### Auditoría de Estabilidad del Server (28 issues) Se realizó un análisis exhaustivo de riesgos de crash. Fixes aplicados: (1) `AbortSignal.timeout(60s)` en fetch de OpenRouter para evitar que el orquestador se congele permanentemente; (2) SQLite cambiado a WAL mode + busy_timeout de 5s para manejar escrituras concurrentes; (3) Restore de playback envuelto en try/catch para prevenir unhandled rejections; (4) Mutex (`withQueueLock`) en `queueRemove`/`queueInsert` para prevenir race conditions que vaciaban la cola; (5) TelnetClient con `commandQueue` limitado a 50, buffer limitado a 1MB, y reconexión que para tras 100 intentos; (6) `fs.watch` handles se cierran en `shutdown()`; (7) `scan()` del library con mutex para evitar scans concurrentes; (8) Sesiones MCP con timeout de 30min y límite de 20 sesiones; (9) Upload endpoint con límite de 200MB; (10) Rate limiting básico (120 req/min por IP); (11) `durationCache` con evict de entradas stale; (12) StreamBroadcaster con límite de 500 clientes; (13) aria2c con safety timeout de 10min + cleanup de temp dirs en fallo; (14) `writeFileSync` reemplazado por `fsPromises.writeFile` async; (15) Graceful shutdown con `_server.stop()`; (16) Null check en `findSpotifyUrl`.
+
+### Corrección de Interfaz del Panel de Administración, Drag & Drop y Reordenamiento (Julio 2026)
+
+- **Corrección de Conflicto de Rutas (Reordenamiento)**: Se corrigió un error en el que las peticiones `PUT /api/playlists/:id/tracks/reorder` fallaban con un error `"No fields to update"` debido a que chocaban con la ruta parametrizada `/api/playlists/:id/tracks/:trackId` definida anteriormente. Se reordenaron las rutas en `publisher/src/api/router.ts` para resolver el conflicto.
+- **Resolución de Drag & Drop de Biblioteca a Playlist**: Se corrigió el bug que impedía arrastrar canciones sobre elementos existentes de la playlist. Se añadió metadata en el `useSortable` de [PlaylistTrackItem.tsx](file:///d:/cursos/SEED-AUDIO/radio/web/src/components/admin/PlaylistTrackItem.tsx) para identificar el tipo de elemento (`type: "playlist-track"`), permitiendo que [AdminApp.tsx](file:///d:/cursos/SEED-AUDIO/radio/web/src/components/admin/AdminApp.tsx) identifique y encole las canciones sin importar sobre qué elemento se suelten.
+- **Rediseño Premium en Modo Oscuro**: Se migró el panel de administración a un tema oscuro moderno basado en zinc que incorpora el color de marca de Radio Bloom (naranja neón `#ff3b00`) como color primario, mejorando los estilos del explorador de canciones [SidebarTree.tsx](file:///d:/cursos/SEED-AUDIO/radio/web/src/components/admin/SidebarTree.tsx) y agregando indicadores visuales para colas vacías en [PlaylistDetail.tsx](file:///d:/cursos/SEED-AUDIO/radio/web/src/components/admin/PlaylistDetail.tsx).
+
+### Panel de Monitoreo de Transmisión en Vivo, Comandos de Liquidsoap y Pruebas Unitarias Robustas (Julio 2026)
+
+- **Isla de Control en Vivo en Tiempo Real**: Se creó el componente [StreamQueueIsland.tsx](file:///d:/cursos/SEED-AUDIO/radio/web/src/components/admin/StreamQueueIsland.tsx) integrado en la parte inferior del panel de administración. Permite visualizar metadatos ("Ahora en vivo" con barra de progreso fluida de 1 segundo), locutores o shows programados en el bloque de tiempo actual ("Programado") y los temas en la cola activa ("Cola en vivo") con bordes de color correspondientes (rojo para canciones, verde para interludios).
+- **Encolado Interactivo de Stream**: Se adaptó el flujo de drag & drop en [AdminApp.tsx](file:///d:/cursos/SEED-AUDIO/radio/web/src/components/admin/AdminApp.tsx) para admitir drops sobre el contenedor `"stream-queue"`, enviando solicitudes POST inmediatas al servidor de radio y refrescando el dashboard en vivo automáticamente.
+- **Resolución de Comando Skip, Metadatos y Sincronización en Liquidsoap**:
+  - Se corrigió el bug en [liquidsoap.service.ts](file:///d:/cursos/SEED-AUDIO/radio/publisher/src/services/liquidsoap.service.ts) donde `request.on_air` fallaba. Se implementó una lógica de resolución robusta en `getActiveRequestId()` que recupera todos los request IDs de `request.all`, lee su metadata y los compara de forma normalizada (insensible a mayúsculas y acentos) con el tema actual obtenido directamente de `output.harbor.metadata`. Esto asegura que el backend mapee el ID de petición exacto (p. ej., distinguiendo entre varias canciones activas).
+  - Se corrigió la falta de sincronización de la barra de progreso al recargar la página: dado que Liquidsoap no añade `on_air_timestamp` por defecto, se implementó el cálculo del tiempo transcurrido (`elapsed`) de manera matemática como `duration - remaining` consultando la orden de Liquidsoap `output.harbor.remaining`. Esto asegura una sincronización precisa e instantánea que se conserva tras cada recarga.
+  - Se reemplazó el comando Telnet inactivo `queue.flush_and_skip` por `output.harbor.skip` para realizar skips limpios y universales tanto en listas pregrabadas como en la cola dinámica.
+- **Resolución de Archivos Locales en Listas de Reproducción**:
+  - Se identificó que las canciones importadas desde Spotify en las playlists no guardan una referencia de archivo físico directa (`file = NULL`). Al dar "Play", el backend saltaba estas pistas.
+  - Se implementó un resolvedor dinámico en `POST /api/playlists/:id/play` que consulta la base de datos local usando la URL de Spotify (`getTrackByUrl`) o el Título y Artista (`getTrackByTitleAndArtist`). Si la canción ya fue descargada e indexada en la biblioteca, la reproduce localmente en lugar de ignorarla.
+- **Persistencia de la Cola Completa**: Se modificó `playback_state` para guardar toda la cola de Liquidsoap (cada track en una fila con `position`), no solo el track actual. Al reiniciar el servidor se restaura la cola completa.
+- **Refactorización Completa del Set de Pruebas Unitarias y de Integración**:
+  - Se rediseñó por completo [api.test.ts](file:///d:/cursos/SEED-AUDIO/radio/publisher/test/api.test.ts) eliminando las antiguas dependencias mockeadas a nivel de sistema de módulos (`mock.module`), pasando en su lugar un set limpio de repositorios y servicios simulados a través de `createApiRouter(deps)`. Se alinearon todas las aserciones de encolamiento y rutas de biblioteca con la versión actual de la API.
+  - Se reescribió [integration.test.ts](file:///d:/cursos/SEED-AUDIO/radio/publisher/test/integration.test.ts) para realizar pruebas reales con SQLite usando `DatabaseConnection` y `LibraryService` para escanear y buscar canciones en un directorio temporal limpio que se recicla en cada ejecución.
+  - Se verificaron los tests ejecutando `bun test`, logrando un **100% de éxito con 57 tests aprobados** en la suite del backend (`api.test.ts`, `integration.test.ts`, y `locutor.test.ts`).
+
+### Limpieza Final de Publisher (Julio 2026)
+
+- **Código muerto eliminado**: `publisher/src/types/mcp-server.d.ts` — declaraciones ambientales redundantes que resolvían al `index.d.ts` del paquete (nunca se usaban).
+- **Ambient `zod.d.ts` simplificado**: Se reimplementó el shim con solo los métodos que el publisher realmente usa (string, number, boolean, array, object, enum, literal, union, optional, nullable, default, coerce). Evita que TypeScript resuelva los ~5000 tipos del paquete `zod` en cada compilación.
+- **Path mapping corregido**: `zod` apunta ahora a `./src/types/zod.d.ts` (directamente) en vez de `./src/types/zod.js` (que no existía).
+- **Validación**: Typecheck del publisher pasa (0 errores). Smoke test de todos los exports del mcp-server OK.
+
+### Configuración de Monorepo con Docker Compose (Julio 2026)
+
+- **Dockerfile para web**: Multi-stage build con `oven/bun:1.2-alpine` para build + `nginx:alpine` para producción.
+- **docker-compose.dev.yml actualizado**: Servicios `redis`, `liquidsoap` y `web` para desarrollo local. El `web` usa bind mounts para hot reload.
+- **docker-compose.yml (producción)**: Servicio `web` agregado con nginx, dependiendo de `publisher`.
+- **Scripts monorepo**: `package.json` raíz con scripts para开发 (`dev`, `dev:web`, `dev:all`), infra (`dev:infra`, `docker:up`, `docker:down`, `docker:dev`, `docker:build`) y build (`build`, `build:all`, `lint`, `typecheck`).
+- **Variable de entorno**: `WEB_PORT` agregada a `.env.example` (default: 80).

@@ -16,15 +16,14 @@
     "tsBuildInfoFile": "node_modules/.cache/tsconfig.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
+      "mcp-lite": ["../packages/mcp-lite/src/index.d.ts"],
       "hono": ["./src/types/hono.js"],
       "hono/*": ["./src/types/hono.js"],
-      "@modelcontextprotocol/sdk/*": ["./src/types/mcp.js"],
-      "../node_modules/@modelcontextprotocol/sdk/*": ["./src/types/mcp.js"],
       "drizzle-orm": ["./src/types/drizzle.js"],
       "drizzle-orm/*": ["./src/types/drizzle.js"],
       "music-metadata": ["./src/types/music-metadata.js"],
       "edge-tts-universal": ["./src/types/edge-tts.js"],
-      "zod": ["./src/types/zod.js"]
+      "zod": ["./src/types/zod.d.ts"]
     }
   },
   "include": ["src/**/*"],

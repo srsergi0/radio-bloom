@@ -6,7 +6,7 @@ import * as schema from "../repositories/sqlite/schema";
 
 export class DatabaseConnection {
   public readonly client: Database;
-  public readonly drizzle: ReturnType<typeof drizzle<typeof schema>>;
+  public readonly drizzle: ReturnType<typeof drizzle>;
 
   constructor(dbPath: string) {
     const dir = dirname(dbPath);
@@ -44,7 +44,9 @@ export class DatabaseConnection {
         added_at TEXT NOT NULL DEFAULT (datetime('now')),
         size INTEGER DEFAULT 0,
         mtime TEXT DEFAULT '',
-        spotify_url TEXT DEFAULT ''
+        spotify_url TEXT DEFAULT '',
+        last_played_at TEXT DEFAULT '',
+        script TEXT DEFAULT ''
       )
     `);
 
@@ -56,6 +58,12 @@ export class DatabaseConnection {
     }
     try {
       this.client.exec("ALTER TABLE library_tracks ADD COLUMN spotify_url TEXT DEFAULT ''");
+    } catch {}
+    try {
+      this.client.exec("ALTER TABLE library_tracks ADD COLUMN last_played_at TEXT DEFAULT ''");
+    } catch {}
+    try {
+      this.client.exec("ALTER TABLE library_tracks ADD COLUMN script TEXT DEFAULT ''");
     } catch {}
 
     // Ensure unique index on file for upsert (upsertTrack uses ON CONFLICT(file))
@@ -71,15 +79,31 @@ export class DatabaseConnection {
       );
     } catch {}
 
+    try {
+      this.client.exec("DROP TABLE IF EXISTS playback_state");
+    } catch {}
+    // Migrate queue_persistence: add columns if missing (created as IF NOT EXISTS)
+    try {
+      this.client.exec("ALTER TABLE queue_persistence ADD COLUMN elapsed REAL NOT NULL DEFAULT 0");
+    } catch {}
+    try {
+      this.client.exec("ALTER TABLE queue_persistence ADD COLUMN duration REAL NOT NULL DEFAULT 0");
+    } catch {}
+    try {
+      this.client.exec(
+        "ALTER TABLE queue_persistence ADD COLUMN saved_at TEXT NOT NULL DEFAULT (datetime('now'))"
+      );
+    } catch {}
+
     this.client.exec(`
-      CREATE TABLE IF NOT EXISTS playback_state (
-        id TEXT PRIMARY KEY,
-        file TEXT NOT NULL DEFAULT '',
-        title TEXT NOT NULL DEFAULT '',
-        artist TEXT NOT NULL DEFAULT '',
+      CREATE TABLE IF NOT EXISTS queue_persistence (
+        snapshot_id TEXT NOT NULL,
+        file TEXT NOT NULL,
+        position INTEGER NOT NULL,
         elapsed REAL NOT NULL DEFAULT 0,
         duration REAL NOT NULL DEFAULT 0,
-        saved_at TEXT NOT NULL DEFAULT (datetime('now'))
+        saved_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (snapshot_id, position)
       )
     `);
 
@@ -103,10 +127,14 @@ export class DatabaseConnection {
         artist TEXT DEFAULT '',
         duration REAL NOT NULL DEFAULT 0,
         spotify_url TEXT DEFAULT '',
+        script TEXT DEFAULT '',
         added_at TEXT NOT NULL DEFAULT (datetime('now')),
         FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
       )
     `);
+    try {
+      this.client.exec("ALTER TABLE playlist_tracks ADD COLUMN script TEXT DEFAULT ''");
+    } catch {}
 
     this.client.exec(`
       CREATE TABLE IF NOT EXISTS locutors (

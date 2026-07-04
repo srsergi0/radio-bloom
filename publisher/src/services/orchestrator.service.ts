@@ -1,8 +1,15 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync, promises as fsPromises } from "node:fs";
+import {
+  existsSync,
+  promises as fsPromises,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { EdgeTTS } from "edge-tts-universal";
 import type { Track } from "../domain/types";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
+import type { LibraryService } from "./library.service";
 import type { LiquidsoapService } from "./liquidsoap.service";
 import type { LocutorService } from "./locutor.service";
 
@@ -26,11 +33,13 @@ export class OrchestratorService {
   private dialogueHistory: DialogueMessage[] = [];
   private startedAt = 0;
   private lastInjectionTime = 0;
+  private lastPlayedFile: string | null = null;
   private static readonly STARTUP_GRACE_MS = 30_000; // 30s grace period on startup
   private static readonly INJECTION_COOLDOWN_MS = 60_000; // 1min between interludio injections
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
+    private readonly libraryService: LibraryService,
     private readonly liquidsoapService: LiquidsoapService,
     private readonly locutorService: LocutorService,
     private readonly musicDir: string,
@@ -160,6 +169,13 @@ export class OrchestratorService {
       const status = await this.liquidsoapService.getStreamStatus();
       const { items: queue } = await this.liquidsoapService.queueList();
 
+      // 0. Update last_played_at when track changes
+      const currentFile = status.metadata?.filename || status.metadata?.initial_uri || "";
+      if (currentFile && currentFile !== this.lastPlayedFile) {
+        this.lastPlayedFile = currentFile;
+        this.libraryService.updateLastPlayedByFile(currentFile);
+      }
+
       // 1. Clean up generated TTS files that already played
       await this.cleanupTempFiles(status, queue);
 
@@ -189,8 +205,12 @@ export class OrchestratorService {
     const currentPlayingFile = status.metadata?.filename || status.metadata?.initial_uri || "";
 
     const queuedFilenames = new Set<string>();
-    const metaResults = await Promise.all(
-      queue.map((item) => this.liquidsoapService.getRequestMetadata(item.rid).catch(() => ({})))
+    const metaResults: Record<string, string>[] = await Promise.all(
+      queue.map((item) =>
+        this.liquidsoapService
+          .getRequestMetadata(item.rid)
+          .catch((): Record<string, string> => ({}))
+      )
     );
     for (const meta of metaResults) {
       const filename = meta.filename || meta.initial_uri || "";
@@ -235,8 +255,12 @@ export class OrchestratorService {
     }
 
     // Get all tracks in queue with their metadata
-    const metaResults = await Promise.all(
-      queue.map((item) => this.liquidsoapService.getRequestMetadata(item.rid).catch(() => ({})))
+    const metaResults: Record<string, string>[] = await Promise.all(
+      queue.map((item) =>
+        this.liquidsoapService
+          .getRequestMetadata(item.rid)
+          .catch((): Record<string, string> => ({}))
+      )
     );
 
     const queueWithMeta: Array<{

@@ -18,6 +18,8 @@ export const libraryTracks = sqliteTable("library_tracks", {
   size: integer("size").default(0),
   mtime: text("mtime").default(""),
   spotifyUrl: text("spotify_url").default(""),
+  lastPlayedAt: text("last_played_at").default(""),
+  script: text("script").default(""),
 });
 
 export const playlists = sqliteTable("playlists", {
@@ -27,11 +29,10 @@ export const playlists = sqliteTable("playlists", {
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
 
-export const playbackState = sqliteTable("playback_state", {
-  id: text("id").primaryKey(),
-  file: text("file").notNull().default(""),
-  title: text("title").notNull().default(""),
-  artist: text("artist").notNull().default(""),
+export const queuePersistence = sqliteTable("queue_persistence", {
+  snapshotId: text("snapshot_id").notNull(),
+  file: text("file").notNull(),
+  position: integer("position").notNull(),
   elapsed: real("elapsed").notNull().default(0),
   duration: real("duration").notNull().default(0),
   savedAt: text("saved_at").notNull().default(sql`(datetime('now'))`),
@@ -50,6 +51,7 @@ export const playlistTracks = sqliteTable("playlist_tracks", {
   duration: real("duration").notNull().default(0),
   spotifyUrl: text("spotify_url").default(""),
   addedAt: text("added_at").notNull().default(sql`(datetime('now'))`),
+  script: text("script").default(""),
 });
 
 export const locutors = sqliteTable("locutors", {

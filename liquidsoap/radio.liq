@@ -1,14 +1,28 @@
 # Radio Bloom - Liquidsoap Configuration
 
 settings.server.telnet := true
+settings.charset.max_string_length := 4096
+settings.request.metadata_decoders.recode.exclude := ["uslt", "lyrics"]
 settings.server.telnet.port := 1234
 settings.server.telnet.bind_addr := "0.0.0.0"
 settings.harbor.bind_addrs := ["0.0.0.0"]
 
 # Background playlist (always available when queue is empty)
 # conservative=true avoids re-encoding when codec matches output
-music = playlist(mode="randomize", reload=60, "/music/songs/")
-radio = crossfade(duration=3.0, music)
+music = playlist(mode="randomize", reload=300, "/music/songs/")
+
+# Expose current track filename via telnet var for queue persistence
+current_file = interactive.string("current_file", "")
+def capture_filename(m) =
+  filename = m["filename"]
+  if filename != "" then
+    current_file.set(filename)
+  end
+  m
+end
+music = metadata.map(capture_filename, music)
+
+radio = crossfade(duration=1.5, music)
 radio = mksafe(radio)
 
 # User queue for on-demand tracks (timeout=10s to prevent stuck requests)
@@ -38,7 +52,7 @@ main = compress.multiband(main, [
 main = limit(main, threshold=-1.0)
 
 output.harbor(
-  %mp3(bitrate=320, samplerate=44100, stereo=true, internal_quality=0),
+  %mp3(bitrate=320, samplerate=44100, stereo=true, internal_quality=2),
   port=8000,
   mount="radiobloom.mp3",
   main

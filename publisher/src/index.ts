@@ -10,12 +10,15 @@ import { LocutorRepository } from "./repositories/sqlite/locutor.repo";
 import { PlaybackStateRepository } from "./repositories/sqlite/playback-state.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { ConfigService } from "./services/config.service";
-import { LibraryService } from "./services/library.service";
+import { createLibraryService } from "./services/library.service";
 import { LiquidsoapService } from "./services/liquidsoap.service";
+import { LiquidsoapQueueService } from "./services/liquidsoap-queue.service";
 import { LocutorService } from "./services/locutor.service";
 import { McpService } from "./services/mcp.service";
 import { OrchestratorService } from "./services/orchestrator.service";
+import { QueuePersistenceService } from "./services/queue-persistence.service";
 import { TorrentService } from "./services/torrent.service";
+import { TtsService } from "./services/tts.service";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const DATA_DIR = process.env.DATA_DIR || "/app/data";
@@ -54,11 +57,22 @@ const locutorRepo = new LocutorRepository(dbConnection);
 // 3. Services & Use Cases Instantiation
 // ============================================================
 const configService = new ConfigService(configRepo);
-const liquidsoapService = new LiquidsoapService(telnetClient, audioMetadataClient, MUSIC_MOUNT);
+const liquidsoapService = new LiquidsoapService(
+  telnetClient,
+  audioMetadataClient,
+  MUSIC_MOUNT,
+  libraryRepo,
+  playlistRepo
+);
 const locutorService = new LocutorService(locutorRepo);
 
-const libraryService = new LibraryService(libraryRepo, audioMetadataClient, MUSIC_DIR, async () => {
-  await liquidsoapService.queueClear();
+const libraryService = createLibraryService({
+  libraryRepo,
+  audioMetadataClient,
+  musicDir: MUSIC_DIR,
+  onDeleteCallback: async () => {
+    await liquidsoapService.queueClear();
+  },
 });
 
 const torrentService = new TorrentService();
@@ -74,11 +88,22 @@ const mcpService = new McpService(
 
 const orchestratorService = new OrchestratorService(
   libraryRepo,
+  libraryService,
   liquidsoapService,
   locutorService,
   MUSIC_DIR,
   DATA_DIR
 );
+
+const ttsService = new TtsService(MUSIC_DIR);
+
+const liquidsoapQueueService = new LiquidsoapQueueService(
+  (filepath) => liquidsoapService.queuePush(filepath),
+  MUSIC_DIR,
+  libraryRepo,
+  audioMetadataClient
+);
+liquidsoapQueueService.startWorker();
 
 // Initialize library service (creates dirs, scans, starts watcher)
 libraryService.init().catch((err) => console.error("[init] libraryService:", err));
@@ -86,87 +111,12 @@ libraryService.init().catch((err) => console.error("[init] libraryService:", err
 // Start AI DJ Orchestrator
 orchestratorService.start();
 
-// ============================================================
-// Playback State Persistence & Restore
-// ============================================================
-
-// Restore playback state on startup (after Liquidsoap is likely ready)
-setTimeout(async () => {
-  try {
-    const state = playbackStateRepo.get();
-    if (!state?.file) {
-      console.log("[restore] No saved state found. Starting fresh.");
-      return;
-    }
-
-    console.log(`[restore] Previous track found: "${state.title}" by ${state.artist}`);
-
-    const savedAtMs = new Date(state.savedAt).getTime();
-    if (Number.isNaN(savedAtMs)) {
-      playbackStateRepo.clear();
-      return;
-    }
-
-    const secondsSinceSave = (Date.now() - savedAtMs) / 1000;
-    const currentElapsed = state.elapsed + secondsSinceSave;
-
-    if (state.duration > 0 && currentElapsed >= state.duration) {
-      console.log("[restore] Previous track would have ended. Starting fresh.");
-      playbackStateRepo.clear();
-      return;
-    }
-
-    for (let attempt = 0; attempt < 30; attempt++) {
-      if (liquidsoapService.isConnected()) {
-        console.log(`[restore] Resuming "${state.file}" at ~${Math.round(currentElapsed)}s`);
-
-        const rid = await liquidsoapService.queuePush(state.file);
-        if (!rid) {
-          console.log("[restore] Failed to push track to queue.");
-          return;
-        }
-
-        await new Promise((r) => setTimeout(r, 1000));
-        await liquidsoapService.sendCommand("queue.skip");
-
-        await new Promise((r) => setTimeout(r, 800));
-
-        const currentRid = await liquidsoapService.getCurrentRequestId();
-        if (currentRid) {
-          const seekPos = Math.max(0, currentElapsed);
-          const ok = await liquidsoapService.requestSeek(currentRid, seekPos);
-          console.log(
-            `[restore] Seek to ${Math.round(seekPos)}s: ${ok ? "OK" : "failed, playing from start"}`
-          );
-        }
-        return;
-      }
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    console.log("[restore] Liquidsoap not available after 60s, skipping restore.");
-  } catch (err: any) {
-    console.error("[restore] Error during playback restore:", err.message);
-  }
-}, 3000);
-
-// Persist current playback state every 15 seconds
-setInterval(async () => {
-  try {
-    const status = await liquidsoapService.getStreamStatus();
-    if (!status.playing || !status.metadata) return;
-
-    const file = status.metadata.filename || status.metadata.initial_uri || "";
-    if (!file) return;
-
-    playbackStateRepo.save({
-      file,
-      title: status.title || "",
-      artist: status.artist || "",
-      elapsed: status.elapsed,
-      duration: status.duration,
-    });
-  } catch {}
-}, 15000);
+const queuePersistenceService = new QueuePersistenceService(
+  liquidsoapService,
+  playbackStateRepo,
+  libraryService
+);
+queuePersistenceService.start();
 
 // ============================================================
 // 4. API & Static Router Instantiation
@@ -176,12 +126,14 @@ const apiRouter = createApiRouter({
   libraryRepo,
   libraryService,
   liquidsoapService,
+  liquidsoapQueueService,
   playlistRepo,
   locutorService,
   mcpService,
   torrentService,
   musicDir: MUSIC_DIR,
   distDir: DIST_DIR,
+  ttsService,
 });
 
 // ============================================================
@@ -296,8 +248,12 @@ class StreamBroadcaster {
 
   public registerClient(controller: ReadableStreamDefaultController) {
     if (this.clients.size >= StreamBroadcaster.MAX_CLIENTS) {
-      console.warn(`[Broadcaster] Max clients reached (${StreamBroadcaster.MAX_CLIENTS}). Rejecting.`);
-      try { controller.close(); } catch {}
+      console.warn(
+        `[Broadcaster] Max clients reached (${StreamBroadcaster.MAX_CLIENTS}). Rejecting.`
+      );
+      try {
+        controller.close();
+      } catch {}
       return;
     }
     for (const chunk of this.buffer) {
@@ -365,6 +321,7 @@ console.log(`[server] Radio Bloom API + Stream on port ${PORT}`);
 console.log(`[server] Stream: http://localhost:${PORT}/radiobloom.mp3`);
 console.log(`[server] API:    http://localhost:${PORT}/api/`);
 console.log(`[server] MCP:    http://localhost:${PORT}/mcp`);
+console.log(`[server] Queues: http://localhost:${PORT}/admin/queues`);
 console.log(`[server] Radio Bloom Composition Root ready`);
 
 process.on("SIGINT", async () => {

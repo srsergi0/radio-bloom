@@ -4,10 +4,10 @@ declare module "drizzle-orm" {
   export function or(...conditions: any[]): any;
   export function and(...conditions: any[]): any;
   export function desc(column: any): any;
-  export const sql: {
-    (strings: TemplateStringsArray, ...values: any[]): any;
-    raw(value: string): any;
-  };
+  export function sql<T = any>(strings: TemplateStringsArray, ...values: any[]): T;
+  export namespace sql {
+    function raw(value: string): any;
+  }
 
   class DrizzleSelect {
     from(table: any): DrizzleSelect;
@@ -18,13 +18,18 @@ declare module "drizzle-orm" {
     $dynamic(): DrizzleSelect;
     get(): any;
     all(): any[];
+    then(onfulfilled?: ((value: any[]) => any) | null): Promise<any>;
   }
 
   export interface DrizzleDb {
     select(...columns: any[]): DrizzleSelect;
-    insert(table: any): { values(data: any): { run(): any } };
-    update(table: any): { set(data: any): { where(condition: any): { run(): any } } };
-    delete(table: any): { where(condition: any): { run(): any } };
+    insert(table: any): {
+      values(data: any): { run(): any; onConflictDoUpdate(config: any): { run(): any } };
+    };
+    update(table: any): { set(data: any): { run(): any; where(condition: any): { run(): any } } };
+    delete(table: any): { run(): any; where(condition: any): { run(): any } };
+    transaction<T>(fn: (tx: DrizzleDb) => T): T;
+    $dynamic(): DrizzleSelect;
   }
 }
 

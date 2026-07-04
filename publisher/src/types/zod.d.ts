@@ -1,22 +1,23 @@
 declare module "zod" {
-  interface ZodType {
-    optional(): ZodType;
-    default(value: any): ZodType;
-    describe(description: string): ZodType;
-    min(n: number): ZodType;
-    max(n: number): ZodType;
-    int(): ZodType;
-  }
-
   const z: {
-    string(): ZodType;
-    number(): ZodType;
-    boolean(): ZodType;
-    array(item: ZodType): ZodType;
-    object(shape: Record<string, ZodType>): ZodType;
-    enum(values: readonly string[]): ZodType;
+    string(): any;
+    number(): any;
+    boolean(): any;
+    array(item: any): any;
+    object(shape: Record<string, any>): any;
+    enum(values: readonly string[]): any;
+    literal(value: any): any;
+    union(types: any[]): any;
+    optional(type: any): any;
+    nullable(type: any): any;
+    default(type: any, value: any): any;
+    coerce: {
+      string(): any;
+      number(): any;
+      boolean(): any;
+    };
   };
 
-  export { ZodType, z };
+  export { z };
   export default z;
 }

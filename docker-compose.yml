@@ -68,6 +68,20 @@ services:
         condition: service_healthy
 
   # ──────────────────────────────────────────────
+  # Web - Frontend (Astro)
+  # ──────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: ./web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      publisher:
+        condition: service_started
+
+  # ──────────────────────────────────────────────
   # FTP - Song Upload Server
   # ──────────────────────────────────────────────
   ftp:

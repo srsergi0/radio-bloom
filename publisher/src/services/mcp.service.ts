@@ -1,26 +1,16 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { HttpTransport, McpServer, StdioTransport } from "mcp-lite";
+import { listVoices, type Voice } from "edge-tts-universal";
 import { z } from "zod";
 import { spotifySearch } from "../infrastructure/spotify.client";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
-import { WebStandardStreamableHTTPServerTransport } from "../webStandardStreamableHttp.js";
 import type { LibraryService } from "./library.service";
 import type { LiquidsoapService } from "./liquidsoap.service";
-import { TorrentService } from "./torrent.service";
+import type { TorrentService } from "./torrent.service";
 
 export class McpService {
   private readonly server: McpServer;
-  private readonly sessions = new Map<
-    string,
-    {
-      server: McpServer;
-      transport: WebStandardStreamableHTTPServerTransport;
-      lastActivity: number;
-    }
-  >();
-  private static readonly MAX_SESSIONS = 20;
-  private static readonly SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+  private httpTransport: HttpTransport | null = null;
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
@@ -34,17 +24,6 @@ export class McpService {
       version: "1.0.0",
     });
     this.registerAllTools(this.server);
-  }
-
-  private cleanupStaleSessions(): void {
-    const now = Date.now();
-    for (const [id, session] of this.sessions) {
-      if (now - session.lastActivity > McpService.SESSION_TIMEOUT_MS) {
-        session.transport.close().catch(() => {});
-        this.sessions.delete(id);
-        console.log(`[McpService] Session expired: ${id}`);
-      }
-    }
   }
 
   private registerAllTools(server: McpServer) {
@@ -62,7 +41,11 @@ export class McpService {
             content: [
               {
                 type: "text",
-                text: JSON.stringify({ status, queue: queue.items, queueTotal: queue.total }, null, 2),
+                text: JSON.stringify(
+                  { status, queue: queue.items, queueTotal: queue.total },
+                  null,
+                  2
+                ),
               },
             ],
           };
@@ -160,6 +143,70 @@ export class McpService {
     );
 
     server.tool(
+      "radio_tts_voices",
+      "Listar voces disponibles para TTS (Text-to-Speech). Filtrar por idioma o género para encontrar la voz ideal para interludios",
+      {
+        language: z
+          .string()
+          .optional()
+          .describe("Filtrar por idioma (ej: 'es' para español, 'en' para inglés)"),
+        gender: z.string().optional().describe("Filtrar por género: 'Male' o 'Female'"),
+      },
+      async ({ language, gender }) => {
+        try {
+          const allVoices = await listVoices();
+          let filtered = allVoices;
+
+          if (language) {
+            const lang = language.toLowerCase();
+            filtered = filtered.filter(
+              (v) => v.Locale.toLowerCase().startsWith(lang) || v.Name.toLowerCase().includes(lang)
+            );
+          }
+          if (gender) {
+            const g = gender.charAt(0).toUpperCase() + gender.slice(1).toLowerCase();
+            filtered = filtered.filter((v) => v.Gender === g);
+          }
+
+          const voices = filtered.map((v) => ({
+            shortName: v.ShortName,
+            name: v.Name,
+            gender: v.Gender,
+            locale: v.Locale,
+            languages: v.VoiceTag.ContentCategories,
+            personalities: v.VoiceTag.VoicePersonalities,
+          }));
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    total: voices.length,
+                    filter: { language, gender },
+                    voices: voices.slice(0, 50),
+                    hint:
+                      voices.length > 50
+                        ? `Mostrando 50 de ${voices.length}. Usa language/gender para filtrar`
+                        : undefined,
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        } catch (err: any) {
+          return {
+            content: [{ type: "text", text: `Error al obtener voces: ${err.message}` }],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    server.tool(
       "radio_queue_list",
       "Listar el contenido actual de la cola de reproducción",
       {
@@ -198,29 +245,105 @@ export class McpService {
 
     server.tool(
       "radio_queue_add",
-      "Añadir una canción o interludio al final de la cola usando su ID de la biblioteca. Usa el campo 'id' que devuelve radio_search",
+      "Añadir canciones e interludios al final de la cola. Acepta un ID individual o un array de IDs para encolar múltiples en orden. También soporta TTS con { script, voice }. Usa radio_tts_voices para ver voces disponibles",
       {
         id: z
           .string()
-          .describe("ID del track en la biblioteca (campo 'id' que devuelve radio_search)"),
+          .optional()
+          .describe(
+            "ID del track en la biblioteca (campo 'id' que devuelve radio_search). Para un solo track"
+          ),
+        ids: z
+          .array(z.string())
+          .optional()
+          .describe("Array de IDs para encolar múltiples tracks en orden"),
+        tracks: z
+          .array(
+            z.object({
+              id: z.string().optional().describe("ID del track en la biblioteca"),
+              script: z.string().optional().describe("Texto para generar interludio TTS"),
+              voice: z
+                .string()
+                .optional()
+                .describe(
+                  "Voz para TTS (ver radio_tts_voices para opciones, default: es-ES-AlvaroNeural)"
+                ),
+            })
+          )
+          .optional()
+          .describe("Array de objetos con id, o script+voice para TTS"),
       },
-      async ({ id }) => {
-        const track = this.libraryRepo.getTrackById(id);
-        if (!track)
+      async ({
+        id,
+        ids,
+        tracks,
+      }: {
+        id?: string;
+        ids?: string[];
+        tracks?: { id?: string; script?: string; voice?: string }[];
+      }) => {
+        const items: { id?: string; script?: string; voice?: string }[] = [];
+
+        if (tracks && tracks.length > 0) {
+          items.push(...tracks);
+        } else if (ids && ids.length > 0) {
+          items.push(...ids.map((trackId) => ({ id: trackId })));
+        } else if (id) {
+          items.push({ id });
+        } else {
           return {
-            content: [{ type: "text", text: `Track con ID '${id}' no existe en la biblioteca` }],
+            content: [{ type: "text", text: "Se requiere 'id', 'ids' o 'tracks'" }],
             isError: true,
           };
-        const filepath = `/music/${track.file}`;
-        const rid = await this.liquidsoapService.queuePush(filepath);
-        if (!rid) return { content: [{ type: "text", text: "Error al encolar" }], isError: true };
+        }
+
+        const queued: { id: string; title: string; type: string }[] = [];
+        const errors: { id?: string; script?: string; error: string }[] = [];
+
+        for (const item of items) {
+          if (item.id) {
+            const track = this.libraryRepo.getTrackById(item.id);
+            if (!track) {
+              errors.push({ id: item.id, error: `Track '${item.id}' no existe` });
+              continue;
+            }
+            const filepath = `/music/${track.file}`;
+            const rid = await this.liquidsoapService.queuePush(filepath);
+            if (!rid) {
+              errors.push({ id: item.id, error: "Error al encolar" });
+              continue;
+            }
+            queued.push({ id: track.id, title: track.title, type: track.type });
+          } else if (item.script) {
+            // TTS interludio - usar el endpoint HTTP que tiene BullMQ
+            const res = await fetch("http://localhost:3000/api/stream/queue", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ script: item.script, voice: item.voice }),
+            });
+            const data = await res.json();
+            if (data.ok) {
+              queued.push({ id: "tts", title: item.script.slice(0, 50), type: "interludio" });
+            } else {
+              errors.push({ script: item.script, error: data.error || "Error TTS" });
+            }
+          }
+        }
+
         const { items: queueItems } = await this.liquidsoapService.queueList();
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify(
-                { ok: true, rid, queue: queueItems.map((q, i) => ({ position: i + 1, ...q })) },
+                {
+                  ok: errors.length === 0,
+                  queued: queued.length,
+                  skipped: errors.length,
+                  items: queued,
+                  errors: errors.length > 0 ? errors : undefined,
+                  queue: queueItems.map((q, i) => ({ position: i + 1, ...q })),
+                },
                 null,
                 2
               ),
@@ -558,7 +681,10 @@ export class McpService {
             content: [
               {
                 type: "text",
-                text: result.logs.length === 0 ? "No hay logs para este job aún" : result.logs.join("\n"),
+                text:
+                  result.logs.length === 0
+                    ? "No hay logs para este job aún"
+                    : result.logs.join("\n"),
               },
             ],
           };
@@ -687,6 +813,40 @@ export class McpService {
       }
     );
 
+    server.tool(
+      "radio_interludio_create",
+      "Crear un interludio TTS (texto a voz) y guardarlo en la biblioteca. Devuelve el track con su ID para usarlo luego en radio_playlist_add_track. workflow: 1) crear interludios 2) añadirlos a playlist por ID",
+      {
+        title: z.string().describe("Título descriptivo del interludio"),
+        script: z.string().describe("Texto a sintetizar (lo que se escuchará)"),
+        voice: z
+          .string()
+          .optional()
+          .describe("Voz TTS (ver radio_tts_voices, default: es-ES-AlvaroNeural)"),
+      },
+      async ({ title, script, voice }) => {
+        try {
+          const body: Record<string, any> = { title, script };
+          if (voice) body.voice = voice;
+          const res = await fetch("http://localhost:3000/api/interludios", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            return {
+              content: [{ type: "text", text: data.error || "Error creating interludio" }],
+              isError: true,
+            };
+          }
+          return { content: [{ type: "text", text: JSON.stringify(data.data, null, 2) }] };
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        }
+      }
+    );
+
     server.tool("radio_playlist_list", "Listar todas las playlists guardadas", {}, async () => {
       const playlists = this.playlistRepo.list();
       return {
@@ -713,7 +873,7 @@ export class McpService {
 
     server.tool(
       "radio_playlist_get",
-      "Obtener una playlist con todas sus canciones e interludios",
+      "Obtener una playlist con su ID y el contenido formateado. workflow: 1) crear o listar playlist → obtener ID 2) obtener contenido con este tool",
       {
         id: z.string().describe("ID de la playlist"),
       },
@@ -721,11 +881,28 @@ export class McpService {
         const playlist = this.playlistRepo.get(id);
         if (!playlist)
           return { content: [{ type: "text", text: "Playlist no encontrada" }], isError: true };
+        const tracks = playlist.tracks.map((t) => {
+          if (t.type === "interludio") {
+            return {
+              type: "interludio",
+              script: t.script ? t.script.slice(0, 100) : undefined,
+            };
+          }
+          return {
+            type: "song",
+            title: t.title,
+            artist: t.artist || "",
+          };
+        });
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(playlist, null, 2),
+              text: JSON.stringify(
+                { id: playlist.id, name: playlist.name, tracks, total: tracks.length },
+                null,
+                2
+              ),
             },
           ],
         };
@@ -734,7 +911,7 @@ export class McpService {
 
     server.tool(
       "radio_playlist_create",
-      "Crear una nueva playlist vacía",
+      "Crear una nueva playlist vacía. Devuelve el ID para usarlo luego en radio_playlist_add_track",
       {
         name: z.string().describe("Nombre de la playlist"),
       },
@@ -744,7 +921,7 @@ export class McpService {
           content: [
             {
               type: "text",
-              text: JSON.stringify(playlist, null, 2),
+              text: JSON.stringify({ id: playlist.id, name: playlist.name, tracks: [] }, null, 2),
             },
           ],
         };
@@ -753,7 +930,7 @@ export class McpService {
 
     server.tool(
       "radio_playlist_add_track",
-      "Añadir una canción o interludio a una playlist. Si se proporciona libraryTrackId, se rellenan automáticamente title, artist, file y duration desde la biblioteca",
+      "Añadir una o varias canciones/interludios a una playlist. Para añadir varios, usa tracks[]. Para interludios con script (TTS), incluye type:'interludio', title y script. workflow recomendado: 1) crear interludios con radio_interludio_create 2) añadirlos con tracks[] usando su id",
       {
         playlistId: z.string().describe("ID de la playlist"),
         libraryTrackId: z
@@ -762,6 +939,10 @@ export class McpService {
           .describe(
             "ID del track en la biblioteca (rellena automáticamente title, artist, file, duration)"
           ),
+        id: z
+          .string()
+          .optional()
+          .describe("ID del track en la biblioteca (alias de libraryTrackId)"),
         title: z.string().optional().describe("Título (obligatorio si no se usa libraryTrackId)"),
         artist: z.string().optional().describe("Artista"),
         file: z
@@ -770,22 +951,73 @@ export class McpService {
           .describe("Ruta del archivo relativa (ej: 'songs/mi-tema.mp3' o 'interludios/cuna.wav')"),
         duration: z.number().int().optional().default(0).describe("Duración en segundos"),
         type: z.enum(["song", "interludio"]).optional().default("song").describe("Tipo de track"),
+        script: z.string().optional().describe("Texto TTS para interludios sintetizados"),
+        tracks: z
+          .array(
+            z.object({
+              libraryTrackId: z.string().optional().describe("ID del track en la biblioteca"),
+              id: z.string().optional().describe("ID del track en la biblioteca (alias)"),
+              title: z.string().optional().describe("Título del track"),
+              artist: z.string().optional().describe("Artista"),
+              file: z.string().optional().describe("Ruta del archivo relativa"),
+              duration: z.number().int().optional().describe("Duración en segundos"),
+              type: z.enum(["song", "interludio"]).optional().default("song").describe("Tipo"),
+              script: z.string().optional().describe("Texto TTS para interludios"),
+              position: z.number().int().optional().describe("Posición en la playlist"),
+            })
+          )
+          .optional()
+          .describe(
+            "Array de tracks para añadir múltiples a la vez. Cada track puede tener libraryTrackId, id, o title+script"
+          ),
       },
-      async ({ playlistId, libraryTrackId, title, artist, file, duration, type }) => {
+      async ({
+        playlistId,
+        libraryTrackId,
+        id,
+        title,
+        artist,
+        file,
+        duration,
+        type,
+        script,
+        tracks,
+      }) => {
+        // If tracks array provided, do batch add
+        if (tracks && tracks.length > 0) {
+          const body = JSON.stringify({ tracks });
+          const res = await fetch(`http://localhost:3000/api/playlists/${playlistId}/tracks`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            return {
+              content: [{ type: "text", text: data.error || "Error adding tracks" }],
+              isError: true,
+            };
+          }
+          return { content: [{ type: "text", text: JSON.stringify(data.data, null, 2) }] };
+        }
+
+        // Single track mode (original behavior)
+        const effectiveLibId = libraryTrackId || id;
         let resolvedTitle = title || "";
         let resolvedArtist = artist || "";
         let resolvedFile = file || undefined;
         let resolvedDuration = duration || 0;
-        let resolvedType = type;
+        let resolvedType = type || "song";
+        const resolvedScript = script;
 
-        if (libraryTrackId) {
-          const libTrack = this.libraryRepo.getTrackById(libraryTrackId);
+        if (effectiveLibId) {
+          const libTrack = this.libraryRepo.getTrackById(effectiveLibId);
           if (!libTrack)
             return {
               content: [
                 {
                   type: "text",
-                  text: `Track con ID '${libraryTrackId}' no existe en la biblioteca`,
+                  text: `Track con ID '${effectiveLibId}' no existe en la biblioteca`,
                 },
               ],
               isError: true,
@@ -797,7 +1029,7 @@ export class McpService {
           resolvedType = libTrack.type as "song" | "interludio";
         } else if (!resolvedTitle) {
           return {
-            content: [{ type: "text", text: "Se requiere 'title' o 'libraryTrackId'" }],
+            content: [{ type: "text", text: "Se requiere 'title', 'id' o 'libraryTrackId'" }],
             isError: true,
           };
         }
@@ -808,181 +1040,66 @@ export class McpService {
           title: resolvedTitle,
           artist: resolvedArtist,
           duration: resolvedDuration,
+          script: resolvedScript,
         });
         if (!track)
           return { content: [{ type: "text", text: "Playlist no encontrada" }], isError: true };
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(track, null, 2),
-            },
-          ],
+          content: [{ type: "text", text: JSON.stringify(track, null, 2) }],
         };
       }
     );
 
     server.tool(
       "radio_playlist_play",
-      "Reproducir una playlist inmediatamente. Las canciones se encolan en el orden definido en la playlist",
+      "Reproducir una playlist. mode='ahora' (default) limpia la cola actual y reproduce ya. mode='encolar' añade los tracks al final de lo que esté sonando",
       {
         id: z.string().describe("ID de la playlist"),
-        shuffle: z.boolean().optional().default(false).describe("Mezclar aleatoriamente"),
+        mode: z
+          .enum(["ahora", "encolar"])
+          .optional()
+          .default("ahora")
+          .describe("'ahora' (default) limpia y reproduce, 'encolar' añade al final"),
       },
-      async ({ id, shuffle }) => {
-        const playlist = this.playlistRepo.get(id);
-        if (!playlist)
-          return { content: [{ type: "text", text: "Playlist no encontrada" }], isError: true };
-        if (playlist.tracks.length === 0)
-          return { content: [{ type: "text", text: "Playlist vacía" }], isError: true };
-
-        const tracks = [...playlist.tracks];
-        if (shuffle) {
-          for (let i = tracks.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [tracks[i], tracks[j]] = [tracks[j], tracks[i]];
+      async ({ id, mode }) => {
+        try {
+          const res = await fetch(`http://localhost:3000/api/playlists/${id}/play`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: mode || "ahora" }),
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            return { content: [{ type: "text", text: data.error || "Error" }], isError: true };
           }
+          return { content: [{ type: "text", text: JSON.stringify(data.data, null, 2) }] };
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
         }
-
-        const filepaths: string[] = [];
-        const results: { pos: number; title: string; status: string }[] = [];
-
-        for (const track of tracks) {
-          if (track.file) {
-            const filepath = `/music/${track.file}`;
-            filepaths.push(filepath);
-            results.push({ pos: track.pos, title: track.title, status: "queued" });
-          } else {
-            results.push({ pos: track.pos, title: track.title, status: "skipped: no file" });
-          }
-        }
-
-        let firstPlayed = false;
-        if (filepaths.length > 0) {
-          firstPlayed = await this.liquidsoapService.playFilesNow(filepaths);
-        }
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  ok: true,
-                  playlistId: id,
-                  name: playlist.name,
-                  shuffle,
-                  total: tracks.length,
-                  queued: filepaths.length,
-                  skipped: tracks.length - filepaths.length,
-                  firstPlayed,
-                  results,
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
       }
     );
-
   }
 
   public async startStdioServer(): Promise<void> {
-    const transport = new StdioServerTransport();
+    const transport = new StdioTransport();
     await this.server.connect(transport);
     console.log("[McpService] MCP Stdio Server running.");
   }
 
   public async handleHttpRequest(req: Request): Promise<Response> {
-    let isInit = false;
-    if (req.method === "POST") {
-      try {
-        const cloned = req.clone();
-        const body = await cloned.json();
-        const messages = Array.isArray(body) ? body : [body];
-        isInit = messages.some((m: any) => m.method === "initialize");
-      } catch {}
-    }
-
-    if (isInit) {
-      this.cleanupStaleSessions();
-
-      if (this.sessions.size >= McpService.MAX_SESSIONS) {
-        // Evict oldest session
-        let oldestKey: string | null = null;
-        let oldestTime = Infinity;
-        for (const [key, session] of this.sessions) {
-          if (session.lastActivity < oldestTime) {
-            oldestTime = session.lastActivity;
-            oldestKey = key;
-          }
-        }
-        if (oldestKey) {
-          const oldest = this.sessions.get(oldestKey)!;
-          oldest.transport.close().catch(() => {});
-          this.sessions.delete(oldestKey);
-          console.log(`[McpService] Evicted oldest session: ${oldestKey}`);
-        }
-      }
-
-      const sessionServer = new McpServer({
-        name: "radio-bloom",
-        version: "1.0.0",
-      });
-      this.registerAllTools(sessionServer);
-
-      const transport = new WebStandardStreamableHTTPServerTransport({
+    if (!this.httpTransport) {
+      this.httpTransport = new HttpTransport({
         sessionIdGenerator: () => crypto.randomUUID(),
         enableJsonResponse: true,
         onsessioninitialized: (sessionId) => {
-          this.sessions.set(sessionId, {
-            server: sessionServer,
-            transport,
-            lastActivity: Date.now(),
-          });
           console.log(`[McpService] MCP Session initialized: ${sessionId}`);
         },
         onsessionclosed: (sessionId) => {
-          const session = this.sessions.get(sessionId);
-          if (session) {
-            session.transport.close().catch(() => {});
-            this.sessions.delete(sessionId);
-            console.log(`[McpService] MCP Session closed: ${sessionId}`);
-          }
+          console.log(`[McpService] MCP Session closed: ${sessionId}`);
         },
       });
-
-      await sessionServer.connect(transport);
-      return transport.handleRequest(req);
+      await this.server.connect(this.httpTransport);
     }
-
-    const sessionId = req.headers.get("mcp-session-id");
-    if (!sessionId) {
-      return new Response(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          error: { code: -32000, message: "Bad Request: Mcp-Session-Id header is required" },
-          id: null,
-        }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      return new Response(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          error: { code: -32001, message: "Session not found" },
-          id: null,
-        }),
-        { status: 404, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    session.lastActivity = Date.now();
-    return session.transport.handleRequest(req);
+    return this.httpTransport.handleRequest(req);
   }
 }

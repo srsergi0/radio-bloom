@@ -9,6 +9,8 @@ export interface Track {
   spotifyUrl?: string;
   addedAt: string;
   mtime?: string;
+  lastPlayedAt?: string;
+  script?: string;
 }
 
 export interface StreamStatus {
@@ -21,6 +23,11 @@ export interface StreamStatus {
   duration: number;
   elapsed: number;
   metadata?: Record<string, string>;
+  activeLocutor?: {
+    id: string;
+    name: string;
+    voice: string;
+  } | null;
 }
 
 export interface SystemConfig {
@@ -48,6 +55,7 @@ export interface PlaylistTrack {
   artist?: string;
   duration: number;
   spotifyUrl?: string;
+  script?: string;
   addedAt: string;
 }
 

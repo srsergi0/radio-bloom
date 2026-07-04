@@ -1,6 +1,17 @@
 import type { StreamStatus } from "../domain/types";
 import type { AudioMetadataClient } from "../infrastructure/audio-metadata.client";
 import type { TelnetClient } from "../infrastructure/telnet.client";
+import type { LibraryRepository } from "../repositories/sqlite/library.repo";
+import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
+
+function toDbPath(filepath: string): string {
+  // Normalize: "/music/songs/file.mp3" → "songs/file.mp3"
+  //           "D:\music\interludios\file.mp3" → "interludios/file.mp3"
+  //           "/app/music/songs/file.mp3" → "songs/file.mp3"
+  const forwardSlash = filepath.replace(/\\/g, "/");
+  const match = forwardSlash.match(/(?:^|\/)(songs|interludios)\/(.+)$/);
+  return match ? `${match[1]}/${match[2]}` : forwardSlash;
+}
 
 export class LiquidsoapService {
   private lastQueuedRid: string | null = null;
@@ -9,11 +20,15 @@ export class LiquidsoapService {
   private queueLock: Promise<void> = Promise.resolve();
   private lastManualQueueClear = 0;
   private static readonly MANUAL_CLEAR_COOLDOWN_MS = 120_000; // 2min after manual clear, don't auto-fill
+  // Cache RID -> filepath for items we enqueue (Liquidsoap doesn't return metadata for queued items)
+  private readonly ridToFile = new Map<string, string>();
 
   constructor(
     private readonly telnetClient: TelnetClient,
     private readonly audioMetadataClient: AudioMetadataClient,
-    private readonly musicMount: string
+    private readonly musicMount: string,
+    private readonly libraryRepo?: LibraryRepository,
+    private readonly playlistRepo?: PlaylistRepository
   ) {}
 
   public isConnected(): boolean {
@@ -22,7 +37,10 @@ export class LiquidsoapService {
 
   private withQueueLock<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.queueLock.then(fn, fn);
-    this.queueLock = run.then(() => {}, () => {});
+    this.queueLock = run.then(
+      () => {},
+      () => {}
+    );
     return run;
   }
 
@@ -31,7 +49,7 @@ export class LiquidsoapService {
   }
 
   public async skipTrack(): Promise<void> {
-    await this.sendCommand("queue.flush_and_skip");
+    await this.sendCommand("output.harbor.skip");
   }
 
   public async clearAndPush(filepath: string): Promise<string | null> {
@@ -48,22 +66,96 @@ export class LiquidsoapService {
     await this.sendCommand("output.harbor.start");
   }
 
+  public async getCurrentFile(): Promise<string | null> {
+    try {
+      const lines = await this.sendCommand("var.get current_file").catch(() => []);
+      const file = lines.length > 0 ? lines[0].trim() : "";
+      if (file && !file.includes("ERROR")) return file;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   public async getCurrentRequestId(): Promise<string | null> {
     try {
       const lines = await this.sendCommand("request.on_air");
-      const allRids: string[] = [];
-      for (const line of lines) {
-        for (const part of line.trim().split(/\s+/)) {
-          if (part !== "") allRids.push(part);
+      if (
+        lines.length > 0 &&
+        !lines[0].includes("ERROR:") &&
+        !lines[0].includes("unknown command")
+      ) {
+        const allRids: string[] = [];
+        for (const line of lines) {
+          for (const part of line.trim().split(/\s+/)) {
+            if (part !== "") allRids.push(part);
+          }
+        }
+        if (allRids.length > 0) {
+          const sorted = allRids.sort((a, b) => parseInt(b, 10) - parseInt(a, 10));
+          return sorted[0];
         }
       }
-      if (allRids.length === 0) return null;
-      const sorted = allRids.sort((a, b) => parseInt(b, 10) - parseInt(a, 10));
-      const rid = sorted[0];
-      if (this.lastQueuedRid && rid !== this.lastQueuedRid) {
-        this.lastQueuedRid = null;
+
+      // Fallback: get current harbor metadata, and resolve its request ID
+      const harborLines = await this.sendCommand("output.harbor.metadata").catch(() => []);
+      const harborMeta: Record<string, string> = {};
+      for (const line of harborLines) {
+        const eqIndex = line.indexOf("=");
+        if (eqIndex > 0) {
+          const key = line.substring(0, eqIndex).trim();
+          let value = line.substring(eqIndex + 1).trim();
+          if (value.startsWith('"') && value.endsWith('"')) {
+            value = value.slice(1, -1);
+          }
+          harborMeta[key] = value;
+        }
       }
-      return rid;
+
+      if (!harborMeta.title) return null;
+      return this.getActiveRequestId(harborMeta.title, harborMeta.artist || "");
+    } catch {
+      return null;
+    }
+  }
+
+  public async getActiveRequestId(
+    currentTitle: string,
+    currentArtist: string
+  ): Promise<string | null> {
+    try {
+      const allRidsLines = await this.sendCommand("request.all").catch(() => []);
+      const rids: string[] = [];
+      for (const line of allRidsLines) {
+        for (const part of line.trim().split(/\s+/)) {
+          if (part && !Number.isNaN(Number(part))) {
+            rids.push(part);
+          }
+        }
+      }
+
+      for (const rid of rids) {
+        const meta = await this.getRequestMetadata(rid);
+        const normTitle = (meta.title || "").toLowerCase().trim();
+        const normArtist = (meta.artist || "").toLowerCase().trim();
+        const targetTitle = currentTitle.toLowerCase().trim();
+        const targetArtist = currentArtist.toLowerCase().trim();
+
+        if (
+          normTitle &&
+          targetTitle &&
+          (normTitle.includes(targetTitle) || targetTitle.includes(normTitle))
+        ) {
+          if (
+            !targetArtist ||
+            normArtist.includes(targetArtist) ||
+            targetArtist.includes(normArtist)
+          ) {
+            return rid;
+          }
+        }
+      }
+      return null;
     } catch {
       return null;
     }
@@ -136,9 +228,22 @@ export class LiquidsoapService {
   public async getStreamStatus(): Promise<StreamStatus> {
     const connected = this.isConnected();
     try {
-      const rid = await this.getCurrentRequestId();
+      // 1. Get metadata directly from output.harbor.metadata
+      const harborLines = await this.sendCommand("output.harbor.metadata").catch(() => []);
+      const harborMeta: Record<string, string> = {};
+      for (const line of harborLines) {
+        const eqIndex = line.indexOf("=");
+        if (eqIndex > 0) {
+          const key = line.substring(0, eqIndex).trim();
+          let value = line.substring(eqIndex + 1).trim();
+          if (value.startsWith('"') && value.endsWith('"')) {
+            value = value.slice(1, -1);
+          }
+          harborMeta[key] = value;
+        }
+      }
 
-      if (!rid) {
+      if (!harborMeta.title) {
         return {
           connected,
           playing: false,
@@ -152,31 +257,51 @@ export class LiquidsoapService {
         };
       }
 
-      const [meta, uptimeLines] = await Promise.all([
-        this.getRequestMetadata(rid).catch(() => ({})),
-        this.sendCommand("uptime").catch(() => ["0"]),
-      ]);
+      // 2. Resolve matching request ID
+      const artist = harborMeta.artist || "";
+      const title = harborMeta.title || "";
+      const rid = await this.getActiveRequestId(title, artist);
 
+      let meta = { ...harborMeta };
+      let uptimeLines = ["0"];
+      let duration = 0;
       let elapsed = 0;
-      if (meta.on_air_timestamp) {
+
+      if (rid) {
+        const requestMeta = await this.getRequestMetadata(rid).catch(() => ({}));
+        meta = { ...requestMeta, ...meta };
+      }
+
+      uptimeLines = await this.sendCommand("uptime").catch(() => ["0"]);
+
+      const filename = meta.filename || meta.initial_uri || "";
+      if (filename) {
+        duration = await this.getFileDuration(filename);
+      }
+
+      let calculatedElapsed = false;
+      const remainingLines = await this.sendCommand("output.harbor.remaining").catch(() => []);
+      if (remainingLines.length > 0 && duration > 0) {
+        const remainingVal = parseFloat(remainingLines[0].trim());
+        if (!Number.isNaN(remainingVal) && remainingVal > 0) {
+          elapsed = Math.floor(Math.max(0, duration - remainingVal));
+          calculatedElapsed = true;
+        }
+      }
+
+      if (!calculatedElapsed && meta.on_air_timestamp) {
         const startTime = parseFloat(meta.on_air_timestamp);
         if (!Number.isNaN(startTime)) {
           elapsed = Math.floor(Date.now() / 1000 - startTime);
         }
       }
 
-      let duration = 0;
-      const filename = meta.filename || meta.initial_uri || "";
-      if (filename) {
-        duration = await this.getFileDuration(filename);
-      }
-
       return {
         connected,
         playing: true,
-        currentTrack: rid,
+        currentTrack: rid || "harbor-active",
         artist: meta.artist || null,
-        title: meta.title || meta.filename || null,
+        title: meta.title || null,
         uptime: uptimeLines[0] || "0",
         duration,
         elapsed,
@@ -200,37 +325,251 @@ export class LiquidsoapService {
     try {
       const lines = await this.sendCommand(`queue.push ${filepath}`);
       const rid = lines[0]?.trim() || null;
-      if (rid) this.lastQueuedRid = rid;
+      if (rid) {
+        this.lastQueuedRid = rid;
+        this.ridToFile.set(rid, filepath);
+      }
       return rid;
     } catch {
       return null;
     }
   }
 
-  public async queueList(limit?: number): Promise<{ items: { rid: string; artist: string; title: string }[]; total: number }> {
+  public async queueList(limit?: number): Promise<{
+    items: {
+      rid: string;
+      type: "song" | "interludio";
+      id?: string;
+      artist?: string;
+      title?: string;
+      script?: string;
+      file?: string;
+    }[];
+    total: number;
+  }> {
     try {
       const lines = await this.sendCommand("queue.queue");
       if (lines.length === 0) return { items: [], total: 0 };
       const rids = lines[0].split(/\s+/).filter(Boolean);
       const total = rids.length;
       const ridsToFetch = limit ? rids.slice(0, limit) : rids;
-      const metas = await Promise.all(
-        ridsToFetch.map((rid) => this.getRequestMetadata(rid).catch(() => ({})))
+
+      // Phase 1: resolve filenames from cache (0 telnet calls)
+      const ridFilenames: Record<string, string> = {};
+      const uncachedRids: string[] = [];
+
+      for (const rid of ridsToFetch) {
+        const cached = this.ridToFile.get(rid);
+        if (cached) {
+          ridFilenames[rid] = cached;
+        } else {
+          uncachedRids.push(rid);
+        }
+      }
+      console.log(
+        `[Liquidsoap] queueList cached: ${Object.keys(ridFilenames).length}, uncached: ${uncachedRids.length}`
       );
-      const items = ridsToFetch.map((rid, i) => ({
-        rid,
-        artist: metas[i].artist || "",
-        title: metas[i].title || metas[i].filename || rid,
-      }));
+
+      // Phase 2: batch fetch uncached RIDs in parallel (only what's missing)
+      if (uncachedRids.length > 0) {
+        const metas = await Promise.all(
+          uncachedRids.map((rid) => this.getRequestMetadata(rid).catch(() => ({})))
+        );
+        for (let i = 0; i < uncachedRids.length; i++) {
+          const meta = metas[i] as Record<string, string>;
+          const filename = meta.filename || meta.initial_uri || "";
+          console.log(`[Liquidsoap] RID ${uncachedRids[i]} raw: ${filename}`);
+          if (filename) {
+            ridFilenames[uncachedRids[i]] = filename;
+            this.ridToFile.set(uncachedRids[i], filename);
+          }
+        }
+      }
+
+      // Phase 3: batch lookup all filenames in SQLite (1 query)
+      const allFiles = [...new Set(Object.values(ridFilenames).map(toDbPath))];
+      console.log(`[Liquidsoap] queueList allFiles:`, allFiles);
+      const libTracks = this.libraryRepo!.getTracksByFiles(allFiles);
+      console.log(`[Liquidsoap] queueList libTracks found:`, libTracks.size);
+
+      // Phase 4: build results with zero extra network calls
+      const items = ridsToFetch.map((rid) => {
+        const filename = ridFilenames[rid] || "";
+        const dbFile = toDbPath(filename);
+        const libTrack = libTracks.get(dbFile);
+        const isInterludio = dbFile.startsWith("interludios/");
+        console.log(
+          `[Liquidsoap] RID ${rid}: filename=${filename}, dbFile=${dbFile}, found=${!!libTrack}, script=${libTrack?.script || "null"}`
+        );
+
+        let title = libTrack?.title || "";
+        let artist = libTrack?.artist || "";
+        let script: string | undefined;
+
+        // Get script from libraryTracks (TTS interludios) or playlistTracks
+        if (libTrack?.script) {
+          script = libTrack.script;
+          // Use script as title for TTS interludios
+          title = script;
+        } else if (isInterludio && this.playlistRepo && filename) {
+          const foundScript = this.playlistRepo.findScriptByFile(dbFile);
+          if (foundScript) {
+            script = foundScript;
+            title = foundScript;
+          }
+        }
+
+        if (!title && filename) {
+          const fname = filename.replace(/\\/g, "/").split("/").pop() || "";
+          const noExt = fname.replace(/\.[^.]+$/, "");
+          const dashIdx = noExt.indexOf(" - ");
+          if (dashIdx > 0) {
+            title = noExt.substring(0, dashIdx).trim();
+            if (!artist) artist = noExt.substring(dashIdx + 3).trim();
+          } else {
+            title = noExt;
+          }
+        }
+
+        if (!rids.includes(rid)) this.ridToFile.delete(rid);
+
+        // Simplified response for TTS interludios
+        if (isInterludio && script) {
+          return {
+            rid,
+            type: "interludio" as const,
+            script,
+          };
+        }
+
+        return {
+          rid,
+          id: libTrack?.id,
+          artist,
+          title: title || filename || rid,
+          type: isInterludio ? ("interludio" as const) : ("song" as const),
+          script,
+          file: filename || undefined,
+        };
+      });
       return { items, total };
     } catch {
       return { items: [], total: 0 };
     }
   }
 
+  private async resolveTrack(rid: string): Promise<{
+    rid: string;
+    type: "song" | "interludio";
+    id?: string;
+    artist?: string;
+    title?: string;
+    script?: string;
+  } | null> {
+    // Get filename from cache or telnet
+    let filename = this.ridToFile.get(rid);
+    if (!filename) {
+      const meta = await this.getRequestMetadata(rid).catch(() => ({}));
+      filename =
+        (meta as Record<string, string>).filename ||
+        (meta as Record<string, string>).initial_uri ||
+        "";
+      if (filename) this.ridToFile.set(rid, filename);
+    }
+    if (!filename) return null;
+
+    const dbFile = toDbPath(filename);
+    const libTracks = this.libraryRepo!.getTracksByFiles([dbFile]);
+    const libTrack = libTracks.get(dbFile);
+    const isInterludio = dbFile.startsWith("interludios/");
+
+    let title = libTrack?.title || "";
+    let artist = libTrack?.artist || "";
+    let script: string | undefined;
+
+    if (libTrack?.script) {
+      script = libTrack.script;
+      title = script;
+    } else if (isInterludio && this.playlistRepo && filename) {
+      const foundScript = this.playlistRepo.findScriptByFile(dbFile);
+      if (foundScript) {
+        script = foundScript;
+        title = foundScript;
+      }
+    }
+
+    if (!title && filename) {
+      const fname = filename.replace(/\\/g, "/").split("/").pop() || "";
+      const noExt = fname.replace(/\.[^.]+$/, "");
+      const dashIdx = noExt.indexOf(" - ");
+      if (dashIdx > 0) {
+        title = noExt.substring(0, dashIdx).trim();
+        if (!artist) artist = noExt.substring(dashIdx + 3).trim();
+      } else {
+        title = noExt;
+      }
+    }
+
+    if (isInterludio && script) {
+      return { rid, type: "interludio", script };
+    }
+
+    return {
+      rid,
+      id: libTrack?.id,
+      artist,
+      title: title || filename || rid,
+      type: isInterludio ? "interludio" : "song",
+      script,
+    };
+  }
+
+  public async getCurrentTrack(): Promise<{
+    rid: string;
+    type: "song" | "interludio";
+    id?: string;
+    artist?: string;
+    title?: string;
+    script?: string;
+    duration: string;
+    elapsed: string;
+  } | null> {
+    try {
+      const rid = await this.getCurrentRequestId();
+      if (!rid) return null;
+
+      const track = await this.resolveTrack(rid);
+      if (!track) return null;
+
+      // Get duration and elapsed
+      const harborLines = await this.sendCommand("output.harbor.remaining").catch(() => []);
+      const remaining = parseFloat(harborLines[0]?.trim() || "0");
+
+      const meta = (await this.getRequestMetadata(rid).catch(() => ({}))) as Record<string, string>;
+      const filename = meta.filename || "";
+      const duration = filename ? await this.getFileDuration(filename) : 0;
+      const elapsed = duration > 0 && remaining > 0 ? Math.floor(duration - remaining) : 0;
+
+      const formatTime = (s: number): string => {
+        const m = Math.floor(s / 60);
+        const sec = Math.floor(s % 60);
+        return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
+      };
+
+      return {
+        ...track,
+        duration: formatTime(duration),
+        elapsed: formatTime(elapsed),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   public async queueRemove(rid: string): Promise<boolean> {
     try {
       await this.sendCommand(`queue.remove ${rid}`);
+      this.ridToFile.delete(rid);
       console.log(`[LiquidsoapService] queueRemove: removed rid ${rid} via native command`);
       return true;
     } catch (err: any) {
@@ -244,8 +583,8 @@ export class LiquidsoapService {
       try {
         const lines = await this.sendCommand("queue.queue");
         const queued = lines.length > 0 ? lines[0].split(/\s+/).filter(Boolean) : [];
-        const metas = await Promise.all(
-          queued.map((r) => this.getRequestMetadata(r).catch(() => ({})))
+        const metas: Record<string, string>[] = await Promise.all(
+          queued.map((r) => this.getRequestMetadata(r).catch((): Record<string, string> => ({})))
         );
         const uris = metas.map((m) => m.initial_uri || m.filename || "").filter(Boolean);
         const safeIndex = Math.max(0, Math.min(index, uris.length));
@@ -282,6 +621,7 @@ export class LiquidsoapService {
       const rids = lines[0].split(/\s+/).filter(Boolean);
       for (const rid of rids) {
         await this.sendCommand(`queue.remove ${rid}`).catch(() => {});
+        this.ridToFile.delete(rid);
       }
       this.lastManualQueueClear = Date.now();
       console.log(`[LiquidsoapService] Queue cleared: removed ${rids.length} items`);

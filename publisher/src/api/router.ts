@@ -1,20 +1,45 @@
 import { join } from "node:path";
-import { Hono } from "hono";
-import { serveStatic } from "hono/bun";
-import { cors } from "hono/cors";
 import { createBullBoard } from "@bull-board/api";
 import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
 import { HonoAdapter } from "@bull-board/hono";
+import { Hono } from "hono";
+import { serveStatic } from "hono/bun";
+import { cors } from "hono/cors";
+import type { Track } from "../domain/types";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import type { ConfigService } from "../services/config.service";
 import type { LibraryService } from "../services/library.service";
 import type { LiquidsoapService } from "../services/liquidsoap.service";
+import type { LiquidsoapQueueService } from "../services/liquidsoap-queue.service";
 import type { LocutorService } from "../services/locutor.service";
 import type { McpService } from "../services/mcp.service";
 import type { TorrentService } from "../services/torrent.service";
+import type { TtsService } from "../services/tts.service";
 
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024; // 200MB
+
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return [h, m, s].map((v) => String(v).padStart(2, "0")).join(":");
+}
+
+function timeAgo(dateStr: string): string {
+  if (!dateStr) return "never";
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  if (Number.isNaN(then)) return "";
+  const seconds = Math.floor((now - then) / 1000);
+  if (seconds < 60) return `${seconds} seconds ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes > 1 ? "s" : ""} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days > 1 ? "s" : ""} ago`;
+}
 
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 function checkRateLimit(ip: string, maxPerMinute = 120): boolean {
@@ -36,17 +61,67 @@ setInterval(() => {
   }
 }, 300000);
 
+interface FileTreeNode {
+  name: string;
+  path: string;
+  children?: FileTreeNode[];
+  tracks?: Track[];
+}
+
+function buildFileTree(tracks: Track[], rootName: string): FileTreeNode {
+  const root: FileTreeNode = { name: rootName, path: "", children: [] };
+  const prefix = rootName + "/";
+
+  for (const track of tracks) {
+    const relativePath = track.file.startsWith(prefix)
+      ? track.file.slice(prefix.length)
+      : track.file;
+    const parts = relativePath.split("/");
+    let current = root;
+
+    for (let i = 0; i < parts.length - 1; i++) {
+      const folderName = parts[i];
+      let child = current.children?.find((c) => c.name === folderName);
+      if (!child) {
+        child = {
+          name: folderName,
+          path: parts.slice(0, i + 1).join("/"),
+          children: [],
+        };
+        current.children!.push(child);
+      }
+      current = child;
+    }
+
+    if (!current.tracks) current.tracks = [];
+    current.tracks.push(track);
+  }
+
+  return compressFileTree(root);
+}
+
+function compressFileTree(node: FileTreeNode): FileTreeNode {
+  const result: FileTreeNode = { name: node.name, path: node.path };
+  if (node.tracks) result.tracks = node.tracks;
+  if (node.children && node.children.length > 0) {
+    result.children = node.children.map(compressFileTree);
+  }
+  return result;
+}
+
 export interface ApiDependencies {
   configService: ConfigService;
   libraryRepo: LibraryRepository;
   libraryService: LibraryService;
   liquidsoapService: LiquidsoapService;
+  liquidsoapQueueService: LiquidsoapQueueService;
   playlistRepo: PlaylistRepository;
   locutorService: LocutorService;
   mcpService: McpService;
   torrentService: TorrentService;
   musicDir: string;
   distDir: string;
+  ttsService: TtsService;
 }
 
 export function createApiRouter(deps: ApiDependencies): Hono {
@@ -145,7 +220,14 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     const q = c.req.query("q");
     if (!q) return c.json({ ok: false, error: "q query param required" }, 400);
     const results = deps.libraryRepo.search(q);
-    return c.json({ ok: true, data: results });
+    const items = results.items.map(
+      ({ addedAt, mtime, file, duration, lastPlayedAt, ...rest }) => ({
+        ...rest,
+        duration: duration ? formatDuration(duration) : "00:00:00",
+        lastPlayedAt: timeAgo(lastPlayedAt || ""),
+      })
+    );
+    return c.json({ ok: true, data: { items, total: results.total } });
   });
 
   // Upload file to library
@@ -194,13 +276,33 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     return c.json({ ok: true, data: { action: "play", track } });
   });
 
+  app.get("/api/library/tree", (c) => {
+    const songs = deps.libraryService.listSongs();
+    const interludios = deps.libraryService.listInterludios();
+    return c.json({
+      ok: true,
+      data: {
+        songs: buildFileTree(songs, "songs"),
+        interludios: buildFileTree(interludios, "interludios"),
+      },
+    });
+  });
+
   // ============================================================
   // STREAM CONTROL (Liquidsoap)
   // ============================================================
 
   app.get("/api/stream", async (c) => {
-    const status = await deps.liquidsoapService.getStreamStatus();
-    return c.json({ ok: true, data: status });
+    const track = await deps.liquidsoapService.getCurrentTrack();
+
+    if (!track) {
+      return c.json({ ok: true, data: null });
+    }
+
+    return c.json({
+      ok: true,
+      data: track,
+    });
   });
 
   app.post("/api/stream/play", async (c) => {
@@ -244,20 +346,31 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     }
   });
 
-  // Queue a track by its library ID
+  // Queue tracks or synthesize TTS interludios (via BullMQ)
   app.post("/api/stream/queue", async (c) => {
     try {
       const body = await c.req.json();
-      const { id } = body;
-      if (!id) return c.json({ ok: false, error: "id (track ID) is required" }, 400);
+      const items = Array.isArray(body) ? body : [body];
+      const results: { jobId: string; type: string }[] = [];
 
-      const track = deps.libraryRepo.getTrackById(id);
-      if (!track) return c.json({ ok: false, error: "Track no encontrado en la biblioteca" }, 404);
+      for (const item of items) {
+        const { id, script, voice } = item;
 
-      const filepath = `/music/${track.file}`;
-      const rid = await deps.liquidsoapService.queuePush(filepath);
-      const { items: list } = await deps.liquidsoapService.queueList();
-      return c.json({ ok: true, data: { source: "library", rid, track, queue: list } });
+        if (id) {
+          const track = deps.libraryRepo.getTrackById(id);
+          if (!track) {
+            return c.json({ ok: false, error: `Track not found: ${id}` }, 400);
+          }
+          const filepath = `/music/${track.file}`;
+          const job = await deps.liquidsoapQueueService.add(filepath);
+          results.push({ jobId: job.id!, type: track.type });
+        } else if (script) {
+          const job = await deps.liquidsoapQueueService.addTts(script, voice);
+          results.push({ jobId: job.id!, type: "interludio" });
+        }
+      }
+
+      return c.json({ ok: true, data: results });
     } catch (err: any) {
       return c.json(
         { ok: false, error: err.message, stack: err.stack?.split("\n").slice(0, 5).join("\\n") },
@@ -269,7 +382,8 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   app.get("/api/stream/queue", async (c) => {
     try {
       const { items } = await deps.liquidsoapService.queueList();
-      return c.json({ ok: true, data: items });
+      const clean = items.map(({ file, ...rest }) => rest);
+      return c.json({ ok: true, data: clean });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);
     }
@@ -322,6 +436,53 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   });
 
   // ============================================================
+  // INTERLUDIOS (TTS Creation)
+  // ============================================================
+
+  app.post("/api/interludios", async (c) => {
+    try {
+      const body = await c.req.json();
+      if (!body.script) return c.json({ ok: false, error: "script is required" }, 400);
+
+      const title = body.title || body.script.slice(0, 60);
+      const voice = body.voice || process.env.AI_DJ_VOICE || "es-ES-AlvaroNeural";
+
+      const { EdgeTTS } = await import("edge-tts-universal");
+      const { promises: fsPromises } = await import("node:fs");
+      const { join } = await import("node:path");
+
+      const filename = `ai_dj_pl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.mp3`;
+      const subdir = join(deps.musicDir, "interludios");
+      const filePath = join(subdir, filename);
+
+      const tts = new EdgeTTS(body.script, voice);
+      const result = await tts.synthesize();
+      const arrayBuffer = await result.audio.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      await fsPromises.writeFile(filePath, buffer);
+
+      const stats = await fsPromises.stat(filePath);
+      const relativePath = `interludios/${filename}`;
+
+      let duration = 0;
+      try {
+        const { AudioMetadataClient } = await import("../infrastructure/audio-metadata.client");
+        const meta = await new AudioMetadataClient().extractMetadata(filePath);
+        duration = meta.duration || 0;
+      } catch {}
+
+      deps.libraryRepo.upsertTtsInterludio(relativePath, body.script, duration, stats.size);
+      await deps.libraryService.rescan();
+
+      const track = deps.libraryRepo.getTrackByFile(relativePath);
+
+      return c.json({ ok: true, data: track });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
+  // ============================================================
   // PLAYLISTS
   // ============================================================
 
@@ -356,22 +517,113 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     return c.json({ ok: true, data: { deleted: c.req.param("id") } });
   });
 
+  // Batch add multiple tracks at once
   app.post("/api/playlists/:id/tracks", async (c) => {
     const body = await c.req.json();
-    if (!body.title) return c.json({ ok: false, error: "title is required" }, 400);
-    const track = deps.playlistRepo.addTrack(
-      c.req.param("id"),
-      {
-        type: body.type || "song",
-        file: body.file,
-        title: body.title,
-        artist: body.artist,
-        duration: body.duration || 0,
+    const items = Array.isArray(body) ? body : body.tracks;
+    if (!Array.isArray(items) || items.length === 0) {
+      return c.json({ ok: false, error: "tracks array is required" }, 400);
+    }
+
+    const playlistId = c.req.param("id");
+    const results: { index: number; status: string; track?: any; error?: string }[] = [];
+
+    for (let idx = 0; idx < items.length; idx++) {
+      const item = items[idx];
+      try {
+        const type = item.type || "song";
+        if (type !== "song" && type !== "interludio") {
+          results.push({
+            index: idx,
+            status: "failed",
+            error: "type must be 'song' or 'interludio'",
+          });
+          continue;
+        }
+
+        const libId = item.libraryTrackId || item.id;
+        if (libId) {
+          const libTrack = deps.libraryRepo.getTrackById(libId);
+          if (!libTrack) {
+            results.push({ index: idx, status: "failed", error: `Track not found: ${libId}` });
+            continue;
+          }
+          const track = deps.playlistRepo.addTrack(
+            playlistId,
+            {
+              type: libTrack.type as "song" | "interludio",
+              file: libTrack.file,
+              title: libTrack.title,
+              artist: libTrack.artist,
+              duration: libTrack.duration,
+              spotifyUrl: libTrack.spotifyUrl,
+              script: item.script,
+            },
+            item.position
+          );
+          if (!track) {
+            results.push({ index: idx, status: "failed", error: "Playlist not found" });
+            continue;
+          }
+          results.push({ index: idx, status: "added", track });
+          continue;
+        }
+
+        if (!item.title) {
+          results.push({ index: idx, status: "failed", error: "title is required" });
+          continue;
+        }
+        if (type === "interludio" && !item.file && !item.script) {
+          results.push({
+            index: idx,
+            status: "failed",
+            error: "interludio must have file or script",
+          });
+          continue;
+        }
+
+        const track = deps.playlistRepo.addTrack(
+          playlistId,
+          {
+            type: type as "song" | "interludio",
+            file: item.file,
+            title: item.title,
+            artist: item.artist,
+            duration: item.duration || 0,
+            spotifyUrl: item.spotifyUrl,
+            script: item.script,
+          },
+          item.position
+        );
+        if (!track) {
+          results.push({ index: idx, status: "failed", error: "Playlist not found" });
+          continue;
+        }
+        results.push({ index: idx, status: "added", track });
+      } catch (err: any) {
+        results.push({ index: idx, status: "failed", error: err.message });
+      }
+    }
+
+    return c.json({
+      ok: true,
+      data: {
+        playlistId,
+        total: items.length,
+        added: results.filter((r) => r.status === "added").length,
+        failed: results.filter((r) => r.status === "failed").length,
+        results,
       },
-      body.position
-    );
-    if (!track) return c.json({ ok: false, error: "Playlist not found" }, 404);
-    return c.json({ ok: true, data: track });
+    });
+  });
+
+  app.put("/api/playlists/:id/tracks/reorder", async (c) => {
+    const body = await c.req.json();
+    if (!body.trackIds || !Array.isArray(body.trackIds)) {
+      return c.json({ ok: false, error: "trackIds array is required" }, 400);
+    }
+    deps.playlistRepo.reorderTracks(c.req.param("id"), body.trackIds);
+    return c.json({ ok: true, data: deps.playlistRepo.get(c.req.param("id")) });
   });
 
   app.put("/api/playlists/:id/tracks/:trackId", async (c) => {
@@ -381,6 +633,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     if (body.title !== undefined) updates.title = body.title;
     if (body.artist !== undefined) updates.artist = body.artist;
     if (body.duration !== undefined) updates.duration = body.duration;
+    if (body.script !== undefined) updates.script = body.script;
     if (Object.keys(updates).length === 0) {
       return c.json({ ok: false, error: "No fields to update" }, 400);
     }
@@ -395,46 +648,48 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     return c.json({ ok: true, data: { removed: c.req.param("trackId") } });
   });
 
-  app.put("/api/playlists/:id/tracks/reorder", async (c) => {
-    const body = await c.req.json();
-    if (!body.trackIds || !Array.isArray(body.trackIds)) {
-      return c.json({ ok: false, error: "trackIds array is required" }, 400);
-    }
-    deps.playlistRepo.reorderTracks(c.req.param("id"), body.trackIds);
-    return c.json({ ok: true, data: deps.playlistRepo.get(c.req.param("id")) });
-  });
-
   app.post("/api/playlists/:id/play", async (c) => {
     const playlist = deps.playlistRepo.get(c.req.param("id"));
     if (!playlist) return c.json({ ok: false, error: "Playlist not found" }, 404);
     if (playlist.tracks.length === 0) return c.json({ ok: false, error: "Playlist is empty" }, 400);
 
     const body = await c.req.json().catch(() => ({}));
-    const shuffle = body?.shuffle === true;
+    const mode = body?.mode || "ahora";
+    const voice = body?.voice;
+
+    if (mode === "ahora") {
+      await deps.liquidsoapService.queueClear().catch(() => {});
+    }
 
     const tracks = [...playlist.tracks];
-    if (shuffle) {
-      for (let i = tracks.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [tracks[i], tracks[j]] = [tracks[j], tracks[i]];
-      }
-    }
-
-    const filepaths: string[] = [];
-    const results: { pos: number; title: string; status: string }[] = [];
+    const results: {
+      pos: number;
+      title: string;
+      status: string;
+      jobId?: string;
+      error?: string;
+    }[] = [];
 
     for (const track of tracks) {
-      if (track.file) {
-        filepaths.push(`/music/${track.file}`);
-        results.push({ pos: track.pos, title: track.title, status: "queued" });
-      } else {
-        results.push({ pos: track.pos, title: track.title, status: "skipped: no file" });
+      try {
+        if (track.script && !track.file) {
+          const job = await deps.liquidsoapQueueService.addTts(track.script, voice);
+          results.push({ pos: track.pos, title: track.title, status: "queued", jobId: job.id! });
+        } else if (track.file) {
+          const filepath = `/music/${track.file}`;
+          const job = await deps.liquidsoapQueueService.add(filepath);
+          results.push({ pos: track.pos, title: track.title, status: "queued", jobId: job.id! });
+        } else {
+          results.push({
+            pos: track.pos,
+            title: track.title,
+            status: "skipped",
+            error: "no file or script",
+          });
+        }
+      } catch (err: any) {
+        results.push({ pos: track.pos, title: track.title, status: "failed", error: err.message });
       }
-    }
-
-    let firstPlayed = false;
-    if (filepaths.length > 0) {
-      firstPlayed = await deps.liquidsoapService.playFilesNow(filepaths);
     }
 
     return c.json({
@@ -442,11 +697,11 @@ export function createApiRouter(deps: ApiDependencies): Hono {
       data: {
         playlistId: playlist.id,
         name: playlist.name,
-        shuffle,
+        mode,
         total: tracks.length,
-        queued: filepaths.length,
-        skipped: tracks.length - filepaths.length,
-        firstPlayed,
+        queued: results.filter((r) => r.status === "queued").length,
+        skipped: results.filter((r) => r.status === "skipped").length,
+        failed: results.filter((r) => r.status === "failed").length,
         results,
       },
     });
@@ -539,7 +794,10 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   // Bull-Board Queue Panel
   const serverAdapter = new HonoAdapter(serveStatic);
   createBullBoard({
-    queues: [new BullMQAdapter(deps.torrentService.getQueue())],
+    queues: [
+      new BullMQAdapter(deps.torrentService.getQueue()),
+      new BullMQAdapter(deps.liquidsoapQueueService.getQueue()),
+    ],
     serverAdapter: serverAdapter,
   });
   serverAdapter.setBasePath("/admin/queues");
@@ -646,6 +904,18 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   // ============================================================
   // STATIC FILES (Astro Landing Page)
   // ============================================================
+
+  // SPA fallback: admin client-side routing -> serve admin/index.html
+  app.use(
+    "/admin/*",
+    serveStatic({
+      root: deps.distDir,
+      rewriteRequestPath: (p) => {
+        if (p.startsWith("/admin/queues")) return p;
+        return "/admin/index.html";
+      },
+    })
+  );
 
   app.use(
     "/*",

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import type { Playlist, PlaylistTrack } from "../../domain/types";
 import type { DatabaseConnection } from "../../infrastructure/database";
 import * as schema from "./schema";
@@ -399,7 +399,7 @@ export class PlaylistRepository {
         and(
           eq(schema.playlists.locutorId, locutorId),
           or(
-            isNull(schema.playlists.locutorId),
+            sql`${schema.playlists.locutorId} IS NULL`,
             eq(schema.playlists.locutorId, locutorId)
           )
         )
@@ -418,6 +418,7 @@ export class PlaylistRepository {
     return {
       id: row.id,
       name: row.name,
+      played: row.played === 1,
       description: row.description || undefined,
       locutorId: row.locutorId || undefined,
       tracks: tracks.map((t) => ({
@@ -457,6 +458,7 @@ export class PlaylistRepository {
     return {
       id: row.id,
       name: row.name,
+      played: row.played === 1,
       description: row.description || undefined,
       locutorId: row.locutorId || undefined,
       tracks: tracks.map((t) => ({

@@ -508,11 +508,19 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
   app.put("/api/playlists/:id", async (c) => {
     const body = await c.req.json();
-    const updates: Record<string, any> = {};
-    if (body.name !== undefined) updates.name = body.name;
-    if (body.played !== undefined) updates.played = body.played;
-
     const id = c.req.param("id");
+
+    if (
+      body.name === undefined &&
+      body.played === undefined &&
+      body.locutorId === undefined &&
+      body.description === undefined
+    ) {
+      return c.json({ ok: false, error: "No fields to update" }, 400);
+    }
+
+    const playlistExists = deps.playlistRepo.get(id);
+    if (!playlistExists) return c.json({ ok: false, error: "Playlist not found" }, 404);
 
     // Update name/played via generic update
     if (body.name !== undefined || body.played !== undefined) {
@@ -531,7 +539,6 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     }
 
     const playlist = deps.playlistRepo.get(id);
-    if (!playlist) return c.json({ ok: false, error: "Playlist not found" }, 404);
     return c.json({ ok: true, data: playlist });
   });
 

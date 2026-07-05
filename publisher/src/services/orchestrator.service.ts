@@ -33,10 +33,8 @@ export class OrchestratorService {
   private tempFiles = new Set<string>(); // Keep track of absolute paths of generated MP3s
   private dialogueHistory: DialogueMessage[] = [];
   private startedAt = 0;
-  private lastInjectionTime = 0;
   private lastPlayedFile: string | null = null;
   private static readonly STARTUP_GRACE_MS = 30_000; // 30s grace period on startup
-  private static readonly INJECTION_COOLDOWN_MS = 60_000; // 1min between interludio injections
 
   constructor(
     private readonly libraryRepo: LibraryRepository,
@@ -181,13 +179,10 @@ export class OrchestratorService {
       // 1. Clean up generated TTS files that already played
       await this.cleanupTempFiles(status, queue);
 
-      // 2. Check if manual queue needs interludios injected
-      await this.checkAndInjectManualQueueInterludios(status, queue);
-
-      // Re-fetch queue after injection (queueInsert clears and rebuilds, making queue stale)
+      // Re-fetch queue (queueInsert clears and rebuilds, making queue stale)
       const { items: refreshedQueue } = await this.liquidsoapService.queueList();
 
-      // 3. Queue new tracks if queue is dropping below 5 elements
+      // 2. Queue new tracks if queue is dropping below 5 elements
       //    but never exceed 20 items to prevent unbounded growth
       //    Also skip if user recently cleared the queue manually
       if (refreshedQueue.length < 5 && refreshedQueue.length < 20 && !this.liquidsoapService.isManualClearActive()) {
@@ -243,114 +238,6 @@ export class OrchestratorService {
           );
         }
       }
-    }
-  }
-
-  /**
-   * Detects manually queued songs (without interludios) and injects DJ speeches.
-   * This handles the case where user queues songs directly via API/MCP.
-   */
-  private async checkAndInjectManualQueueInterludios(status: any, queue: any[]): Promise<void> {
-    const songsBetween = parseInt(process.env.AI_DJ_SONGS_BETWEEN || "3", 10);
-
-    // Cooldown: don't inject again too soon after last injection
-    const timeSinceLastInjection = Date.now() - this.lastInjectionTime;
-    if (timeSinceLastInjection < OrchestratorService.INJECTION_COOLDOWN_MS) {
-      return;
-    }
-
-    // Get all tracks in queue with their metadata
-    const metaResults: Record<string, string>[] = await Promise.all(
-      queue.map((item) =>
-        this.liquidsoapService
-          .getRequestMetadata(item.rid)
-          .catch((): Record<string, string> => ({}))
-      )
-    );
-
-    const queueWithMeta: Array<{
-      rid: string;
-      title: string;
-      artist: string;
-      filename: string;
-      isInterludio: boolean;
-    }> = queue.map((item, i) => {
-      const meta = metaResults[i];
-      const filename = meta.filename || meta.initial_uri || "";
-      const isInterludio =
-        filename.includes("/interludios/") || item.title?.includes("/interludios/");
-      return {
-        rid: item.rid,
-        title: meta.title || item.title || "",
-        artist: meta.artist || item.artist || "",
-        filename,
-        isInterludio,
-      };
-    });
-
-    // Count consecutive songs without interludios (from the last interludio onwards)
-    let consecutiveSongs = 0;
-    let lastSongIndex = -1;
-    const songIndices: number[] = [];
-    let foundInterludio = false;
-
-    for (let i = 0; i < queueWithMeta.length; i++) {
-      const item = queueWithMeta[i];
-      if (item.isInterludio) {
-        // Reset counter when we find an interludio
-        consecutiveSongs = 0;
-        songIndices.length = 0;
-        foundInterludio = true;
-      } else if (item.filename.includes("/songs/")) {
-        consecutiveSongs++;
-        songIndices.push(i);
-        lastSongIndex = i;
-      }
-    }
-
-    // If we have enough consecutive songs without interludios, inject ONE interludio
-    if (consecutiveSongs >= songsBetween) {
-      console.log(
-        `[OrchestratorService] Detected ${consecutiveSongs} consecutive songs without interludios. Injecting ONE DJ speech...`
-      );
-
-      const activeLocutor = this.locutorService.getActiveLocutorAtCurrentTime();
-
-      // Only inject at the FIRST valid position (not all positions)
-      const insertAfterIndex = songIndices[songsBetween - 1];
-      const songItem = queueWithMeta[insertAfterIndex];
-
-      const script = await this.generateContextualScript(songItem, activeLocutor);
-
-      if (script) {
-        const speechPath = await this.synthesizeSpeech(script, activeLocutor?.voice);
-        if (speechPath) {
-          const filename = speechPath.replace(/\\/g, "/").split("/").pop();
-          const insertPosition = insertAfterIndex + 1;
-          console.log(
-            `[OrchestratorService] Injecting interludio at position ${insertPosition} after "${songItem.title}"`
-          );
-          const success = await this.liquidsoapService.queueInsert(
-            insertPosition,
-            `/music/interludios/${filename}`,
-            script
-          );
-          if (success) {
-            this.tempFiles.add(speechPath);
-            this.lastInjectionTime = Date.now();
-            this.dialogueHistory.push({
-              role: "assistant",
-              content: script,
-            });
-          }
-        }
-      }
-
-      // Limit dialogue history
-      if (this.dialogueHistory.length > 5) {
-        this.dialogueHistory = this.dialogueHistory.slice(-5);
-      }
-      this.saveHistory().catch(() => {});
     }
   }
 

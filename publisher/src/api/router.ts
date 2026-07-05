@@ -788,7 +788,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
       if (!body.name || !body.voice || !body.personality) {
         return c.json({ ok: false, error: "name, voice, and personality are required" }, 400);
       }
-      const locutor = deps.locutorService.createLocutor({
+      const locutor = await deps.locutorService.createLocutor({
         name: body.name,
         voice: body.voice,
         personality: body.personality,
@@ -805,7 +805,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     try {
       const id = c.req.param("id");
       const body = await c.req.json();
-      const locutor = deps.locutorService.updateLocutor(id, body);
+      const locutor = await deps.locutorService.updateLocutor(id, body);
       if (!locutor) return c.json({ ok: false, error: "Locutor not found" }, 404);
       return c.json({ ok: true, data: locutor });
     } catch (err: any) {

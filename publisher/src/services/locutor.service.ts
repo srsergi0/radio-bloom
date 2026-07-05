@@ -1,5 +1,6 @@
 import type { Locutor, LocutorSchedule } from "../domain/types";
 import type { LocutorRepository } from "../repositories/sqlite/locutor.repo";
+import { listVoices } from "edge-tts-universal";
 
 export interface Interval {
   start: number;
@@ -205,7 +206,21 @@ export class LocutorService {
   }
 
   // CRUD proxies to repo
-  public createLocutor(data: Parameters<LocutorRepository["createLocutor"]>[0]): Locutor {
+  public async createLocutor(data: Parameters<LocutorRepository["createLocutor"]>[0]): Promise<Locutor> {
+    // Validate voice exists in Edge TTS
+    if (data.voice) {
+      const voices = await listVoices();
+      const validVoice = voices.find((v) => v.ShortName === data.voice);
+      if (!validVoice) {
+        const available = voices
+          .filter((v) => v.Locale.startsWith("es"))
+          .map((v) => v.ShortName)
+          .join(", ");
+        throw new Error(
+          `Voz "${data.voice}" no existe en Edge TTS. Voces en español disponibles: ${available}`
+        );
+      }
+    }
     return this.locutorRepo.createLocutor(data);
   }
 
@@ -217,10 +232,24 @@ export class LocutorService {
     return this.locutorRepo.getLocutor(id);
   }
 
-  public updateLocutor(
+  public async updateLocutor(
     id: string,
     updates: Parameters<LocutorRepository["updateLocutor"]>[1]
-  ): Locutor | null {
+  ): Promise<Locutor | null> {
+    // Validate voice if being updated
+    if (updates.voice) {
+      const voices = await listVoices();
+      const validVoice = voices.find((v) => v.ShortName === updates.voice);
+      if (!validVoice) {
+        const available = voices
+          .filter((v) => v.Locale.startsWith("es"))
+          .map((v) => v.ShortName)
+          .join(", ");
+        throw new Error(
+          `Voz "${updates.voice}" no existe en Edge TTS. Voces en español disponibles: ${available}`
+        );
+      }
+    }
     // If we're activating a locutor, we should check if any of their schedules conflict with other active schedules.
     if (updates.isActive === true) {
       const locSchedules = this.locutorRepo.listSchedules(id);

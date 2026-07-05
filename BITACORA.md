@@ -311,6 +311,13 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 
 ## Cambios Recientes
 
+### Eliminación de cola manual (Julio 2026)
+
+- **Eliminada** la función `checkAndInjectManualQueueInterludios` de `orchestrator.service.ts`
+- Eliminadas propiedades `lastInjectionTime` e `INJECTION_COOLDOWN_MS`
+- Eliminada variable `AI_DJ_SONGS_BETWEEN` de `docker-compose.yml` y `.env.example`
+- La inyección de interludios ahora solo ocurre en playlists generadas por IA (el LLM decide la frecuencia según personalidad del locutor)
+
 ### Seed de 42 Locutors (Julio 2026)
 
 - **42 locutors** creados vía API cubriendo toda la semana (7 días × 6 franjas horarias)
@@ -319,6 +326,13 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 - Sábados de noche: "Fiesta" con personalidad festiva e intensa
 - Script de seed guardado en `scripts/seed_locutors.sh`
 - **Nota**: Los locutors viven en la DB SQLite, no en código. Re-seed manual si se resetea la DB.
+
+### Validación de voz en Locutors (Julio 2026)
+
+- **Validación de voz** al crear/actualizar locutor: la voz debe existir en Edge TTS
+- `LocutorService.createLocutor()` y `updateLocutor()` ahora son `async` — llaman a `listVoices()` de `edge-tts-universal`
+- Si la voz no existe, lanza error con la lista de voces en español disponibles
+- Router actualizado con `await` en `POST /api/locutors` y `PUT /api/locutors/:id`
 
 ### Fix de Cola y Playlists IA (Julio 2026)
 

@@ -311,6 +311,15 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 
 ## Cambios Recientes
 
+### Seed de 42 Locutors (Julio 2026)
+
+- **42 locutors** creados vía API cubriendo toda la semana (7 días × 6 franjas horarias)
+- Cada locutor tiene nombre único, voz en español (variadas por región), personalidad detallada y horario semanal
+- Franjas: Madrugada (00:00-06:00), Mañana (06:00-12:00), Mediodía (12:00-14:00), Tarde (14:00-18:00), Atardecer (18:00-21:00), Noche (21:00-00:00)
+- Sábados de noche: "Fiesta" con personalidad festiva e intensa
+- Script de seed guardado en `scripts/seed_locutors.sh`
+- **Nota**: Los locutors viven en la DB SQLite, no en código. Re-seed manual si se resetea la DB.
+
 ### Fix de Cola y Playlists IA (Julio 2026)
 
 - **Problema 1**: Los interludios en `GET /api/stream/queue` no mostraban el script, solo `rid`, `artist: ""`, `title: "ai_dj_..."`.

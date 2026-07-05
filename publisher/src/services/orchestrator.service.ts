@@ -76,7 +76,7 @@ export class OrchestratorService {
     this.startedAt = Date.now();
 
     // Clear stale queue from previous session on startup
-    this.liquidsoapService.queueClear().catch(() => {});
+    this.liquidsoapService.queueClear(false).catch(() => {});
 
     // Check every 10 seconds
     this.loopInterval = setInterval(() => {
@@ -184,14 +184,17 @@ export class OrchestratorService {
       // 2. Check if manual queue needs interludios injected
       await this.checkAndInjectManualQueueInterludios(status, queue);
 
+      // Re-fetch queue after injection (queueInsert clears and rebuilds, making queue stale)
+      const { items: refreshedQueue } = await this.liquidsoapService.queueList();
+
       // 3. Queue new tracks if queue is dropping below 5 elements
       //    but never exceed 20 items to prevent unbounded growth
       //    Also skip if user recently cleared the queue manually
-      if (queue.length < 5 && queue.length < 20 && !this.liquidsoapService.isManualClearActive()) {
+      if (refreshedQueue.length < 5 && refreshedQueue.length < 20 && !this.liquidsoapService.isManualClearActive()) {
         console.log(
-          `[OrchestratorService] Queue is low (${queue.length} items). Enqueuing next tracks...`
+          `[OrchestratorService] Queue is low (${refreshedQueue.length} items). Enqueuing next tracks...`
         );
-        await this.enqueueNext(status, queue);
+        await this.enqueueNext(status, refreshedQueue);
       }
     } catch (err: any) {
       console.error("[OrchestratorService] Error in loop tick:", err.message);
@@ -285,14 +288,20 @@ export class OrchestratorService {
       };
     });
 
-    // Count consecutive songs without interludios
+    // Count consecutive songs without interludios (from the last interludio onwards)
     let consecutiveSongs = 0;
     let lastSongIndex = -1;
     const songIndices: number[] = [];
+    let foundInterludio = false;
 
     for (let i = 0; i < queueWithMeta.length; i++) {
       const item = queueWithMeta[i];
-      if (!item.isInterludio && item.filename.includes("/songs/")) {
+      if (item.isInterludio) {
+        // Reset counter when we find an interludio
+        consecutiveSongs = 0;
+        songIndices.length = 0;
+        foundInterludio = true;
+      } else if (item.filename.includes("/songs/")) {
         consecutiveSongs++;
         songIndices.push(i);
         lastSongIndex = i;
@@ -323,7 +332,8 @@ export class OrchestratorService {
           );
           const success = await this.liquidsoapService.queueInsert(
             insertPosition,
-            `/music/interludios/${filename}`
+            `/music/interludios/${filename}`,
+            script
           );
           if (success) {
             this.tempFiles.add(speechPath);
@@ -478,11 +488,21 @@ export class OrchestratorService {
 
     // Select songs from playlist that fit the remaining time
     // Never cut a song — stop before the last one that would overflow
+    // Skip tracks already in queue (by filepath)
+    const queueFiles = new Set(
+      queue.map((item) => {
+        const f = item.file || "";
+        // Normalize: strip /music/ prefix for comparison
+        return f.replace(/^\/music\//, "");
+      }).filter(Boolean)
+    );
     const selectedTracks: typeof playlist.tracks = [];
     let totalTime = 0;
 
     for (const track of playlist.tracks) {
       if (!track.file) continue;
+      // Skip if already in queue
+      if (queueFiles.has(track.file)) continue;
       if (totalTime + track.duration > remainingTimeSec + 30) break; // 30s tolerance
       selectedTracks.push(track);
       totalTime += track.duration;
@@ -509,7 +529,10 @@ export class OrchestratorService {
         const speechPath = await this.synthesizeSpeech(track.script, activeLocutor?.voice);
         if (speechPath) {
           const filename = speechPath.replace(/\\/g, "/").split("/").pop();
-          const rid = await this.liquidsoapService.queuePush(`/music/interludios/${filename}`);
+          const rid = await this.liquidsoapService.queuePush(
+            `/music/interludios/${filename}`,
+            track.script
+          );
           if (rid) {
             this.tempFiles.add(speechPath);
             this.dialogueHistory.push({ role: "assistant", content: track.script });
@@ -600,12 +623,16 @@ CATÁLOGO DISPONIBLE (100 canciones ordenadas por tiempo sin reproducirse, las q
 ${catalogText}
 
 Directrices:
-1. Selecciona entre 5 y 15 canciones del catálogo que encajen con tu personalidad.
-2. Puedes incluir locuciones intermedias (guiones de 30-45 palabras) pero solo en 1-2 de cada 5 canciones.
+1. Selecciona ENTRE 10 Y 15 canciones del catálogo. DEBES seleccionar al menos 10 canciones.
+2. TÚ DECIDES cuántas locuciones intermedias incluir según tu personalidad y estilo:
+   - Locutores enérgicos/festivos: más locuciones (hasta 1 por cada 3 canciones)
+   - Locutoras tranquilas/relajadas: menos locuciones (1 por cada 5-7 canciones)
+   - Cada locución debe ser un guión de 30-45 palabras, natural y espontáneo.
 3. NO incluyas canciones que ya están en la cola reciente.
 4. Cada canción tiene una duración real en segundos — respétala, no la modifiques.
 5. Ordena las canciones para crear un flujo musical coherente.
-6. No es necesario locutar antes de todas las canciones.
+6. VARIEDAD: Selecciona géneros y artistas diferentes. NO repitas el mismo artista más de 2 veces.
+7. IMPORTANTE: Tu playlist debe tener entre 10 y 15 canciones. Si seleccionas menos de 10, estarás incumpliendo las instrucciones.
 
 RESULTADO:
 Usa la herramienta 'create_program_playlist' para crear la playlist con las canciones seleccionadas.
@@ -649,7 +676,7 @@ Crea la playlist programada con las canciones del catálogo. Llama a create_prog
         function: {
           name: "create_program_playlist",
           description:
-            "Crea una playlist programada para un bloque de transmisión. Incluye las canciones seleccionadas del catálogo con sus IDs reales.",
+            "Crea una playlist programada para un bloque de transmisión. DEBE contener entre 10 y 15 canciones del catálogo.",
           parameters: {
             type: "object",
             properties: {
@@ -663,7 +690,7 @@ Crea la playlist programada con las canciones del catálogo. Llama a create_prog
               },
               tracks: {
                 type: "array",
-                description: "Lista ordenada de canciones seleccionadas del catálogo.",
+                description: "Lista ordenada de 10-15 canciones seleccionadas del catálogo.",
                 items: {
                   type: "object",
                   properties: {
@@ -674,7 +701,7 @@ Crea la playlist programada con las canciones del catálogo. Llama a create_prog
                     script: {
                       type: "string",
                       description:
-                        "Guión de locución opcional (30-45 palabras) para reproducir antes de esta canción, o string vacío.",
+                        "Guión de locución opcional (30-45 palabras) para reproducir antes de esta canción, o string vacío. Máximo 2-3 scripts por playlist.",
                     },
                   },
                   required: ["library_track_id"],
@@ -763,12 +790,12 @@ Crea la playlist programada con las canciones del catálogo. Llama a create_prog
       }
     }
 
-    if (!playlistResult || !playlistResult.tracks || playlistResult.tracks.length === 0) {
+    if (!playlistResult || !playlistResult.tracks || playlistResult.tracks.length < 10) {
       console.warn(
-        "[OrchestratorService] Phase 2 failed to create playlist. Falling back to random."
+        `[OrchestratorService] Phase 2 playlist too small (${playlistResult?.tracks?.length || 0} tracks, need 10+). Falling back to random.`
       );
       const allSongs = this.libraryRepo.getAllTracks("song");
-      await this.enqueueFallback(allSongs, 2);
+      await this.enqueueFallback(allSongs, 5);
       return;
     }
 

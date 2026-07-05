@@ -23,6 +23,8 @@ export class LiquidsoapService {
   private static readonly MANUAL_CLEAR_COOLDOWN_MS = 120_000; // 2min after manual clear, don't auto-fill
   // Cache RID -> filepath for items we enqueue (Liquidsoap doesn't return metadata for queued items)
   private readonly ridToFile = new Map<string, string>();
+  // Cache RID -> script for TTS interludios (so queue endpoint can return them)
+  private readonly ridToScript = new Map<string, string>();
   private queueService: LiquidsoapQueueService | null = null;
 
   constructor(
@@ -327,13 +329,16 @@ export class LiquidsoapService {
     }
   }
 
-  public async queuePush(filepath: string): Promise<string | null> {
+  public async queuePush(filepath: string, script?: string): Promise<string | null> {
     try {
       const lines = await this.sendCommand(`queue.push ${filepath}`);
       const rid = lines[0]?.trim() || null;
       if (rid) {
         this.lastQueuedRid = rid;
         this.ridToFile.set(rid, filepath);
+        if (script) {
+          this.ridToScript.set(rid, script);
+        }
       }
       return rid;
     } catch {
@@ -456,6 +461,15 @@ export class LiquidsoapService {
             if (foundScript) {
               script = foundScript;
               title = foundScript;
+            }
+          }
+
+          // Fallback: check ridToScript cache for TTS interludios
+          if (!script && isInterludio) {
+            const cachedScript = this.ridToScript.get(rid);
+            if (cachedScript) {
+              script = cachedScript;
+              title = cachedScript;
             }
           }
 
@@ -619,6 +633,7 @@ export class LiquidsoapService {
     try {
       await this.sendCommand(`queue.remove ${rid}`);
       this.ridToFile.delete(rid);
+      this.ridToScript.delete(rid);
       console.log(`[LiquidsoapService] queueRemove: removed rid ${rid} via native command`);
       return true;
     } catch (err: any) {
@@ -627,7 +642,7 @@ export class LiquidsoapService {
     }
   }
 
-  public queueInsert(index: number, filepath: string): Promise<boolean> {
+  public queueInsert(index: number, filepath: string, script?: string): Promise<boolean> {
     return this.withQueueLock(async () => {
       try {
         const lines = await this.sendCommand("queue.queue");
@@ -636,6 +651,25 @@ export class LiquidsoapService {
           queued.map((r) => this.getRequestMetadata(r).catch((): Record<string, string> => ({})))
         );
         const uris = metas.map((m) => m.initial_uri || m.filename || "").filter(Boolean);
+
+        // Preserve script mapping for existing interludios
+        const scriptMap = new Map<string, string>();
+        for (let i = 0; i < queued.length; i++) {
+          const rid = queued[i];
+          const uri = uris[i];
+          if (uri.includes("interludios/")) {
+            const existingScript = this.ridToScript.get(rid);
+            if (existingScript) {
+              scriptMap.set(uri, existingScript);
+            }
+          }
+        }
+
+        // Add script for the new interludio being inserted
+        if (script && filepath.includes("interludios/")) {
+          scriptMap.set(filepath, script);
+        }
+
         const safeIndex = Math.max(0, Math.min(index, uris.length));
         uris.splice(safeIndex, 0, filepath);
 
@@ -647,7 +681,8 @@ export class LiquidsoapService {
 
         let pushedCount = 0;
         for (const uri of uris) {
-          const result = await this.queuePush(uri).catch(() => null);
+          const itemScript = scriptMap.get(uri);
+          const result = await this.queuePush(uri, itemScript).catch(() => null);
           if (result) pushedCount++;
         }
         console.log(
@@ -661,7 +696,7 @@ export class LiquidsoapService {
     });
   }
 
-  public async queueClear(): Promise<void> {
+  public async queueClear(manual = true): Promise<void> {
     try {
       // In Liquidsoap v2.4+, there's no queue.clear telnet command.
       // Get all rids and remove them one by one.
@@ -672,7 +707,9 @@ export class LiquidsoapService {
         await this.sendCommand(`queue.remove ${rid}`).catch(() => {});
         this.ridToFile.delete(rid);
       }
-      this.lastManualQueueClear = Date.now();
+      if (manual) {
+        this.lastManualQueueClear = Date.now();
+      }
       console.log(`[LiquidsoapService] Queue cleared: removed ${rids.length} items`);
     } catch {}
   }

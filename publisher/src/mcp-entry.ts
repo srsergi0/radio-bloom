@@ -34,7 +34,7 @@ const libraryService = createLibraryService({
   audioMetadataClient,
   musicDir: MUSIC_DIR,
   onDeleteCallback: async () => {
-    await liquidsoapService.queueClear();
+    await liquidsoapService.queueClear(false);
   },
 });
 

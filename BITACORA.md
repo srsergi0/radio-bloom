@@ -311,6 +311,30 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 
 ## Cambios Recientes
 
+### Fix de Cola y Playlists IA (Julio 2026)
+
+- **Problema 1**: Los interludios en `GET /api/stream/queue` no mostraban el script, solo `rid`, `artist: ""`, `title: "ai_dj_..."`.
+- **Solución 1**: Añadido `ridToScript` map en `LiquidsoapService` para almacenar scripts de interludios TTS. Actualizado `queuePush()` y `queueInsert()` para aceptar y preservar scripts. Router ahora retorna `{ rid, id, type, script }` para interludios y `{ rid, id, artist, title, type }` para canciones.
+
+- **Problema 2**: La IA creaba playlists diminutas (3 canciones) a pesar de tener 100 en catálogo.
+- **Solución 2**: Prompt mejorado para requerir 10-15 canciones. La IA decide los interludios según personalidad del locutor (eliminada `AI_DJ_SONGS_BETWEEN`). Playlists con <10 tracks son rechazadas y caen a fallback aleatorio de 5.
+
+- **Problema 3**: Al restart, la cola se restauraba con todos los interludios anteriores (sin scripts), creando una "sea of interludios".
+- **Solución 3**: `QueuePersistenceService` ahora filtra interludios al guardar/restaurar la cola. Solo se guardan canciones.
+
+- **Problema 4**: `queueClear()` en startup del orchestrator activaba cooldown de 2min, bloqueando auto-fill de la cola.
+- **Solución 4**: Añadido parámetro `manual` a `queueClear()`. Solo el endpoint DELETE y MCP lo marcan como manual. Startup y callbacks usan `manual=false`.
+
+- **Problema 5**: `enqueueFromPlaylist` añadía canciones duplicadas porque la variable `queue` quedaba stale después de `queueInsert`.
+- **Solución 5**: Re-fetch de la cola después de `checkAndInjectManualQueueInterludios` antes de `enqueueNext`.
+
+- **Archivos modificados**:
+  - `publisher/src/services/liquidsoap.service.ts` — `ridToScript` map, `queuePush(script?)`, `queueInsert(script?)`, `queueClear(manual?)`
+  - `publisher/src/services/orchestrator.service.ts` — Prompt mejorado, validación ≥10 tracks, conteo consecutivo corregido, dedup de cola
+  - `publisher/src/api/router.ts` — Response format para interludios vs songs
+  - `publisher/src/services/queue-persistence.service.ts` — Filtrado de interludios
+  - `.env` — Eliminada `AI_DJ_SONGS_BETWEEN`
+
 ### Simplificación del Docker Stack y Fix de Permisos (Julio 2026)
 
 - **Eliminados**: `docker-compose.override.yml`, `docker-compose.dev.yml`

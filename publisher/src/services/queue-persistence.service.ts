@@ -53,11 +53,14 @@ export class QueuePersistenceService {
 
       const files = snapshot.files.filter(Boolean);
 
+      // Filter out interludios from restored queue (they lose their scripts on restore)
+      const songsOnly = files.filter((f) => !f.includes("interludios/"));
+
       for (let attempt = 0; attempt < RESTORE_MAX_RETRIES; attempt++) {
         if (this.liquidsoapService.isConnected()) {
-          console.log(`[QueuePersistence] Restoring queue: ${files.length} items`);
+          console.log(`[QueuePersistence] Restoring queue: ${songsOnly.length} songs (filtered ${files.length - songsOnly.length} interludios)`);
 
-          for (const file of files) {
+          for (const file of songsOnly) {
             await this.liquidsoapService.queuePush(file).catch(() => {});
             await new Promise((r) => setTimeout(r, 100));
           }
@@ -104,7 +107,9 @@ export class QueuePersistenceService {
       if (rids.length > 0) {
         const { items } = await this.liquidsoapService.queueList();
         for (const item of items.slice(1)) {
-          if (item.file) queueFiles.push(item.file);
+          if (item.file && !item.file.includes("interludios/")) {
+            queueFiles.push(item.file);
+          }
         }
       }
 

@@ -77,3 +77,23 @@ The closest AGENTS.md to the file being edited takes precedence. Root rules (thi
 2. **Add new API endpoints** to the relevant table if endpoints were added/modified
 3. **Document new services/methods** if business logic was added
 4. **Update the workflow section** if data flow changed
+
+# Queue & Playlist Conventions
+
+## GET /api/stream/queue Response Format
+
+- **Songs**: `{ rid, id, artist, title, type: "song" }`
+- **Interludios**: `{ rid, id, type: "interludio", script }` — only `rid`, `id`, `type`, and `script` (no artist/title)
+
+## Playlist Generation Rules
+
+- The AI DJ (Phase 2) MUST select **10-15 songs** per playlist. Playlists with <10 tracks are rejected and fall back to random.
+- Interludios (TTS scripts): **1 per 5 songs** maximum (2-3 per playlist of 10-15 songs).
+- Each song must have a unique `library_track_id` from the catalog.
+- The prompt emphasizes variety: no artist repeated more than 2 times.
+
+## Queue Persistence
+
+- Interludios are **NOT persisted** across restarts (they lose their scripts on restore).
+- Only songs are saved/restored from the queue snapshot.
+- This prevents the "sea of interludios" problem after restarts.

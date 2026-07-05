@@ -382,7 +382,27 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   app.get("/api/stream/queue", async (c) => {
     try {
       const { items } = await deps.liquidsoapService.queueList();
-      const clean = items.map(({ file, ...rest }) => rest);
+      const clean = items.map(({ file, ...rest }) => {
+        // For interludios: only return rid, id, type, script
+        if (rest.type === "interludio") {
+          return {
+            rid: rest.rid,
+            id: rest.id,
+            type: rest.type,
+            script: rest.script,
+            pending: rest.pending,
+          };
+        }
+        // For songs: return rid, id, artist, title, type
+        return {
+          rid: rest.rid,
+          id: rest.id,
+          artist: rest.artist,
+          title: rest.title,
+          type: rest.type,
+          pending: rest.pending,
+        };
+      });
       return c.json({ ok: true, data: clean });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);

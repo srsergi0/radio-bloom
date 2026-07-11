@@ -32,7 +32,7 @@ services:
       init:
         condition: service_completed_successfully
     ports:
-      - "${BUNCASTER_PORT}:${BUNCASTER_PORT}"
+      - "${PORT}:${PORT}"
       - "${RTMP_PORT}:${RTMP_PORT}"
     env_file:
       - .env
@@ -40,7 +40,7 @@ services:
       - ./music/songs:/app/music/songs
       - ./music/interludios:/app/music/interludios
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:${BUNCASTER_PORT}/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:${PORT}/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -58,9 +58,9 @@ services:
       - "${API_PORT}:${PUBLISHER_PORT}"
     environment:
       - BUNCASTER_HOST=buncaster
-      - BUNCASTER_PORT=${BUNCASTER_PORT}
-      - BUNCASTER_ADMIN_USER=${BUNCASTER_ADMIN_USER}
-      - BUNCASTER_ADMIN_PASSWORD=${BUNCASTER_ADMIN_PASSWORD}
+      - BUNCASTER_PORT=${PORT}
+      - BUNCASTER_ADMIN_USER=${ADMIN_USER}
+      - BUNCASTER_ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - PORT=${PUBLISHER_PORT}
       - REDIS_URL=redis://redis:6379/0
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}

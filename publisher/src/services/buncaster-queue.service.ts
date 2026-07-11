@@ -29,14 +29,14 @@ export interface QueueAddJob {
   voice?: string;
 }
 
-export class LiquidsoapQueueService {
+export class BuncasterQueueService {
   private queue: Queue;
   private worker: Worker | null = null;
-  private queueName = "liquidsoap-queue";
+  private queueName = "buncaster-queue";
   private connectionOptions: any;
 
   constructor(
-    private queuePush: (filepath: string) => Promise<string | null>,
+    private queuePush: (filepath: string, script?: string) => Promise<string | null>,
     private musicDir: string,
     private libraryRepo?: LibraryRepository,
     private audioMetadataClient?: AudioMetadataClient
@@ -60,8 +60,8 @@ export class LiquidsoapQueueService {
         const { filepath, script, voice } = job.data;
 
         if (filepath) {
-          const rid = await this.queuePush(filepath);
-          if (!rid) throw new Error(`Failed to push ${filepath} to Liquidsoap`);
+          const rid = await this.queuePush(filepath, script);
+          if (!rid) throw new Error(`Failed to push ${filepath} to Buncaster`);
           return { rid, filepath };
         }
 
@@ -94,11 +94,10 @@ export class LiquidsoapQueueService {
             await job.log("No libraryRepo, skipping save");
           }
 
-          // Convert Windows path to container path for Liquidsoap
-          const liqPath = `/music/${relativePath}`;
-          const rid = await this.queuePush(liqPath);
-          if (!rid) throw new Error(`Failed to push TTS to Liquidsoap`);
-          await job.log(`Queued to Liquidsoap: rid=${rid}`);
+          // Pass script to queuePush so BuncasterService can track it
+          const rid = await this.queuePush(relativePath, script);
+          if (!rid) throw new Error(`Failed to push TTS to Buncaster`);
+          await job.log(`Queued to Buncaster: rid=${rid}`);
           return { rid, filepath: audioPath };
         }
 
@@ -112,11 +111,11 @@ export class LiquidsoapQueueService {
     );
 
     this.worker.on("completed", (job) => {
-      console.log(`[LiquidsoapQueue] Job ${job.id} completed: ${job.data.filepath || "TTS"}`);
+      console.log(`[BuncasterQueue] Job ${job.id} completed: ${job.data.filepath || "TTS"}`);
     });
 
     this.worker.on("failed", (job, err) => {
-      console.error(`[LiquidsoapQueue] Job ${job?.id} failed: ${err.message}`);
+      console.error(`[BuncasterQueue] Job ${job?.id} failed: ${err.message}`);
     });
   }
 
@@ -124,7 +123,7 @@ export class LiquidsoapQueueService {
     return this.queue.add(
       "play",
       { filepath },
-      { jobId: `lsq-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` }
+      { jobId: `bcq-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` }
     );
   }
 
@@ -132,7 +131,7 @@ export class LiquidsoapQueueService {
     return this.queue.add(
       "tts",
       { script, voice },
-      { jobId: `lsq-tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` }
+      { jobId: `bcq-tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` }
     );
   }
 
@@ -149,10 +148,10 @@ export class LiquidsoapQueueService {
       const buffer = Buffer.from(arrayBuffer);
       await fsPromises.writeFile(filePath, buffer);
 
-      console.log(`[LiquidsoapQueue] TTS synthesized: ${filePath}`);
+      console.log(`[BuncasterQueue] TTS synthesized: ${filePath}`);
       return filePath;
     } catch (err: any) {
-      console.error("[LiquidsoapQueue] TTS failed:", err.message);
+      console.error("[BuncasterQueue] TTS failed:", err.message);
       return null;
     }
   }

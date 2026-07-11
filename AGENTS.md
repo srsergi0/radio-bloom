@@ -16,7 +16,8 @@ Los puertos de Bloom están conectados a **Cloudflare Tunnel**. NO cambiar los p
 Puertos críticos:
 - `9876` — API Publisher
 - `6379` — Redis
-- `8000` — Liquidsoap Harbour
+- `4321` — Buncaster HTTP Stream + Admin Panel
+- `1935` — RTMP (OBS Live Input)
 - `21` + `30000-30100` — FTP
 - `3000` — Publisher interno
 

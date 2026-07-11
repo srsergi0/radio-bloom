@@ -22,24 +22,25 @@ services:
       - redis_data:/data
 
   # ──────────────────────────────────────────────
-  # Liquidsoap - Streaming Engine
+  # Buncaster - Streaming Engine (Bun + FFmpeg)
   # ──────────────────────────────────────────────
-  liquidsoap:
-    image: savonet/liquidsoap:v2.4.5
+  buncaster:
+    image: ghcr.io/srsergi0/buncaster:latest
+    container_name: buncaster
     restart: unless-stopped
     depends_on:
       init:
         condition: service_completed_successfully
     ports:
-      - "${SRT_PORT}:8002/udp"
-      - "${LIVE_INPUT_PORT}:8001"
+      - "${BUNCASTER_PORT}:${BUNCASTER_PORT}"
+      - "${RTMP_PORT}:${RTMP_PORT}"
+    env_file:
+      - .env
     volumes:
-      - ./liquidsoap/radio.liq:/etc/liquidsoap/radio.liq
-      - ./music/songs:/music/songs
-      - ./music/interludios:/music/interludios
-    command: /etc/liquidsoap/radio.liq
+      - ./music/songs:/app/music/songs
+      - ./music/interludios:/app/music/interludios
     healthcheck:
-      test: [ "CMD-SHELL", "timeout 3 bash -c '</dev/tcp/localhost/8000' || exit 1" ]
+      test: ["CMD-SHELL", "curl -sf http://localhost:${BUNCASTER_PORT}/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -56,9 +57,10 @@ services:
     ports:
       - "${API_PORT}:${PUBLISHER_PORT}"
     environment:
-      - LIQUIDSOAP_HOST=liquidsoap
-      - LIQUIDSOAP_TELNET_PORT=${LIQUIDSOAP_TELNET_PORT}
-      - LIQUIDSOAP_HARBOUR_PORT=${LIQUIDSOAP_HARBOUR_PORT}
+      - BUNCASTER_HOST=buncaster
+      - BUNCASTER_PORT=${BUNCASTER_PORT}
+      - BUNCASTER_ADMIN_USER=${BUNCASTER_ADMIN_USER}
+      - BUNCASTER_ADMIN_PASSWORD=${BUNCASTER_ADMIN_PASSWORD}
       - PORT=${PUBLISHER_PORT}
       - REDIS_URL=redis://redis:6379/0
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
@@ -76,7 +78,7 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_started
-      liquidsoap:
+      buncaster:
         condition: service_healthy
 
   # ──────────────────────────────────────────────

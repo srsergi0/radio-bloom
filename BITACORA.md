@@ -1,6 +1,6 @@
 # Bitácora de Radio Bloom
 
-Radio Bloom es una estación de radio por internet automatizada y autogestionada mediante **Liquidsoap**, **Bun (TypeScript)**, y una interfaz web en **Astro**.
+Radio Bloom es una estación de radio por internet automatizada y autogestionada mediante **Buncaster** (Bun + FFmpeg), **Bun (TypeScript)**, y una interfaz web en **Astro**.
 
 ---
 
@@ -16,7 +16,7 @@ El sistema está compuesto por 4 microservicios principales que se ejecutan en c
    - **Puerto**: `3000` (interno) / `9876` (público API).
    - **Conexión**:
      - **Base de datos**: SQLite (gestionado con Drizzle ORM) para almacenar biblioteca de canciones, playlists, configuración y estado de reproducción.
-     - **Hacia `liquidsoap`**: Se conecta vía **Telnet** (puerto `1234`) para saltar canciones, encolar, y obtener metadatos activos.
+     - **Hacia `buncaster`**: Se comunica vía **HTTP REST API** (puerto `4321`) para saltar canciones, encolar, y obtener metadatos activos. Autenticación Basic Auth.
      - **Hacia `music/songs/` e `interludios/`**: Vigila cambios en tiempo real con `fs.watch`. Cuando se añade un archivo, extrae metadatos con `music-metadata` y los enriquece con Spotify si es posible. Cuando se elimina o renombra, actualiza la base de datos automáticamente.
 
 3. **`ftp` (Servidor de Carga de Canciones)**:
@@ -25,9 +25,10 @@ El sistema está compuesto por 4 microservicios principales que se ejecutan en c
    - **Conexión**: Permite la carga directa de canciones vía cliente FTP. Los archivos subidos se guardan en el volumen compartido `songs/` o `interludios/`. El publisher detecta automáticamente los cambios y los indexa.
    - **Credenciales**: Usuario `radio`, contraseña `radiobloom` (configuradas en `.env`).
 
-4. **`liquidsoap` (Streaming Engine)**:
-   - **Puerto**: `8000` (Harbor Output) / `8001` (Harbor Input Icecast) / `8002` (SRT) / `1234` (Telnet).
-   - **Conexión**: Lee continuamente los archivos de audio en `music/songs/` e `music/interludios/`. Emite el flujo continuo (stream) de audio en formato MP3 hacia el puerto `8000`. Es controlado por el `publisher` mediante comandos Telnet. Acepta transmisiones en vivo (Icecast/Harbor) en el puerto `8001`.
+4. **`buncaster` (Streaming Engine)**:
+   - **Puerto**: `4321` (HTTP Stream + Admin Panel) / `1935` (RTMP Live Input).
+   - **Imagen**: `ghcr.io/srsergi0/buncaster:latest`
+   - **Conexión**: Lee continuamente los archivos de audio en `music/songs/` e `music/interludios/`. Emite el flujo continuo (stream) de audio en formato MP3 hacia el puerto `4321`. Acepta transmisiones en vivo vía RTMP (OBS Studio) en el puerto `1935`. Incluye panel de administración DJ Booth en `/admin`.
 
 ---
 
@@ -90,8 +91,8 @@ radio/
 ├── ftp/                                  # Servidor FTP para subir canciones (vsftpd)
 │   └── (usando imagen fauria/vsftpd, sin Dockerfile custom)
 │
-├── liquidsoap/                           # Motor de Audio
-│   └── radio.liq                         # Script de Liquidsoap (playlist, queue, fallback, output.harbor)
+├── liquidsoap/                           # (OBSOLETO) Motor de Audio Liquidsoap
+│   └── radio.liq                         # Script de Liquidsoap (ya no se usa)
 │
 ├── music/                                # Directorio de almacenamiento de audios (Volumen compartido)
 │   ├── songs/                            # Canciones (formatos MP3, FLAC, M4A, OGG)
@@ -124,7 +125,7 @@ radio/
 │       │   ├── database.ts               # Inicializador de Drizzle con SQLite
 │       │   ├── audio-metadata.client.ts  # Extracción de metadatos de audio con music-metadata
 │       │   ├── spotify.client.ts         # Cliente de la API de Spotify (search, getTrack)
-│       │   └── telnet.client.ts          # Cliente Telnet hacia liquidsoap
+│       │   └── buncaster.client.ts       # Cliente HTTP REST hacia Buncaster
 │       │
 │       ├── repositories/sqlite/          # Capa de Acceso a Datos (Drizzle ORM)
 │       │   ├── schema.ts                 # Esquema de base de datos Drizzle
@@ -137,7 +138,8 @@ radio/
 │       ├── services/                     # Lógica de Negocio
 │       │   ├── config.service.ts         # Gestión de configuración
 │       │   ├── library.service.ts        # Escaneo + watcher de archivos + enriquecimiento Spotify
-│       │   ├── liquidsoap.service.ts     # Órdenes Telnet sobre liquidsoap (queue, skip, play)
+│       │   ├── buncaster.service.ts      # Integración con Buncaster (queue, skip, play via REST API)
+│       │   ├── buncaster-queue.service.ts # Cola BullMQ para procesamiento async de TTS y encolamiento
 │       │   ├── mcp.service.ts            # Herramientas MCP (15+ tools)
 │       │   ├── torrent.service.ts        # Búsqueda PirateBay (apibay) + Cola de descargas BullMQ con aria2c
 │       │   ├── orchestrator.service.ts   # AI DJ & Programación automática (OpenRouter + Edge-TTS)

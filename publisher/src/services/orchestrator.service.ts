@@ -11,7 +11,7 @@ import type { Track } from "../domain/types";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import type { LibraryService } from "./library.service";
-import type { LiquidsoapService } from "./liquidsoap.service";
+import type { BuncasterService } from "./buncaster.service";
 import type { LocutorService } from "./locutor.service";
 
 interface DialogueMessage {
@@ -39,7 +39,7 @@ export class OrchestratorService {
   constructor(
     private readonly libraryRepo: LibraryRepository,
     private readonly libraryService: LibraryService,
-    private readonly liquidsoapService: LiquidsoapService,
+    private readonly buncasterService: BuncasterService,
     private readonly locutorService: LocutorService,
     private readonly playlistRepo: PlaylistRepository,
     private readonly musicDir: string,
@@ -74,7 +74,7 @@ export class OrchestratorService {
     this.startedAt = Date.now();
 
     // Clear stale queue from previous session on startup
-    this.liquidsoapService.queueClear(false).catch(() => {});
+    this.buncasterService.queueClear(false).catch(() => {});
 
     // Check every 10 seconds
     this.loopInterval = setInterval(() => {
@@ -154,7 +154,7 @@ export class OrchestratorService {
     this.isProcessing = true;
 
     try {
-      if (!this.liquidsoapService.isConnected()) {
+      if (!this.buncasterService.isConnected()) {
         this.isProcessing = false;
         return;
       }
@@ -166,8 +166,8 @@ export class OrchestratorService {
         return;
       }
 
-      const status = await this.liquidsoapService.getStreamStatus();
-      const { items: queue } = await this.liquidsoapService.queueList();
+      const status = await this.buncasterService.getStreamStatus();
+      const { items: queue } = await this.buncasterService.queueList();
 
       // 0. Update last_played_at when track changes
       const currentFile = status.metadata?.filename || status.metadata?.initial_uri || "";
@@ -180,12 +180,12 @@ export class OrchestratorService {
       await this.cleanupTempFiles(status, queue);
 
       // Re-fetch queue (queueInsert clears and rebuilds, making queue stale)
-      const { items: refreshedQueue } = await this.liquidsoapService.queueList();
+      const { items: refreshedQueue } = await this.buncasterService.queueList();
 
       // 2. Queue new tracks if queue is dropping below 5 elements
       //    but never exceed 20 items to prevent unbounded growth
       //    Also skip if user recently cleared the queue manually
-      if (refreshedQueue.length < 5 && refreshedQueue.length < 20 && !this.liquidsoapService.isManualClearActive()) {
+      if (refreshedQueue.length < 5 && refreshedQueue.length < 20 && !this.buncasterService.isManualClearActive()) {
         console.log(
           `[OrchestratorService] Queue is low (${refreshedQueue.length} items). Enqueuing next tracks...`
         );
@@ -207,7 +207,7 @@ export class OrchestratorService {
     const queuedFilenames = new Set<string>();
     const metaResults: Record<string, string>[] = await Promise.all(
       queue.map((item) =>
-        this.liquidsoapService
+        this.buncasterService
           .getRequestMetadata(item.rid)
           .catch((): Record<string, string> => ({}))
       )
@@ -346,7 +346,7 @@ export class OrchestratorService {
       // Use the first song in queue (closest to finishing) for time estimation
       const firstQueueItem = queue[0];
       try {
-        const meta = await this.liquidsoapService.getRequestMetadata(firstQueueItem.rid);
+        const meta = await this.buncasterService.getRequestMetadata(firstQueueItem.rid);
         const elapsed = parseFloat(meta.elapsed || "0");
         const duration = parseFloat(meta.duration || "0");
         if (duration > 0) {
@@ -357,7 +357,7 @@ export class OrchestratorService {
       // Add duration of remaining songs in queue (skip the first one, we already counted it)
       for (let i = 1; i < queue.length; i++) {
         try {
-          const meta = await this.liquidsoapService.getRequestMetadata(queue[i].rid);
+          const meta = await this.buncasterService.getRequestMetadata(queue[i].rid);
           const dur = parseFloat(meta.duration || "0");
           if (dur > 0) remainingTimeSec += dur;
         } catch {}
@@ -416,7 +416,7 @@ export class OrchestratorService {
         const speechPath = await this.synthesizeSpeech(track.script, activeLocutor?.voice);
         if (speechPath) {
           const filename = speechPath.replace(/\\/g, "/").split("/").pop();
-          const rid = await this.liquidsoapService.queuePush(
+          const rid = await this.buncasterService.queuePush(
             `/music/interludios/${filename}`,
             track.script
           );
@@ -427,7 +427,7 @@ export class OrchestratorService {
         }
       }
 
-      const rid = await this.liquidsoapService.queuePush(filepath);
+      const rid = await this.buncasterService.queuePush(filepath);
       if (rid) {
         this.recentHistory.push(filepath);
         if (this.recentHistory.length > 15) this.recentHistory.shift();
@@ -447,7 +447,7 @@ export class OrchestratorService {
       const randomSong = pool[Math.floor(Math.random() * pool.length)];
       if (randomSong) {
         console.log(`[OrchestratorService] Fallback enqueuing: "${randomSong.title}"`);
-        const songRid = await this.liquidsoapService.queuePush(`/music/${randomSong.file}`);
+        const songRid = await this.buncasterService.queuePush(`/music/${randomSong.file}`);
         if (songRid) {
           this.recentHistory.push(randomSong.id);
           if (this.recentHistory.length > 15) this.recentHistory.shift();
@@ -791,7 +791,7 @@ Crea la playlist programada con las canciones del catálogo. Llama a create_prog
 
     for (let i = startIdx; i < queue.length; i++) {
       try {
-        const meta = await this.liquidsoapService.getRequestMetadata(queue[i].rid);
+        const meta = await this.buncasterService.getRequestMetadata(queue[i].rid);
         if (meta.title) {
           songs.push({
             title: meta.title,
@@ -928,7 +928,7 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
         function: {
           name: "get_stream_status",
           description:
-            "Consulta qué canción está sonando actualmente y qué temas están ya en la cola de Liquidsoap.",
+            "Consulta qué canción está sonando actualmente y qué temas están ya en la cola de Buncaster.",
           parameters: {
             type: "object",
             properties: {},
@@ -1161,8 +1161,8 @@ Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el fo
           return JSON.stringify({ totalSongs, totalInterludes });
         }
         case "get_stream_status": {
-          const status = await this.liquidsoapService.getStreamStatus();
-          const { items: queue } = await this.liquidsoapService.queueList();
+          const status = await this.buncasterService.getStreamStatus();
+          const { items: queue } = await this.buncasterService.queueList();
           return JSON.stringify({
             playing: status.playing,
             currentTrack: status.title

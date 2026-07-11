@@ -24,8 +24,8 @@ if (!process.env.MUSIC_MOUNT) {
 }
 
 // Default to localhost when running outside Docker
-if (!process.env.LIQUIDSOAP_HOST) {
-  process.env.LIQUIDSOAP_HOST = isLocal ? "localhost" : "liquidsoap";
+if (!process.env.BUNCASTER_HOST) {
+  process.env.BUNCASTER_HOST = isLocal ? "localhost" : "buncaster";
 }
 
 if (!process.env.REDIS_URL) {

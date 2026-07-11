@@ -1,5 +1,5 @@
 import type { PlaybackStateRepository } from "../repositories/sqlite/playback-state.repo";
-import type { LiquidsoapService } from "./liquidsoap.service";
+import type { BuncasterService } from "./buncaster.service";
 
 const RESTORE_RETRY_INTERVAL = 2000;
 const RESTORE_MAX_RETRIES = 30;
@@ -15,7 +15,7 @@ export class QueuePersistenceService {
   private lastPlayedFile: string | null = null;
 
   constructor(
-    private readonly liquidsoapService: LiquidsoapService,
+    private readonly buncasterService: BuncasterService,
     private readonly playbackStateRepo: PlaybackStateRepository,
     private readonly libraryService: LibraryServiceLike
   ) {}
@@ -57,22 +57,22 @@ export class QueuePersistenceService {
       const songsOnly = files.filter((f) => !f.includes("interludios/"));
 
       for (let attempt = 0; attempt < RESTORE_MAX_RETRIES; attempt++) {
-        if (this.liquidsoapService.isConnected()) {
+        if (this.buncasterService.isConnected()) {
           console.log(`[QueuePersistence] Restoring queue: ${songsOnly.length} songs (filtered ${files.length - songsOnly.length} interludios)`);
 
           for (const file of songsOnly) {
-            await this.liquidsoapService.queuePush(file).catch(() => {});
+            await this.buncasterService.queuePush(file).catch(() => {});
             await new Promise((r) => setTimeout(r, 100));
           }
 
           await new Promise((r) => setTimeout(r, 500));
-          await this.liquidsoapService.sendCommand("queue.skip");
+          await this.buncasterService.sendCommand("queue.skip");
           await new Promise((r) => setTimeout(r, 800));
 
-          const currentRid = await this.liquidsoapService.getCurrentRequestId();
+          const currentRid = await this.buncasterService.getCurrentRequestId();
           if (currentRid) {
             const seekPos = Math.max(0, currentElapsed);
-            const ok = await this.liquidsoapService.requestSeek(currentRid, seekPos);
+            const ok = await this.buncasterService.requestSeek(currentRid, seekPos);
             console.log(
               `[QueuePersistence] Seek to ${Math.round(seekPos)}s: ${ok ? "OK" : "failed, playing from start"}`
             );
@@ -81,7 +81,7 @@ export class QueuePersistenceService {
         }
         await new Promise((r) => setTimeout(r, RESTORE_RETRY_INTERVAL));
       }
-      console.log("[QueuePersistence] Liquidsoap not available after 60s, skipping restore.");
+      console.log("[QueuePersistence] Buncaster not available after 60s, skipping restore.");
     } catch (err: any) {
       console.error("[QueuePersistence] Error during restore:", err.message);
     }
@@ -89,10 +89,10 @@ export class QueuePersistenceService {
 
   private async persist(): Promise<void> {
     try {
-      const status = await this.liquidsoapService.getStreamStatus();
+      const status = await this.buncasterService.getStreamStatus();
       if (!status.playing || !status.metadata) return;
 
-      const file = await this.liquidsoapService.getCurrentFile();
+      const file = await this.buncasterService.getCurrentFile();
       if (!file) return;
 
       if (file !== this.lastPlayedFile) {
@@ -100,12 +100,12 @@ export class QueuePersistenceService {
         this.libraryService.updateLastPlayedByFile(file);
       }
 
-      const queueLines = await this.liquidsoapService.sendCommand("queue.queue").catch(() => []);
+      const queueLines = await this.buncasterService.sendCommand("queue.queue").catch(() => []);
       const rids = queueLines.length > 0 ? queueLines[0].split(/\s+/).filter(Boolean) : [];
 
       const queueFiles: string[] = [file];
       if (rids.length > 0) {
-        const { items } = await this.liquidsoapService.queueList();
+        const { items } = await this.buncasterService.queueList();
         for (const item of items.slice(1)) {
           if (item.file && !item.file.includes("interludios/")) {
             queueFiles.push(item.file);

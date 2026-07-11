@@ -5,7 +5,7 @@ import { spotifySearch } from "../infrastructure/spotify.client";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import type { LibraryService } from "./library.service";
-import type { LiquidsoapService } from "./liquidsoap.service";
+import type { BuncasterService } from "./buncaster.service";
 import type { TorrentService } from "./torrent.service";
 
 export class McpService {
@@ -17,7 +17,7 @@ export class McpService {
     private readonly libraryRepo: LibraryRepository,
     private readonly playlistRepo: PlaylistRepository,
     private readonly libraryService: LibraryService,
-    private readonly liquidsoapService: LiquidsoapService,
+    private readonly buncasterService: BuncasterService,
     private readonly torrentService: TorrentService
   ) {
     this.server = new McpServer({
@@ -35,8 +35,8 @@ export class McpService {
       async () => {
         try {
           const [status, queue] = await Promise.all([
-            this.liquidsoapService.getStreamStatus(),
-            this.liquidsoapService.queueList(20),
+            this.buncasterService.getStreamStatus(),
+            this.buncasterService.queueList(20),
           ]);
           return {
             content: [
@@ -221,7 +221,7 @@ export class McpService {
           .describe("Número máximo de elementos a mostrar (default: 5, recomendado)"),
       },
       async ({ limit }) => {
-        const { items, total } = await this.liquidsoapService.queueList(limit);
+        const { items, total } = await this.buncasterService.queueList(limit);
         return {
           content: [
             {
@@ -309,7 +309,7 @@ export class McpService {
               continue;
             }
             const filepath = `/music/${track.file}`;
-            const rid = await this.liquidsoapService.queuePush(filepath);
+            const rid = await this.buncasterService.queuePush(filepath);
             if (!rid) {
               errors.push({ id: item.id, error: "Error al encolar" });
               continue;
@@ -331,7 +331,7 @@ export class McpService {
           }
         }
 
-        const { items: queueItems } = await this.liquidsoapService.queueList();
+        const { items: queueItems } = await this.buncasterService.queueList();
         return {
           content: [
             {
@@ -373,10 +373,10 @@ export class McpService {
             isError: true,
           };
         const filepath = `/music/${track.file}`;
-        const ok = await this.liquidsoapService.queueInsert(position - 1, filepath);
+        const ok = await this.buncasterService.queueInsert(position - 1, filepath);
         if (!ok)
           return { content: [{ type: "text", text: "Error al insertar en cola" }], isError: true };
-        const { items: queueItems } = await this.liquidsoapService.queueList();
+        const { items: queueItems } = await this.buncasterService.queueList();
         return {
           content: [
             {
@@ -403,7 +403,7 @@ export class McpService {
           .describe("Posición del elemento a eliminar (1 = el siguiente en reproducirse)"),
       },
       async ({ position }) => {
-        const { items: queueItems, total } = await this.liquidsoapService.queueList();
+        const { items: queueItems, total } = await this.buncasterService.queueList();
         if (position > total) {
           return {
             content: [
@@ -416,9 +416,9 @@ export class McpService {
           };
         }
         const rid = queueItems[position - 1].rid;
-        const ok = await this.liquidsoapService.queueRemove(rid);
+        const ok = await this.buncasterService.queueRemove(rid);
         if (!ok) return { content: [{ type: "text", text: "Error al eliminar" }], isError: true };
-        const { items: newQueueItems } = await this.liquidsoapService.queueList();
+        const { items: newQueueItems } = await this.buncasterService.queueList();
         return {
           content: [
             {
@@ -439,7 +439,7 @@ export class McpService {
     );
 
     server.tool("radio_queue_clear", "Vaciar toda la cola de reproducción", {}, async () => {
-      await this.liquidsoapService.queueClear();
+      await this.buncasterService.queueClear();
       return { content: [{ type: "text", text: "Cola vaciada" }] };
     });
 
@@ -457,14 +457,14 @@ export class McpService {
             isError: true,
           };
         const filepath = `/music/${track.file}`;
-        const ok = await this.liquidsoapService.playFileNow(filepath);
+        const ok = await this.buncasterService.playFileNow(filepath);
         if (!ok) return { content: [{ type: "text", text: "Error al reproducir" }], isError: true };
         return { content: [{ type: "text", text: `Reproduciendo: ${track.title}` }] };
       }
     );
 
     server.tool("radio_skip", "Saltar a la siguiente canción en la cola", {}, async () => {
-      await this.liquidsoapService.skipTrack();
+      await this.buncasterService.skipTrack();
       return { content: [{ type: "text", text: "Skip ejecutado" }] };
     });
 

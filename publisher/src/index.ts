@@ -2,17 +2,17 @@ import "./env";
 import { resolve } from "node:path";
 import { createApiRouter } from "./api/router";
 import { AudioMetadataClient } from "./infrastructure/audio-metadata.client";
+import { BuncasterClient } from "./infrastructure/buncaster.client";
 import { DatabaseConnection } from "./infrastructure/database";
-import { TelnetClient } from "./infrastructure/telnet.client";
 import { ConfigRepository } from "./repositories/sqlite/config.repo";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
 import { LocutorRepository } from "./repositories/sqlite/locutor.repo";
 import { PlaybackStateRepository } from "./repositories/sqlite/playback-state.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
+import { BuncasterService } from "./services/buncaster.service";
+import { BuncasterQueueService } from "./services/buncaster-queue.service";
 import { ConfigService } from "./services/config.service";
 import { createLibraryService } from "./services/library.service";
-import { LiquidsoapService } from "./services/liquidsoap.service";
-import { LiquidsoapQueueService } from "./services/liquidsoap-queue.service";
 import { LocutorService } from "./services/locutor.service";
 import { McpService } from "./services/mcp.service";
 import { OrchestratorService } from "./services/orchestrator.service";
@@ -25,10 +25,11 @@ const DATA_DIR = process.env.DATA_DIR || "/app/data";
 const MUSIC_DIR = process.env.MUSIC_DIR || "/app/music";
 const MUSIC_MOUNT = process.env.MUSIC_MOUNT || "/app/music";
 
-const LIQUIDSOAP_HOST = process.env.LIQUIDSOAP_HOST || "liquidsoap";
-const LIQUIDSOAP_TELNET_PORT = parseInt(process.env.LIQUIDSOAP_TELNET_PORT || "1234", 10);
-const LIQUIDSOAP_HARBOUR_PORT = process.env.LIQUIDSOAP_HARBOUR_PORT || "8000";
-const STREAM_URL = `http://${LIQUIDSOAP_HOST}:${LIQUIDSOAP_HARBOUR_PORT}/radiobloom.mp3`;
+const BUNCASTER_HOST = process.env.BUNCASTER_HOST || "buncaster";
+const BUNCASTER_PORT = parseInt(process.env.BUNCASTER_PORT || "4321", 10);
+const BUNCASTER_ADMIN_USER = process.env.BUNCASTER_ADMIN_USER || "admin";
+const BUNCASTER_ADMIN_PASSWORD = process.env.BUNCASTER_ADMIN_PASSWORD || "radiobloom";
+const STREAM_URL = `http://${BUNCASTER_HOST}:${BUNCASTER_PORT}/stream`;
 
 const DIST_DIR =
   process.env.NODE_ENV === "production"
@@ -41,7 +42,12 @@ const DIST_DIR =
 const dbPath = resolve(DATA_DIR, "radio.db");
 const dbConnection = new DatabaseConnection(dbPath);
 
-const telnetClient = new TelnetClient(LIQUIDSOAP_HOST, LIQUIDSOAP_TELNET_PORT);
+const buncasterClient = new BuncasterClient(
+  BUNCASTER_HOST,
+  BUNCASTER_PORT,
+  BUNCASTER_ADMIN_USER,
+  BUNCASTER_ADMIN_PASSWORD
+);
 const audioMetadataClient = new AudioMetadataClient();
 
 // ============================================================
@@ -57,8 +63,8 @@ const locutorRepo = new LocutorRepository(dbConnection);
 // 3. Services & Use Cases Instantiation
 // ============================================================
 const configService = new ConfigService(configRepo);
-const liquidsoapService = new LiquidsoapService(
-  telnetClient,
+const buncasterService = new BuncasterService(
+  buncasterClient,
   audioMetadataClient,
   MUSIC_MOUNT,
   libraryRepo,
@@ -71,7 +77,7 @@ const libraryService = createLibraryService({
   audioMetadataClient,
   musicDir: MUSIC_DIR,
   onDeleteCallback: async () => {
-    await liquidsoapService.queueClear(false);
+    await buncasterService.queueClear(false);
   },
 });
 
@@ -82,14 +88,14 @@ const mcpService = new McpService(
   libraryRepo,
   playlistRepo,
   libraryService,
-  liquidsoapService,
+  buncasterService,
   torrentService
 );
 
 const orchestratorService = new OrchestratorService(
   libraryRepo,
   libraryService,
-  liquidsoapService,
+  buncasterService,
   locutorService,
   playlistRepo,
   MUSIC_DIR,
@@ -98,14 +104,14 @@ const orchestratorService = new OrchestratorService(
 
 const ttsService = new TtsService(MUSIC_DIR);
 
-const liquidsoapQueueService = new LiquidsoapQueueService(
-  (filepath) => liquidsoapService.queuePush(filepath),
+const buncasterQueueService = new BuncasterQueueService(
+  (filepath, script) => buncasterService.queuePush(filepath, script),
   MUSIC_DIR,
   libraryRepo,
   audioMetadataClient
 );
-liquidsoapQueueService.startWorker();
-liquidsoapService.setQueueService(liquidsoapQueueService);
+buncasterQueueService.startWorker();
+buncasterService.setQueueService(buncasterQueueService);
 
 // Initialize library service (creates dirs, scans, starts watcher)
 libraryService.init().catch((err) => console.error("[init] libraryService:", err));
@@ -114,7 +120,7 @@ libraryService.init().catch((err) => console.error("[init] libraryService:", err
 orchestratorService.start();
 
 const queuePersistenceService = new QueuePersistenceService(
-  liquidsoapService,
+  buncasterService,
   playbackStateRepo,
   libraryService
 );
@@ -127,8 +133,8 @@ const apiRouter = createApiRouter({
   configService,
   libraryRepo,
   libraryService,
-  liquidsoapService,
-  liquidsoapQueueService,
+  buncasterService,
+  buncasterQueueService,
   playlistRepo,
   locutorService,
   mcpService,
@@ -184,7 +190,7 @@ class StreamBroadcaster {
 
     while (true) {
       try {
-        console.log(`[Broadcaster] Connecting to Liquidsoap upstream at ${STREAM_URL}...`);
+        console.log(`[Broadcaster] Connecting to Buncaster upstream at ${STREAM_URL}...`);
         const res = await fetch(STREAM_URL);
         if (!res.ok || !res.body) {
           throw new Error(`Upstream returned status ${res.status}`);

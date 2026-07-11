@@ -10,8 +10,8 @@ import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import type { ConfigService } from "../services/config.service";
 import type { LibraryService } from "../services/library.service";
-import type { LiquidsoapService } from "../services/liquidsoap.service";
-import type { LiquidsoapQueueService } from "../services/liquidsoap-queue.service";
+import type { BuncasterService } from "../services/buncaster.service";
+import type { BuncasterQueueService } from "../services/buncaster-queue.service";
 import type { LocutorService } from "../services/locutor.service";
 import type { McpService } from "../services/mcp.service";
 import type { TorrentService } from "../services/torrent.service";
@@ -113,8 +113,8 @@ export interface ApiDependencies {
   configService: ConfigService;
   libraryRepo: LibraryRepository;
   libraryService: LibraryService;
-  liquidsoapService: LiquidsoapService;
-  liquidsoapQueueService: LiquidsoapQueueService;
+  buncasterService: BuncasterService;
+  buncasterQueueService: BuncasterQueueService;
   playlistRepo: PlaylistRepository;
   locutorService: LocutorService;
   mcpService: McpService;
@@ -147,16 +147,16 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   // ============================================================
 
   app.get("/api/system/status", async (c) => {
-    const liquidsoapConnected = deps.liquidsoapService.isConnected();
+    const buncasterConnected = deps.buncasterService.isConnected();
     const config = deps.configService.get();
     return c.json({
       ok: true,
       data: {
-        liquidsoap: {
-          connected: liquidsoapConnected,
-          telnetPort: parseInt(process.env.LIQUIDSOAP_TELNET_PORT || "1234", 10),
-          harbourPort: parseInt(process.env.LIQUIDSOAP_HARBOUR_PORT || "8000", 10),
-          streamUrl: `http://localhost:${process.env.LIQUIDSOAP_HARBOUR_PORT || "8000"}/radiobloom.mp3`,
+        buncaster: {
+          connected: buncasterConnected,
+          rtmpPort: parseInt(process.env.RTMP_PORT || "1935", 10),
+          httpPort: parseInt(process.env.BUNCASTER_PORT || "4321", 10),
+          streamUrl: `http://localhost:${process.env.BUNCASTER_PORT || "4321"}/stream`,
         },
         config,
       },
@@ -271,7 +271,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     if (!track) return c.json({ ok: false, error: "Track not found" }, 404);
 
     const filepath = `/music/${track.file}`;
-    const ok = await deps.liquidsoapService.playFileNow(filepath);
+    const ok = await deps.buncasterService.playFileNow(filepath);
     if (!ok) return c.json({ ok: false, error: "Failed to play track" }, 500);
     return c.json({ ok: true, data: { action: "play", track } });
   });
@@ -289,11 +289,11 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   });
 
   // ============================================================
-  // STREAM CONTROL (Liquidsoap)
+  // STREAM CONTROL (Buncaster)
   // ============================================================
 
   app.get("/api/stream", async (c) => {
-    const track = await deps.liquidsoapService.getCurrentTrack();
+    const track = await deps.buncasterService.getCurrentTrack();
 
     if (!track) {
       return c.json({ ok: true, data: null });
@@ -307,7 +307,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
   app.post("/api/stream/play", async (c) => {
     try {
-      await deps.liquidsoapService.startPlayback();
+      await deps.buncasterService.startPlayback();
       return c.json({ ok: true, data: { action: "play" } });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);
@@ -316,7 +316,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
   app.post("/api/stream/pause", async (c) => {
     try {
-      await deps.liquidsoapService.pausePlayback();
+      await deps.buncasterService.pausePlayback();
       return c.json({ ok: true, data: { action: "pause" } });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);
@@ -325,9 +325,9 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
   const handleSkip = async (c: any) => {
     try {
-      await deps.liquidsoapService.skipTrack();
+      await deps.buncasterService.skipTrack();
       await new Promise((r) => setTimeout(r, 500));
-      const status = await deps.liquidsoapService.getStreamStatus();
+      const status = await deps.buncasterService.getStreamStatus();
       return c.json({ ok: true, data: { action: "skip", nowPlaying: status } });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);
@@ -339,7 +339,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
   app.post("/api/stream/reload", async (c) => {
     try {
-      await deps.liquidsoapService.reloadPlaylist();
+      await deps.buncasterService.reloadPlaylist();
       return c.json({ ok: true, data: { action: "reload" } });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);
@@ -362,10 +362,10 @@ export function createApiRouter(deps: ApiDependencies): Hono {
             return c.json({ ok: false, error: `Track not found: ${id}` }, 400);
           }
           const filepath = `/music/${track.file}`;
-          const job = await deps.liquidsoapQueueService.add(filepath);
+          const job = await deps.buncasterQueueService.add(filepath);
           results.push({ jobId: job.id!, type: track.type });
         } else if (script) {
-          const job = await deps.liquidsoapQueueService.addTts(script, voice);
+          const job = await deps.buncasterQueueService.addTts(script, voice);
           results.push({ jobId: job.id!, type: "interludio" });
         }
       }
@@ -381,7 +381,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
   app.get("/api/stream/queue", async (c) => {
     try {
-      const { items } = await deps.liquidsoapService.queueList();
+      const { items } = await deps.buncasterService.queueList();
       const clean = items.map(({ file, ...rest }) => {
         // For interludios: only return rid, id, type, script
         if (rest.type === "interludio") {
@@ -411,7 +411,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
   app.delete("/api/stream/queue", async (c) => {
     try {
-      await deps.liquidsoapService.queueClear();
+      await deps.buncasterService.queueClear();
       return c.json({ ok: true, data: { cleared: true } });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);
@@ -421,14 +421,14 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   app.delete("/api/stream/queue/:rid", async (c) => {
     try {
       const rid = c.req.param("rid");
-      const ok = await deps.liquidsoapService.queueRemove(rid);
+      const ok = await deps.buncasterService.queueRemove(rid);
       if (!ok) {
         return c.json(
           { ok: false, error: "RID not found in queue (ya pasó a reproducción o no existe)" },
           404
         );
       }
-      const { items: list } = await deps.liquidsoapService.queueList();
+      const { items: list } = await deps.buncasterService.queueList();
       return c.json({ ok: true, data: { removed: rid, queue: list } });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);
@@ -446,9 +446,9 @@ export function createApiRouter(deps: ApiDependencies): Hono {
       const track = deps.libraryRepo.getTrackById(id);
       if (!track) return c.json({ ok: false, error: "Track no encontrado" }, 404);
 
-      const ok = await deps.liquidsoapService.queueInsert(index, `/music/${track.file}`);
+      const ok = await deps.buncasterService.queueInsert(index, `/music/${track.file}`);
       if (!ok) return c.json({ ok: false, error: "Failed to insert" }, 500);
-      const { items: list } = await deps.liquidsoapService.queueList();
+      const { items: list } = await deps.buncasterService.queueList();
       return c.json({ ok: true, data: { index, track, queue: list } });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);
@@ -717,7 +717,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     deps.playlistRepo.update(playlist.id, { played: true });
 
     if (mode === "ahora") {
-      await deps.liquidsoapService.queueClear().catch(() => {});
+      await deps.buncasterService.queueClear().catch(() => {});
     }
 
     const tracks = [...playlist.tracks];
@@ -732,11 +732,11 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     for (const track of tracks) {
       try {
         if (track.script && !track.file) {
-          const job = await deps.liquidsoapQueueService.addTts(track.script, voice);
+          const job = await deps.buncasterQueueService.addTts(track.script, voice);
           results.push({ pos: track.pos, title: track.title, status: "queued", jobId: job.id! });
         } else if (track.file) {
           const filepath = `/music/${track.file}`;
-          const job = await deps.liquidsoapQueueService.add(filepath);
+          const job = await deps.buncasterQueueService.add(filepath);
           results.push({ pos: track.pos, title: track.title, status: "queued", jobId: job.id! });
         } else {
           results.push({
@@ -855,7 +855,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   createBullBoard({
     queues: [
       new BullMQAdapter(deps.torrentService.getQueue()),
-      new BullMQAdapter(deps.liquidsoapQueueService.getQueue()),
+      new BullMQAdapter(deps.buncasterQueueService.getQueue()),
     ],
     serverAdapter: serverAdapter,
   });

@@ -1,4 +1,7 @@
-import { parseFile } from "music-metadata";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 export interface AudioMetadata {
   duration: number;
@@ -12,26 +15,17 @@ export class AudioMetadataClient {
   public async extractMetadata(filePath: string): Promise<AudioMetadata> {
     const result: AudioMetadata = { duration: 0, artist: "", album: "", title: "", spotifyUrl: "" };
     try {
-      const meta = await parseFile(filePath);
-      result.duration = meta.format.duration ?? 0;
-      result.artist = meta.common.artist ?? "";
-      result.album = meta.common.album ?? "";
-      result.title = meta.common.title ?? "";
-      result.spotifyUrl = this.findSpotifyUrl(meta);
-    } catch (err: any) {
-      console.error(`[AudioMetadataClient] Error reading metadata from ${filePath}:`, err.message);
+      const { stdout } = await execFileAsync("ffprobe", [
+        "-v", "quiet",
+        "-show_entries", "format=duration",
+        "-of", "json",
+        filePath,
+      ], { timeout: 10_000 });
+      const parsed = JSON.parse(stdout);
+      result.duration = Number(parsed?.format?.duration) || 0;
+    } catch {
+      // ffprobe not available or file unreadable — leave duration as 0
     }
     return result;
-  }
-
-  private findSpotifyUrl(meta: any): string {
-    if (!meta.native) return "";
-    for (const [, tags] of Object.entries(meta.native)) {
-      for (const tag of tags as any[]) {
-        const key = tag.id?.toLowerCase();
-        if (key === "woas") return String(tag.value ?? "");
-      }
-    }
-    return "";
   }
 }

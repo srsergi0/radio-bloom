@@ -343,13 +343,6 @@ export class TorrentService {
   }
 
   /**
-   * Get the underlying queue instance (for bull-board)
-   */
-  getQueue() {
-    return this.queue;
-  }
-
-  /**
    * Close connections
    */
   async close(): Promise<void> {

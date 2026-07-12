@@ -61,19 +61,18 @@ function fileToDbKey(filePath: string, baseDir: string, prefix: string): string 
 async function enrichMetadata(
   filePath: string,
   type: "song" | "interludio",
-  client: AudioMetadataClient
+  client: AudioMetadataClient,
+  existingDuration?: number
 ): Promise<{ title: string; artist: string; album: string; duration: number; spotifyUrl: string }> {
   const name = basename(filePath, extname(filePath));
   const stat = statSync(filePath);
-  const meta = await client.extractMetadata(filePath);
 
-  const title = meta.title || name;
-  const artist = meta.artist || "";
-  const album = meta.album || "";
-  const duration = meta.duration || Math.floor(stat.size / ((192 * 1000) / 8));
-  const spotifyUrl = meta.spotifyUrl || "";
+  // If we already have duration from DB, skip ffprobe entirely
+  const duration = existingDuration && existingDuration > 0
+    ? existingDuration
+    : (await client.extractMetadata(filePath)).duration || Math.floor(stat.size / ((192 * 1000) / 8));
 
-  return { title, artist, album, duration, spotifyUrl };
+  return { title: name, artist: "", album: "", duration, spotifyUrl: "" };
 }
 
 async function upsertFiles(
@@ -101,7 +100,8 @@ async function upsertFiles(
       const { title, artist, album, duration, spotifyUrl } = await enrichMetadata(
         filePath,
         type,
-        deps.audioMetadataClient
+        deps.audioMetadataClient,
+        existing?.duration
       );
 
       deps.libraryRepo.upsertTrack({

@@ -1,7 +1,4 @@
 import { join } from "node:path";
-import { createBullBoard } from "@bull-board/api";
-import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
-import { HonoAdapter } from "@bull-board/hono";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
@@ -848,18 +845,6 @@ export function createApiRouter(deps: ApiDependencies): Hono {
     if (!ok) return c.json({ ok: false, error: "Schedule not found" }, 404);
     return c.json({ ok: true, data: { deleted: scheduleId } });
   });
-
-  // Bull-Board Queue Panel
-  const serverAdapter = new HonoAdapter(serveStatic);
-  createBullBoard({
-    queues: [
-      new BullMQAdapter(deps.torrentService.getQueue()),
-      new BullMQAdapter(deps.buncasterQueueService.getQueue()),
-    ],
-    serverAdapter: serverAdapter,
-  });
-  serverAdapter.setBasePath("/admin/queues");
-  (app as any).route("/admin/queues", serverAdapter.registerPlugin());
 
   // ============================================================
   // TORRENTS

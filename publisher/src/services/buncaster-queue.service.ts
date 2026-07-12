@@ -164,10 +164,6 @@ export class BuncasterQueueService {
     return this.queue.getJobCounts("waiting", "active", "completed", "failed");
   }
 
-  getQueue() {
-    return this.queue;
-  }
-
   async close() {
     await this.worker?.close();
     await this.queue.close();

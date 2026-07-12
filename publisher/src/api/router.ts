@@ -5,6 +5,7 @@ import { HonoAdapter } from "@bull-board/hono";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
+import { proxy } from "hono/proxy";
 import type { Track } from "../domain/types";
 import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
@@ -949,56 +950,23 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   const buncasterAuth = "Basic " + Buffer.from(`${deps.buncasterService.getAdminUser()}:${deps.buncasterService.getAdminPass()}`).toString("base64");
 
   app.all("/buncaster-admin/*", async (c) => {
-    const rawReq = c.req.raw;
-    const targetPath = new URL(rawReq.url).pathname.replace("/buncaster-admin", "") || "/";
-    const targetSearch = new URL(rawReq.url).search;
-    const targetUrl = `${buncasterBaseUrl}${targetPath}${targetSearch}`;
-
-    try {
-      const headers: Record<string, string> = { Authorization: buncasterAuth };
-      const contentType = rawReq.headers.get("content-type");
-      if (contentType) headers["content-type"] = contentType;
-
-      const body = rawReq.method !== "GET" && rawReq.method !== "HEAD"
-        ? await rawReq.arrayBuffer()
-        : undefined;
-
-      const resp = await fetch(targetUrl, {
-        method: rawReq.method,
-        headers,
-        body,
-      });
-
-      const respHeaders = new Headers(resp.headers);
-      respHeaders.delete("transfer-encoding");
-
-      return new Response(resp.body, {
-        status: resp.status,
-        headers: respHeaders,
-      });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 502);
-    }
+    const path = c.req.path.replace("/buncaster-admin", "") || "/";
+    const query = new URL(c.req.raw.url).search;
+    return proxy(`${buncasterBaseUrl}${path}${query}`, {
+      ...c.req.raw,
+      headers: {
+        Authorization: buncasterAuth,
+      },
+    });
   });
 
-  // SSE proxy for Buncaster events
   app.all("/buncaster-events", async (c) => {
-    try {
-      const resp = await fetch(`${buncasterBaseUrl}/admin/api/events`, {
-        headers: { Authorization: buncasterAuth },
-      });
-
-      return new Response(resp.body, {
-        status: resp.status,
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          "Access-Control-Allow-Origin": "*",
-        },
-      });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 502);
-    }
+    return proxy(`${buncasterBaseUrl}/admin/api/events`, {
+      ...c.req.raw,
+      headers: {
+        Authorization: buncasterAuth,
+      },
+    });
   });
 
   // ============================================================

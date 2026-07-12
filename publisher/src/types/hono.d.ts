@@ -5,6 +5,7 @@ declare module "hono" {
       formData(): Promise<FormData>;
       param(name: string): string;
       query(name: string): string | undefined;
+      path: string;
       raw: Request;
     };
     json(data: any, status?: number): Response;
@@ -39,4 +40,11 @@ declare module "hono/bun" {
 
 declare module "hono/cors" {
   export function cors(options?: { exposeHeaders?: string[] }): any;
+}
+
+declare module "hono/proxy" {
+  export function proxy(
+    url: string,
+    options?: RequestInit & { raw?: Request }
+  ): Promise<Response>;
 }

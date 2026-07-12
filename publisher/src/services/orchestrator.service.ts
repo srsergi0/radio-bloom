@@ -204,17 +204,9 @@ export class OrchestratorService {
   private async cleanupTempFiles(status: any, queue: any[]): Promise<void> {
     const currentPlayingFile = status.metadata?.filename || status.metadata?.initial_uri || "";
 
-    const queuedFilenames = new Set<string>();
-    const metaResults: Record<string, string>[] = await Promise.all(
-      queue.map((item) =>
-        this.buncasterService
-          .getRequestMetadata(item.rid)
-          .catch((): Record<string, string> => ({}))
-      )
-    );
-    for (const meta of metaResults) {
-      const filename = meta.filename || meta.initial_uri || "";
-      if (filename) queuedFilenames.add(filename);
+    const queuedFiles = new Set<string>();
+    for (const item of queue) {
+      if (item.file) queuedFiles.add(item.file);
     }
 
     for (const tempFile of Array.from(this.tempFiles)) {
@@ -222,7 +214,7 @@ export class OrchestratorService {
       if (!baseFilename) continue;
 
       const isCurrentlyPlaying = currentPlayingFile.includes(baseFilename);
-      const isQueued = Array.from(queuedFilenames).some((fn) => fn.includes(baseFilename));
+      const isQueued = Array.from(queuedFiles).some((fn) => fn.includes(baseFilename));
 
       if (!isCurrentlyPlaying && !isQueued) {
         try {
@@ -346,9 +338,8 @@ export class OrchestratorService {
       // Use the first song in queue (closest to finishing) for time estimation
       const firstQueueItem = queue[0];
       try {
-        const meta = await this.buncasterService.getRequestMetadata(firstQueueItem.rid);
-        const elapsed = parseFloat(meta.elapsed || "0");
-        const duration = parseFloat(meta.duration || "0");
+        const elapsed = firstQueueItem.elapsed || 0;
+        const duration = firstQueueItem.duration || 0;
         if (duration > 0) {
           remainingTimeSec += Math.max(0, duration - elapsed);
         }
@@ -357,8 +348,7 @@ export class OrchestratorService {
       // Add duration of remaining songs in queue (skip the first one, we already counted it)
       for (let i = 1; i < queue.length; i++) {
         try {
-          const meta = await this.buncasterService.getRequestMetadata(queue[i].rid);
-          const dur = parseFloat(meta.duration || "0");
+          const dur = queue[i].duration || 0;
           if (dur > 0) remainingTimeSec += dur;
         } catch {}
       }
@@ -790,338 +780,20 @@ Crea la playlist programada con las canciones del catálogo. Llama a create_prog
     const startIdx = Math.max(0, queue.length - 2);
 
     for (let i = startIdx; i < queue.length; i++) {
-      try {
-        const meta = await this.buncasterService.getRequestMetadata(queue[i].rid);
-        if (meta.title) {
-          songs.push({
-            title: meta.title,
-            artist: meta.artist || "Desconocido",
-          });
-        }
-      } catch {}
+      const item = queue[i];
+      if (item.title) {
+        songs.push({
+          title: item.title,
+          artist: item.artist || "Desconocido",
+        });
+      }
     }
     return songs;
   }
 
   /**
-   * Run the LLM agentic single-turn completion with native tool call loop (legacy Phase 1).
+   * Executes one of the registered project-specific or weather tools.
    */
-  private async runAgentLoop(
-    status: any,
-    queue: any[],
-    _lastSong: Track | null,
-    activeLocutor?: any
-  ): Promise<{ decisions: { selected_song_id: string; dj_script: string }[] } | null> {
-    const apiKey = process.env.OPENROUTER_API_KEY || "";
-    const model = process.env.AI_DJ_OPENROUTER_MODEL || "google/gemini-2.5-flash";
-
-    const djName = activeLocutor ? activeLocutor.name : "DJ Bloom";
-    const personality = activeLocutor
-      ? activeLocutor.personality
-      : process.env.AI_DJ_PERSONALITY ||
-        "Un locutor de radio fresco, enérgico y cercano al público de Radio Bloom. Cuenta curiosidades rápidas y hace comentarios ingeniosos.";
-
-    const allSongs = this.libraryRepo.getAllTracks("song");
-    const candidates = allSongs.filter((song) => !this.recentHistory.includes(song.id));
-    const pool = candidates.length > 0 ? candidates : allSongs;
-    const shuffled = [...pool].sort(() => 0.5 - Math.random());
-    const subset = shuffled.slice(0, 15);
-    const suggestedSongsText = subset
-      .map((s) => `- ID: "${s.id}", Título: "${s.title}", Artista: "${s.artist || "Desconocido"}"`)
-      .join("\n");
-
-    const angles = [
-      "comentar brevemente sobre el artista de la canción seleccionada o su trayectoria",
-      "hacer una reflexión íntima, divertida o ingeniosa sobre el momento del día o la hora actual",
-      "enfocarte en la vibra musical, la instrumentación o la textura sonora de la canción seleccionada",
-      "lanzar un pensamiento filosófico de bolsillo o comentario existencial melómano",
-      "conectar el final de la canción anterior con el inicio de la nueva a través de un puente puramente rítmico o de estado de ánimo",
-    ];
-    const selectedAngle = angles[Math.floor(Math.random() * angles.length)];
-
-    const peruTime = new Date().toLocaleTimeString("es-PE", {
-      timeZone: "America/Lima",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-
-    const systemPrompt = `Eres "${djName}", el legendario, carismático y magnético locutor estrella de la emisora por internet 'Radio Bloom'.
-Tu personalidad al aire es: ${personality}
-
-La hora peruana actual de la emisora es: ${peruTime}. Usa esta hora para adecuar la vibra de tus locuciones (Mañana, Tarde, Noche/Madrugada).
-
-Tu tarea es planificar un bloque continuo de las siguientes 5 canciones que se reproducirán en el stream, decidiendo si hablarás antes de cada una de ellas para hacer locución.
-
-Directrices de Locución Radial para un Flujo Magnético y Carismático:
-1. EVITA los saludos repetitivos. No empieces siempre diciendo "Hola" o "Bienvenidos a Radio Bloom". Entra directo a la idea, al gancho o al puente.
-2. HAZ PUENTES (BRIDGING): Conecta el final de la canción anterior con la vibra, temática o detalles de la que está a punto de empezar.
-3. TONO CARISMÁTICO Y CONVERSACIONAL: Cero gritos, cero hipérboles de "energía de radio comercial". Queremos intimidad, inteligencia, humor sutil and elegancia. Habla como un amigo melómano y sofisticado con el que te tomarías una copa a las 2 de la mañana.
-4. ADAPTA TU VIBRA A LA HORA:
-   - Mañana (06:00 - 12:00): Despertar amable, inteligente, ingenioso pero sin estridencias.
-   - Tarde (12:00 - 20:00): Compañero de sintonía fluido, dinámico y relajado.
-   - Noche/Madrugada (20:00 - 06:00): Cómplice noctámbulo, reflexivo, con voz pausada, cálida e íntima.
-5. ESCRIBE PARA EL OÍDO: Usa frases cortas, preguntas retóricas, expresiones naturales. La puntuación determina cómo lee la voz (comas para pausas breves, puntos suspensivos para expectación).
-6. LIMITACIÓN ESTRICTA DE PALABRAS: Si decides escribir un guión de locución ('dj_script'), este debe tener obligatoriamente entre 30 y 45 palabras. Debe ser conciso, memorable y sugerente. No incluyes acotaciones musicales ni hashtags.
-7. FRECUENCIA DE LOCUCIÓN: No es necesario locutar antes de todas las canciones. Se recomienda locutar sólo en 1 o 2 de las 5 canciones de la cola (deja 'dj_script' vacío en las demás).
-9. ENTREGAR RESULTADOS: Para entregar tu planificación final de 5 canciones, DEBES llamar obligatoriamente a la herramienta 'submit_decisions' con tus 5 decisiones estructuradas. No te limites a escribir el JSON en texto, utiliza la herramienta.`;
-
-    const currentTrackText = status.title
-      ? `"${status.title}" de ${status.artist || "Desconocido"}`
-      : "Ninguna (silencio o transmisión en vivo)";
-    const queuedTracksText =
-      queue.length > 0 ? queue.map((q: any) => `"${q.title}"`).join(", ") : "Ninguna";
-
-    const userPrompt = `INFORMACIÓN DEL ENTORNO:
-- Hora local de la emisora (Perú): ${peruTime}
-- Canción sonando actualmente: ${currentTrackText}
-- Canciones en cola: ${queuedTracksText}
-
-CANCIONES SUGERIDAS (puedes elegir uno de sus IDs directamente o usar la herramienta search_library para buscar otros):
-${suggestedSongsText}
-
-ÁNGULO CREATIVO PARA ESTA LOCUCIÓN (Obligatorio enfocarse en esto para no ser repetitivo en las locuciones que decidas escribir):
-*En tus intervenciones debes: ${selectedAngle}*
-
-Instrucción: Planifica el bloque de 5 canciones. Devuelve el resultado en el formato estructurado JSON.`;
-
-    const messages: any[] = [
-      { role: "system", content: systemPrompt },
-      ...this.dialogueHistory,
-      { role: "user", content: userPrompt },
-    ];
-
-    const tools = [
-      {
-        type: "function",
-        function: {
-          name: "search_library",
-          description:
-            "Busca canciones en la biblioteca de la radio por texto (título, artista o álbum). Devuelve coincidencias con sus IDs.",
-          parameters: {
-            type: "object",
-            properties: {
-              query: {
-                type: "string",
-                description: "Término de búsqueda textual (ej. 'Rick Astley').",
-              },
-            },
-            required: ["query"],
-            additionalProperties: false,
-          },
-        },
-      },
-      {
-        type: "function",
-        function: {
-          name: "get_library_stats",
-          description:
-            "Obtiene estadísticas generales sobre la biblioteca local (total de canciones y de interludios cargados).",
-          parameters: {
-            type: "object",
-            properties: {},
-            additionalProperties: false,
-          },
-        },
-      },
-      {
-        type: "function",
-        function: {
-          name: "get_stream_status",
-          description:
-            "Consulta qué canción está sonando actualmente y qué temas están ya en la cola de Buncaster.",
-          parameters: {
-            type: "object",
-            properties: {},
-            additionalProperties: false,
-          },
-        },
-      },
-      {
-        type: "function",
-        function: {
-          name: "get_library_songs",
-          description:
-            "Obtiene una lista paginada de las canciones disponibles en la biblioteca de la radio (título, artista e ID). Úsala para conocer el catálogo musical antes de decidir.",
-          parameters: {
-            type: "object",
-            properties: {
-              limit: {
-                type: "integer",
-                description: "Cantidad de canciones a retornar (por defecto 50, máx 100).",
-              },
-              offset: {
-                type: "integer",
-                description: "Desplazamiento para paginación (por defecto 0).",
-              },
-            },
-            additionalProperties: false,
-          },
-        },
-      },
-      {
-        type: "function",
-        function: {
-          name: "submit_decisions",
-          description:
-            "Envía la lista final con las 5 programaciones de canciones y sus guiones de locución (exactamente 5 elementos). Llama a esta herramienta obligatoriamente como tu último paso para finalizar la planificación.",
-          parameters: {
-            type: "object",
-            properties: {
-              decisions: {
-                type: "array",
-                description:
-                  "Lista ordenada de exactamente 5 programaciones consecutivas para el stream.",
-                items: {
-                  type: "object",
-                  properties: {
-                    selected_song_id: {
-                      type: "string",
-                      description: "El ID real de la canción elegida de la biblioteca de música.",
-                    },
-                    dj_script: {
-                      type: "string",
-                      description:
-                        "El guión completo en español para la locución radial del DJ (30-45 palabras), o string vacío si no toca locutar antes de esta canción.",
-                    },
-                  },
-                  required: ["selected_song_id", "dj_script"],
-                  additionalProperties: false,
-                },
-              },
-            },
-            required: ["decisions"],
-            additionalProperties: false,
-          },
-        },
-      },
-    ];
-
-    const responseFormat = {
-      type: "json_schema",
-      json_schema: {
-        name: "dj_batch_decision",
-        strict: true,
-        schema: {
-          type: "object",
-          properties: {
-            decisions: {
-              type: "array",
-              description:
-                "Lista ordenada de exactamente 5 programaciones consecutivas para el stream.",
-              items: {
-                type: "object",
-                properties: {
-                  selected_song_id: {
-                    type: "string",
-                    description: "El ID real de la canción elegida de la biblioteca de música.",
-                  },
-                  dj_script: {
-                    type: "string",
-                    description:
-                      "El guión completo en español para la locución radial del DJ (30-45 palabras), o string vacío si no toca locutar antes de esta canción.",
-                  },
-                },
-                required: ["selected_song_id", "dj_script"],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ["decisions"],
-          additionalProperties: false,
-        },
-      },
-    };
-
-    let finalDecisions: any[] | null = null;
-
-    // Loop for tool calls (max 6 turns to avoid early cutoffs)
-    for (let turn = 0; turn < 6; turn++) {
-      try {
-        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          signal: AbortSignal.timeout(60000),
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/srsergi0/radio-bloom",
-            "X-Title": "Radio Bloom",
-          },
-          body: JSON.stringify({
-            model,
-            messages,
-            temperature: 0.7,
-            tools,
-            response_format: responseFormat,
-          }),
-        });
-
-        if (!res.ok) {
-          throw new Error(`OpenRouter returned status ${res.status}: ${await res.text()}`);
-        }
-
-        const data = (await res.json()) as any;
-        const message = data.choices?.[0]?.message;
-        if (!message) return null;
-
-        // If assistant wants to call tools natively
-        if (message.tool_calls && message.tool_calls.length > 0) {
-          messages.push(message);
-
-          for (const call of message.tool_calls) {
-            const name = call.function.name;
-            const args = JSON.parse(call.function.arguments || "{}");
-            console.log(`[OrchestratorService] Native agent tool call: ${name} with args:`, args);
-
-            let toolResult = "";
-            if (name === "submit_decisions") {
-              finalDecisions = args.decisions || [];
-              toolResult = JSON.stringify({ ok: true });
-            } else {
-              toolResult = await this.executeTool(name, args);
-            }
-
-            messages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              name,
-              content: toolResult,
-            });
-          }
-
-          if (finalDecisions) {
-            return { decisions: finalDecisions };
-          }
-          continue; // Execute next turn
-        }
-
-        // If assistant returns final structured JSON response
-        if (message.content) {
-          const content = message.content.trim();
-          console.log("[OrchestratorService] Native agent final response:", content);
-
-          let jsonText = content;
-          const firstBrace = content.indexOf("{");
-          const lastBrace = content.lastIndexOf("}");
-          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-            jsonText = content.slice(firstBrace, lastBrace + 1);
-          }
-
-          const parsed = JSON.parse(jsonText);
-          return {
-            decisions: parsed.decisions || [],
-          };
-        }
-
-        throw new Error("El modelo retornó una respuesta vacía sin llamadas a herramientas.");
-      } catch (err: any) {
-        console.error(`[OrchestratorService] Error in native agent turn ${turn}:`, err.message);
-        break;
-      }
-    }
-
-    return null;
-  }
-
   /**
    * Executes one of the registered project-specific or weather tools.
    */

@@ -200,9 +200,6 @@ const mockLocutorService = {
   listSchedules: mock(() => []),
 };
 
-const mockMcpService = {
-  handleHttpRequest: mock(() => Promise.resolve(new Response("MCP transport not initialized", { status: 503 }))),
-};
 const mockTorrentService = {
   listTorrents: mock(() => []),
   addTorrentUrl: mock(() => Promise.resolve({ id: "t1" })),
@@ -226,7 +223,6 @@ const app = createApiRouter({
   liquidsoapQueueService: mockLiquidsoapQueueService as any,
   playlistRepo: mockPlaylistRepo as any,
   locutorService: mockLocutorService as any,
-  mcpService: mockMcpService as any,
   torrentService: mockTorrentService as any,
   musicDir: TEMP_DIR,
   distDir: TEMP_DIR,
@@ -870,15 +866,5 @@ describe("POST /api/playlists/:id/play with BullMQ", () => {
     expect(json.data.failed).toBe(0);
     expect(json.data.results[0].error).toBe("no file or script");
     expect(json.data.results[1].error).toBe("no file or script");
-  });
-});
-
-// ============================================================
-// MCP
-// ============================================================
-describe("MCP endpoint", () => {
-  test("ALL /mcp - no transport", async () => {
-    const res = await req("POST", "/mcp");
-    expect(res.status).toBe(503);
   });
 });

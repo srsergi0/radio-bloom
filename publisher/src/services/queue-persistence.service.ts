@@ -66,17 +66,8 @@ export class QueuePersistenceService {
           }
 
           await new Promise((r) => setTimeout(r, 500));
-          await this.buncasterService.sendCommand("queue.skip");
+          await this.buncasterService.skipTrack();
           await new Promise((r) => setTimeout(r, 800));
-
-          const currentRid = await this.buncasterService.getCurrentRequestId();
-          if (currentRid) {
-            const seekPos = Math.max(0, currentElapsed);
-            const ok = await this.buncasterService.requestSeek(currentRid, seekPos);
-            console.log(
-              `[QueuePersistence] Seek to ${Math.round(seekPos)}s: ${ok ? "OK" : "failed, playing from start"}`
-            );
-          }
           return;
         }
         await new Promise((r) => setTimeout(r, RESTORE_RETRY_INTERVAL));
@@ -100,22 +91,17 @@ export class QueuePersistenceService {
         this.libraryService.updateLastPlayedByFile(file);
       }
 
-      const queueLines = await this.buncasterService.sendCommand("queue.queue").catch(() => []);
-      const rids = queueLines.length > 0 ? queueLines[0].split(/\s+/).filter(Boolean) : [];
-
+      const { items } = await this.buncasterService.queueList();
       const queueFiles: string[] = [file];
-      if (rids.length > 0) {
-        const { items } = await this.buncasterService.queueList();
-        for (const item of items.slice(1)) {
-          if (item.file && !item.file.includes("interludios/")) {
-            queueFiles.push(item.file);
-          }
+      for (const item of items.slice(1)) {
+        if (item.file && !item.file.includes("interludios/")) {
+          queueFiles.push(item.file);
         }
       }
 
       let h = 5381;
-      for (const rid of rids) {
-        for (let i = 0; i < rid.length; i++) h = ((h << 5) + h + rid.charCodeAt(i)) | 0;
+      for (const f of queueFiles) {
+        for (let i = 0; i < f.length; i++) h = ((h << 5) + h + f.charCodeAt(i)) | 0;
       }
       const hash = (h >>> 0).toString(36);
 

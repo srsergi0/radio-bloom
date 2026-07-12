@@ -13,7 +13,6 @@ import type { LibraryService } from "../services/library.service";
 import type { BuncasterService } from "../services/buncaster.service";
 import type { BuncasterQueueService } from "../services/buncaster-queue.service";
 import type { LocutorService } from "../services/locutor.service";
-import type { McpService } from "../services/mcp.service";
 import type { TorrentService } from "../services/torrent.service";
 import type { TtsService } from "../services/tts.service";
 
@@ -117,7 +116,6 @@ export interface ApiDependencies {
   buncasterQueueService: BuncasterQueueService;
   playlistRepo: PlaylistRepository;
   locutorService: LocutorService;
-  mcpService: McpService;
   torrentService: TorrentService;
   musicDir: string;
   distDir: string;
@@ -130,7 +128,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   app.use(
     "*",
     cors({
-      exposeHeaders: ["mcp-session-id", "mcp-protocol-version"],
+      exposeHeaders: [],
     })
   );
 
@@ -941,23 +939,6 @@ export function createApiRouter(deps: ApiDependencies): Hono {
         uptime: process.uptime(),
       },
     });
-  });
-
-  // ============================================================
-  // MCP (Model Context Protocol) over HTTP
-  // ============================================================
-
-  app.all("/mcp", async (c) => {
-    try {
-      const response = await deps.mcpService.handleHttpRequest(c.req.raw);
-      return c.newResponse(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      });
-    } catch (err: any) {
-      return c.json({ error: err.message }, 500);
-    }
   });
 
   // ============================================================

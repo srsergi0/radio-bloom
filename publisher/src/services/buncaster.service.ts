@@ -56,6 +56,22 @@ export class BuncasterService {
     return this.buncasterClient.isConnected();
   }
 
+  public getHost(): string {
+    return this.buncasterClient.getHost();
+  }
+
+  public getPort(): number {
+    return this.buncasterClient.getPort();
+  }
+
+  public getAdminUser(): string {
+    return this.buncasterClient.getAdminUser();
+  }
+
+  public getAdminPass(): string {
+    return this.buncasterClient.getAdminPass();
+  }
+
   // ── Playback Controls ───────────────────────────────────
 
   public async skipTrack(): Promise<void> {

@@ -76,6 +76,22 @@ export class BuncasterClient {
     return this.connected;
   }
 
+  public getHost(): string {
+    return this.host;
+  }
+
+  public getPort(): number {
+    return this.port;
+  }
+
+  public getAdminUser(): string {
+    return this.adminUser;
+  }
+
+  public getAdminPass(): string {
+    return this.adminPassword;
+  }
+
   private async request<T>(
     path: string,
     options: RequestInit = {}

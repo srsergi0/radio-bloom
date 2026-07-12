@@ -28,6 +28,7 @@ const BUNCASTER_HOST = process.env.BUNCASTER_HOST || "buncaster";
 const BUNCASTER_PORT = parseInt(process.env.BUNCASTER_PORT || "4321", 10);
 const BUNCASTER_ADMIN_USER = process.env.BUNCASTER_ADMIN_USER || "admin";
 const BUNCASTER_ADMIN_PASSWORD = process.env.BUNCASTER_ADMIN_PASSWORD || "radiobloom";
+const STREAM_URL = `http://${BUNCASTER_HOST}:${BUNCASTER_PORT}/stream`;
 
 const DIST_DIR =
   process.env.NODE_ENV === "production"
@@ -134,17 +135,136 @@ const apiRouter = createApiRouter({
 });
 
 // ============================================================
-// 5. HTTP Server (Bun.serve)
+// 5. Stream Broadcaster (proxy from Buncaster)
+// ============================================================
+const SILENT_MP3_FRAME = new Uint8Array([
+  0xff, 0xfb, 0xe0, 0x64, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  ...new Array(1024).fill(0),
+  0x00, 0x00, 0x00, 0x00,
+]);
+
+class StreamBroadcaster {
+  private buffer: Uint8Array[] = [];
+  private maxBufferBytes = 1.5 * 1024 * 1024;
+  private bufferBytes = 0;
+  private clients: Set<ReadableStreamDefaultController> = new Set();
+  private isStreaming = false;
+  private static readonly MAX_CLIENTS = 500;
+
+  constructor() {
+    this.startStreaming();
+  }
+
+  private async startStreaming() {
+    if (this.isStreaming) return;
+    this.isStreaming = true;
+
+    while (true) {
+      try {
+        console.log(`[Broadcaster] Connecting to Buncaster upstream at ${STREAM_URL}...`);
+        const auth = "Basic " + Buffer.from(`${BUNCASTER_ADMIN_USER}:${BUNCASTER_ADMIN_PASSWORD}`).toString("base64");
+        const res = await fetch(STREAM_URL, { headers: { Authorization: auth } });
+        if (!res.ok || !res.body) {
+          throw new Error(`Upstream returned status ${res.status}`);
+        }
+
+        const reader = res.body.getReader();
+        console.log("[Broadcaster] Connected to upstream successfully.");
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            console.log("[Broadcaster] Upstream connection closed. Reconnecting...");
+            break;
+          }
+          this.pushData(value);
+        }
+      } catch (err: any) {
+        console.error("[Broadcaster] Upstream connection failed:", err.message);
+        let silenceMs = 0;
+        while (silenceMs < 30000 && this.clients.size > 0) {
+          this.pushData(SILENT_MP3_FRAME);
+          await new Promise((r) => setTimeout(r, 26));
+          silenceMs += 26;
+        }
+      }
+
+      this.buffer = [];
+      this.bufferBytes = 0;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+
+  private pushData(value: Uint8Array) {
+    this.buffer.push(value);
+    this.bufferBytes += value.length;
+    while (this.bufferBytes > this.maxBufferBytes) {
+      const removed = this.buffer.shift();
+      if (removed) this.bufferBytes -= removed.length;
+    }
+    for (const client of this.clients) {
+      try { client.enqueue(value); } catch { this.clients.delete(client); }
+    }
+  }
+
+  public registerClient(controller: ReadableStreamDefaultController) {
+    if (this.clients.size >= StreamBroadcaster.MAX_CLIENTS) {
+      try { controller.close(); } catch {}
+      return;
+    }
+    for (const chunk of this.buffer) {
+      try { controller.enqueue(chunk); } catch { return; }
+    }
+    this.clients.add(controller);
+  }
+
+  public unregisterClient(controller: ReadableStreamDefaultController) {
+    this.clients.delete(controller);
+  }
+}
+
+const broadcaster = new StreamBroadcaster();
+
+// ============================================================
+// 6. HTTP Server (Bun.serve)
 // ============================================================
 const _server = Bun.serve({
   port: PORT,
   idleTimeout: 255,
   async fetch(req) {
+    const url = new URL(req.url);
+
+    if (url.pathname === "/radiobloom.mp3") {
+      let clientController: ReadableStreamDefaultController | null = null;
+      const stream = new ReadableStream({
+        start(controller) {
+          clientController = controller;
+          broadcaster.registerClient(controller);
+        },
+        cancel() {
+          if (clientController) broadcaster.unregisterClient(clientController);
+        },
+      });
+
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+          "Content-Encoding": "identity",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+
     return apiRouter.fetch(req);
   },
 });
 
-console.log(`[server] Radio Bloom API on port ${PORT}`);
+console.log(`[server] Radio Bloom API + Stream on port ${PORT}`);
+console.log(`[server] Stream: http://localhost:${PORT}/radiobloom.mp3`);
 console.log(`[server] API:    http://localhost:${PORT}/api/`);
 console.log(`[server] Queues: http://localhost:${PORT}/admin/queues`);
 console.log(`[server] Radio Bloom Composition Root ready`);

@@ -80,16 +80,21 @@ async function upsertFiles(
   files: string[],
   baseDir: string,
   type: "song" | "interludio",
-  deps: LibraryDeps
+  deps: LibraryDeps,
+  existingTracksMap?: Map<string, Track>
 ): Promise<void> {
   const prefix = type === "song" ? "songs" : "interludios";
-  const existingTracks = deps.libraryRepo.getAllTracks(type);
+  // Use pre-loaded map if available, otherwise fetch once
+  const existingTracks = existingTracksMap || (() => {
+    const tracks = deps.libraryRepo.getAllTracks(type);
+    return new Map(tracks.map((t) => [t.file, t]));
+  })();
 
   for (const filePath of files) {
     try {
       const stat = statSync(filePath);
       const key = fileToDbKey(filePath, baseDir, prefix);
-      const existing = existingTracks.find((t) => t.file === key);
+      const existing = existingTracks.get(key);
 
       if (existing?.mtime && stat.mtime.toISOString() === existing.mtime) continue;
 
@@ -142,10 +147,15 @@ async function doScan(deps: LibraryDeps): Promise<void> {
 
   const songFiles = getAllAudioFiles(songsDir);
 
-  await upsertFiles(songFiles, songsDir, "song", deps);
+  // Load tracks once, reuse for upsert and orphan detection
+  const existingTracks = new Map(
+    deps.libraryRepo.getAllTracks("song").map((t) => [t.file, t])
+  );
+
+  await upsertFiles(songFiles, songsDir, "song", deps, existingTracks);
 
   removeOrphanedTracks(
-    deps.libraryRepo.getAllTracks("song"),
+    Array.from(existingTracks.values()),
     buildPhysicalKeys(songFiles, songsDir, "songs"),
     deps.libraryRepo
   );

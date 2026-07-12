@@ -34,6 +34,7 @@ function extractTitleArtist(filename: string): { title: string; artist: string }
 export class BuncasterService {
   private lastManualQueueClear = 0;
   private static readonly MANUAL_CLEAR_COOLDOWN_MS = 120_000;
+  private static readonly SCRIPT_CACHE_MAX = 200;
   private queueService: BuncasterQueueService | null = null;
   // Cache for TTS interludios scripts (Buncaster doesn't store scripts)
   private readonly indexToScript = new Map<number, string>();
@@ -209,6 +210,12 @@ export class BuncasterService {
     // Get queue from Buncaster
     try {
       const queue = await this.buncasterClient.getQueue();
+
+      // Periodically sync caches to prevent memory leak (every ~30s)
+      if (Math.random() < 0.05) {
+        this.syncScriptCaches();
+      }
+
       const items = queue.map((item) => {
         const dbFile = toDbPath(item.file);
         const isInterludio = dbFile.startsWith("interludios/");
@@ -307,10 +314,46 @@ export class BuncasterService {
     try {
       await this.buncasterClient.clearQueue();
       this.indexToScript.clear();
+      this.fileToScript.clear();
       if (manual) {
         this.lastManualQueueClear = Date.now();
       }
       console.log("[BuncasterService] Queue cleared");
+    } catch {}
+  }
+
+  /**
+   * Sync script caches with current queue state.
+   * Removes entries for tracks that are no longer in the queue.
+   */
+  private async syncScriptCaches(): Promise<void> {
+    try {
+      const queue = await this.buncasterClient.getQueue();
+      const activeFiles = new Set(queue.map((item) => item.file));
+      const activeIndices = new Set(queue.map((item) => item.index));
+
+      // Clean fileToScript: remove entries for files not in queue
+      for (const [file] of this.fileToScript) {
+        if (!activeFiles.has(file)) {
+          this.fileToScript.delete(file);
+        }
+      }
+
+      // Clean indexToScript: remove entries for indices not in queue
+      for (const [index] of this.indexToScript) {
+        if (!activeIndices.has(index)) {
+          this.indexToScript.delete(index);
+        }
+      }
+
+      // Enforce max cache size (FIFO eviction)
+      if (this.fileToScript.size > BuncasterService.SCRIPT_CACHE_MAX) {
+        const entries = Array.from(this.fileToScript.entries());
+        const toRemove = entries.slice(0, entries.length - BuncasterService.SCRIPT_CACHE_MAX);
+        for (const [file] of toRemove) {
+          this.fileToScript.delete(file);
+        }
+      }
     } catch {}
   }
 

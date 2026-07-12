@@ -18,6 +18,7 @@ El sistema está compuesto por 4 microservicios principales que se ejecutan en c
      - **Base de datos**: SQLite (gestionado con Drizzle ORM) para almacenar biblioteca de canciones, playlists, configuración y estado de reproducción.
      - **Hacia `buncaster`**: Se comunica vía **HTTP REST API** (puerto `4321`) para saltar canciones, encolar, y obtener metadatos activos. Autenticación Basic Auth.
      - **Hacia `music/songs/` e `interludios/`**: Vigila cambios en tiempo real con `fs.watch`. Cuando se añade un archivo, extrae metadatos con `music-metadata` y los enriquece con Spotify si es posible. Cuando se elimina o renombra, actualiza la base de datos automáticamente.
+   - **Stream**: Los clientes se conectan directamente a Buncaster en `http://buncaster:4321/stream`.
 
 3. **`ftp` (Servidor de Carga de Canciones)**:
    - **Puerto**: `21` (FTP) + `30000-30100` (pasivo).
@@ -47,7 +48,7 @@ radio/
 ├── opencode.json                         # Configuración OpenCode (MCP local/remoto)
 │
 ├── packages/                             # Paquetes del monorepo (publicables independientemente)
-│   └── mcp-lite/                         # mcp-lite — MCP server extraído del SDK v1.29.0
+│   └── mcp-lite/                         # mcp-lite — MCP server extraído del SDK v1.29.0 (OBSOLETO — ya no se usa)
 │       ├── package.json                  # Deps: zod, zod-to-json-schema, content-type, cross-spawn
 │       ├── README.md                     # Quick start y API reference
 │       ├── FEATURES.md                   # Características completas y limitaciones conocidas
@@ -111,9 +112,8 @@ radio/
 │   │   ├── api.test.ts                   # Tests de endpoints de la API
 │   │   └── integration.test.ts
 │   └── src/
-│       ├── index.ts                      # Servidor principal (Bun.serve, DI, StreamBroadcaster)
+│       ├── index.ts                      # Servidor principal (Bun.serve, DI)
 │       ├── env.ts                        # Valores por defecto de variables de entorno
-│       ├── mcp-entry.ts                  # Integración del protocolo MCP para agentes IA (modo stdio)
 │       │
 │       ├── api/
 │       │   └── router.ts                 # Rutas REST (Hono): biblioteca, cola, playlists, subida de archivos
@@ -140,7 +140,6 @@ radio/
 │       │   ├── library.service.ts        # Escaneo + watcher de archivos + enriquecimiento Spotify
 │       │   ├── buncaster.service.ts      # Integración con Buncaster (queue, skip, play via REST API)
 │       │   ├── buncaster-queue.service.ts # Cola BullMQ para procesamiento async de TTS y encolamiento
-│       │   ├── mcp.service.ts            # Herramientas MCP (15+ tools)
 │       │   ├── torrent.service.ts        # Búsqueda PirateBay (apibay) + Cola de descargas BullMQ con aria2c
 │       │   ├── orchestrator.service.ts   # AI DJ & Programación automática (OpenRouter + Edge-TTS)
 │       │   ├── locutor.service.ts        # Lógica de guardarraíl de solapamiento y locutor activo
@@ -281,33 +280,19 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 
 ### Herramientas MCP
 
-| Herramienta | Descripción |
-|-------------|-------------|
-| `radio_status` | Estado actual del stream y cola |
-| `radio_search` | Buscar en biblioteca local |
-| `radio_spotify_search` | Buscar en Spotify API |
-| `radio_queue_list` | Listar cola de reproducción |
-| `radio_queue_add` | Añadir track a cola por ID de biblioteca |
-| `radio_queue_insert` | Insertar track en posición por ID |
-| `radio_queue_remove` | Eliminar track de cola por posición |
-| `radio_queue_clear` | Vaciar cola |
-| `radio_play_now` | Reproducir track por ID inmediatamente |
-| `radio_skip` | Saltar canción actual |
-| `radio_library_stats` | Estadísticas de biblioteca |
-| `radio_list_songs` | Listar canciones paginado |
-| `radio_list_interludios` | Listar interludios paginado |
-| `radio_playlist_create` | Crear playlist |
-| `radio_playlist_list` | Listar playlists |
-| `radio_playlist_get` | Obtener playlist |
-| `radio_playlist_add_track` | Añadir track a playlist |
-| `radio_playlist_play` | Reproducir playlist |
-| `torrent_search` | Buscar torrents de música en PirateBay |
-| `torrent_queue_download` | Agregar descarga de torrent a la cola mediante magnet link |
-| `torrent_check_status` | Verificar el estado de un trabajo de descarga de la cola |
-| `torrent_queue_status` | Obtener estadísticas generales de la cola de descargas |
-| `torrent_list_queue` | Listar descargas recientes en la cola |
-| `torrent_cancel` | Cancelar una descarga en la cola (si aún no se ha procesado) |
-| `torrent_job_logs` | Obtener logs de salida en tiempo real de aria2c para un trabajo específico |
+> **Nota**: El MCP server ahora lo proporciona directamente Buncaster en `http://buncaster:4321/mcp`. El publisher ya no implementa MCP.
+
+Buncaster incluye las siguientes tools MCP:
+- `get_status` — Estado del stream, cola, y metadata actual
+- `get_queue` — Listar cola de reproducción
+- `push_to_queue` — Añadir archivo o URL a la cola
+- `remove_from_queue` — Eliminar elemento por índice
+- `clear_queue` — Vaciar cola
+- `move_in_queue` — Reordenar elemento
+- `skip_track` — Saltar canción actual
+- `shuffle_playlist` — Aleatorizar directorio de música
+- `list_files` — Listar archivos de audio disponibles
+- `toggle_fallback` — Pausar/reanudar música de fondo
 
 ---
 

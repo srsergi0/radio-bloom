@@ -16,15 +16,13 @@ RUN apk add --no-cache aria2
 
 WORKDIR /app
 
-# Copiar estructura del monorepo para resolver workspaces (mcp-lite, web)
+# Copiar estructura del monorepo para resolver workspaces
 COPY package.json ./
-COPY packages/mcp-lite/package.json packages/mcp-lite/
 COPY web/package.json web/
 COPY publisher/package.json publisher/bun.lock* ./publisher/
 
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --production 2>&1
 
-COPY packages/mcp-lite/ packages/mcp-lite/
 COPY publisher/ publisher/
 
 WORKDIR /app/publisher

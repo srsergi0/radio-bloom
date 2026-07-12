@@ -29,28 +29,33 @@ bun run db:migrate
 
 ```
 src/
-├── index.ts                 # Bun.serve, DI, StreamBroadcaster
+├── index.ts                 # Bun.serve, DI composition root
 ├── env.ts                   # Env var defaults
-├── mcp-entry.ts             # MCP stdio mode
 ├── api/router.ts            # REST endpoints (Hono)
 ├── domain/types.ts          # Shared TypeScript types
 ├── infrastructure/          # External clients
 │   ├── database.ts          # Drizzle + SQLite init
 │   ├── audio-metadata.client.ts  # music-metadata extraction
 │   ├── spotify.client.ts    # Spotify Web API
-│   └── telnet.client.ts     # Telnet → liquidsoap
+│   └── buncaster.client.ts  # HTTP REST client → Buncaster API
 ├── repositories/sqlite/     # Data access layer
 │   ├── schema.ts            # Drizzle schema
 │   ├── config.repo.ts
 │   ├── library.repo.ts
+│   ├── locutor.repo.ts
 │   ├── playback-state.repo.ts
 │   └── playlist.repo.ts
 └── services/                # Business logic
     ├── config.service.ts
     ├── library.service.ts   # File scanner + file watcher
-    ├── liquidsoap.service.ts
-    ├── mcp.service.ts
-    └── metadata-enrichment.service.ts
+    ├── buncaster.service.ts # Buncaster queue, skip, play via REST
+    ├── buncaster-queue.service.ts # BullMQ async queue for TTS
+    ├── orchestrator.service.ts    # AI DJ (OpenRouter + Edge-TTS)
+    ├── locutor.service.ts   # Locutor overlap guard + active locutor
+    ├── queue-persistence.service.ts # Persist/restore queue across restarts
+    ├── torrent.service.ts   # PirateBay search + aria2c downloads
+    ├── tts.service.ts       # TTS synthesis endpoint
+    └── metadata-enrichment.service.ts # Spotify enrichment
 ```
 
 ## Code Conventions
@@ -78,4 +83,6 @@ Tests live in `test/` — unit tests for API and services, integration tests for
 - **Hono** — HTTP framework
 - **Drizzle ORM** — SQLite database layer
 - **music-metadata** — Audio tag extraction (pure JS, no ffmpeg)
+- **BullMQ** — Async job queue (TTS, torrents)
+- **edge-tts-universal** — Text-to-speech synthesis
 - **Biome** — Formatting & linting

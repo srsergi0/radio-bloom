@@ -393,33 +393,7 @@ export class BuncasterService {
   }
 
   public async requestSeek(_rid: string, _position: number): Promise<boolean> {
-    // Buncaster doesn't support seek via API
     return false;
-  }
-
-  // ── Compatibility methods ────────────────────────────────
-  // These maintain the same interface as the old LiquidsoapService
-
-  public async clearAndPush(filepath: string): Promise<string | null> {
-    await this.queueClear();
-    await new Promise((r) => setTimeout(r, 200));
-    return this.queuePush(filepath);
-  }
-
-  public async sendCommand(_cmd: string, _timeoutMs?: number): Promise<string[]> {
-    // No telnet commands in Buncaster - this is a compatibility stub
-    console.warn("[BuncasterService] sendCommand called but Buncaster uses REST API");
-    return [];
-  }
-
-  public async getCurrentRequestId(): Promise<string | null> {
-    try {
-      const queue = await this.buncasterClient.getQueue();
-      // Return the first item (currently playing)
-      return queue.length > 0 ? String(queue[0].index) : null;
-    } catch {
-      return null;
-    }
   }
 
   public async getCurrentTrack(): Promise<{
@@ -477,10 +451,5 @@ export class BuncasterService {
     } catch {
       return null;
     }
-  }
-
-  public async getRequestMetadata(_rid: string): Promise<Record<string, string>> {
-    // Buncaster doesn't expose per-request metadata via API
-    return {};
   }
 }

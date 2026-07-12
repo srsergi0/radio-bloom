@@ -5,9 +5,7 @@ export interface BuncasterCurrentTrack {
   title: string;
   artist: string;
   duration: number;
-  elapsed: number;
-  isFallback: boolean;
-  isLive: boolean;
+  startedAt: number;
 }
 
 export interface BuncasterQueueItem {
@@ -21,8 +19,8 @@ export interface BuncasterStatus {
   broadcasting: boolean;
   listeners: number;
   currentTrack: BuncasterCurrentTrack | null;
-  uptime: number;
-  fallbackEnabled: boolean;
+  uptimeSeconds: number;
+  fallbackActive: boolean;
 }
 
 export class BuncasterClient {
@@ -137,10 +135,10 @@ export class BuncasterClient {
 
   public async getCurrentTrack(): Promise<BuncasterCurrentTrack | null> {
     try {
-      const data = await this.request<{ current: BuncasterCurrentTrack | null }>(
+      const data = await this.request<{ currentTrack: BuncasterCurrentTrack | null }>(
         "/admin/api/current"
       );
-      return data.current;
+      return data.currentTrack;
     } catch {
       return null;
     }
@@ -150,10 +148,11 @@ export class BuncasterClient {
 
   public async getQueue(): Promise<BuncasterQueueItem[]> {
     try {
-      const data = await this.request<{ queue: BuncasterQueueItem[] }>(
+      const data = await this.request<{ queue: string[] }>(
         "/admin/api/queue"
       );
-      return data.queue || [];
+      const raw = data.queue || [];
+      return raw.map((file, index) => ({ index, file, title: "", artist: "" }));
     } catch {
       return [];
     }

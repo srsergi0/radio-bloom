@@ -176,21 +176,19 @@ export class OrchestratorService {
         this.libraryService.updateLastPlayedByFile(currentFile);
       }
 
-      // 1. Clean up generated TTS files that already played
-      await this.cleanupTempFiles(status, queue);
-
-      // Re-fetch queue (queueInsert clears and rebuilds, making queue stale)
-      const { items: refreshedQueue } = await this.buncasterService.queueList();
-
-      // 2. Queue new tracks if queue is dropping below 5 elements
+      // 1. Queue new tracks if queue is dropping below 5 elements
       //    but never exceed 20 items to prevent unbounded growth
       //    Also skip if user recently cleared the queue manually
-      if (refreshedQueue.length < 5 && refreshedQueue.length < 20 && !this.buncasterService.isManualClearActive()) {
+      if (queue.length < 5 && queue.length < 20 && !this.buncasterService.isManualClearActive()) {
         console.log(
-          `[OrchestratorService] Queue is low (${refreshedQueue.length} items). Enqueuing next tracks...`
+          `[OrchestratorService] Queue is low (${queue.length} items). Enqueuing next tracks...`
         );
-        await this.enqueueNext(status, refreshedQueue);
+        await this.enqueueNext(status, queue);
       }
+
+      // 2. Clean up generated TTS files AFTER enqueue (so newly added items are in the queue)
+      const { items: currentQueue } = await this.buncasterService.queueList();
+      await this.cleanupTempFiles(status, currentQueue);
     } catch (err: any) {
       console.error("[OrchestratorService] Error in loop tick:", err.message);
     } finally {

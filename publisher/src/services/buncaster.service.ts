@@ -14,7 +14,10 @@ function toDbPath(filepath: string): string {
 function toContainerPath(filepath: string): string {
   // "songs/file.mp3" → "/app/music/songs/file.mp3"
   // "interludios/file.mp3" → "/app/music/interludios/file.mp3"
+  // "/music/songs/file.mp3" → "/app/music/songs/file.mp3"
+  // "/app/music/songs/file.mp3" → "/app/music/songs/file.mp3"
   if (filepath.startsWith("/app/music/")) return filepath;
+  if (filepath.startsWith("/music/")) return `/app/music/${filepath.slice(7)}`;
   return `/app/music/${filepath}`;
 }
 
@@ -100,8 +103,10 @@ export class BuncasterService {
   public async getStreamStatus(): Promise<StreamStatus> {
     const connected = this.isConnected();
     try {
-      const status = await this.buncasterClient.getStatus();
-      const current = status.currentTrack;
+      const [status, current] = await Promise.all([
+        this.buncasterClient.getStatus(),
+        this.buncasterClient.getCurrentTrack(),
+      ]);
 
       if (!current) {
         return {
@@ -110,7 +115,7 @@ export class BuncasterService {
           currentTrack: null,
           artist: null,
           title: null,
-          uptime: String(status.uptime || 0),
+          uptime: String(status.uptimeSeconds || 0),
           duration: 0,
           elapsed: 0,
         };
@@ -130,15 +135,19 @@ export class BuncasterService {
         }
       }
 
+      const elapsed = current.startedAt
+        ? Math.floor((Date.now() - current.startedAt) / 1000)
+        : 0;
+
       return {
         connected,
         playing: true,
         currentTrack: current.file,
         artist: artist || null,
         title: title || null,
-        uptime: String(status.uptime || 0),
+        uptime: String(status.uptimeSeconds || 0),
         duration: Math.floor(current.duration || 0),
-        elapsed: Math.floor(current.elapsed || 0),
+        elapsed,
       };
     } catch {
       return {
@@ -264,6 +273,7 @@ export class BuncasterService {
             rid: String(item.index),
             type: "interludio" as const,
             script,
+            file: item.file || undefined,
           };
         }
 
@@ -462,7 +472,7 @@ export class BuncasterService {
         title: title || track.file,
         script,
         duration: formatTime(track.duration || 0),
-        elapsed: formatTime(track.elapsed || 0),
+        elapsed: formatTime(track.startedAt ? Math.floor((Date.now() - track.startedAt) / 1000) : 0),
       };
     } catch {
       return null;

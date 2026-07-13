@@ -488,51 +488,30 @@ export class OrchestratorService {
 
     // Build context for the LLM
     const recentSongsText = recentSongs.length > 0
-      ? recentSongs.map((s) => `- "${s.title}" de ${s.artist || "Desconocido"}`).join("\n")
-      : "Ninguna canción previa en programas de este locutor.";
+      ? recentSongs.map((s) => `${s.title} - ${s.artist || "?"}`).join("\n")
+      : "ninguna";
 
     const catalogText = leastPlayed
-      .map((s) => `- ID: "${s.id}", Título: "${s.title}", Artista: ${s.artist || "Desconocido"}, Duración: ${Math.round(s.duration)}s`)
+      .map((s) => `${s.id}|${s.title}|${s.artist || "?"}|${Math.round(s.duration)}`)
       .join("\n");
 
     const lastTwoText = lastTwoSongs.length > 0
-      ? lastTwoSongs.map((s) => `"${s.title}" de ${s.artist || "Desconocido"}`).join(", ")
-      : "Ninguna";
+      ? lastTwoSongs.map((s) => `${s.title} - ${s.artist || "?"}`).join(", ")
+      : "ninguna";
 
-    const systemPrompt = `Eres "${djName}", el legendario, carismático y magnético locutor estrella de la emisora por internet 'Radio Bloom'.
-Tu personalidad al aire es: ${personality}
+    const systemPrompt = `Eres ${djName}, locutor de Radio Bloom. Personalidad: ${personality}
 
-Tu tarea es crear una playlist programada para tu bloque de transmisión. Debes seleccionar canciones del catálogo disponible y construir una playlist que encaje con tu vibra y personalidad.
+Crea una playlist de 10-15 canciones del catálogo (100 least-played). Máximo 2-3 scripts opcionales (30-45 pal. c/u) según tu estilo.
 
-CONTEXTO:
-- Las últimas 2 canciones en cola son de OTRO programa (solo para referencia de continuidad, NO las repitas).
-- Las canciones que tocaste en programas anteriores son: ${recentSongsText}
+Últimas 2 en cola (otro programa, NO repetir): ${lastTwoText}
+Tocaste antes: ${recentSongsText}
 
-CATÁLOGO DISPONIBLE (100 canciones ordenadas por tiempo sin reproducirse, las que más llevan sin sonar primero):
+Catálogo (least-played first | id|título|artista|dur_s):
 ${catalogText}
 
-Directrices:
-1. Selecciona ENTRE 10 Y 15 canciones del catálogo. DEBES seleccionar al menos 10 canciones.
-2. TÚ DECIDES cuántas locuciones intermedias incluir según tu personalidad y estilo:
-   - Locutores enérgicos/festivos: más locuciones (hasta 1 por cada 3 canciones)
-   - Locutoras tranquilas/relajadas: menos locuciones (1 por cada 5-7 canciones)
-   - Cada locución debe ser un guión de 30-45 palabras, natural y espontáneo.
-3. NO incluyas canciones que ya están en la cola reciente.
-4. Cada canción tiene una duración real en segundos — respétala, no la modifiques.
-5. Ordena las canciones para crear un flujo musical coherente.
-6. VARIEDAD: Selecciona géneros y artistas diferentes. NO repitas el mismo artista más de 2 veces.
-7. IMPORTANTE: Tu playlist debe tener entre 10 y 15 canciones. Si seleccionas menos de 10, estarás incumpliendo las instrucciones.
+Reglas: 10-15 canciones, no más de 2 del mismo artista, respeta duración. Usa create_program_playlist como paso final.`;
 
-RESULTADO:
-Usa la herramienta 'create_program_playlist' para crear la playlist con las canciones seleccionadas.
-Llama a esta herramienta obligatoriamente como tu último paso.`;
-
-    const userPrompt = `INFORMACIÓN DEL ENTORNO:
-- Últimas 2 canciones en cola (de otro programa): ${lastTwoText}
-- Locutor: ${djName}
-- Personalidad: ${personality}
-
-Crea la playlist programada con las canciones del catálogo. Llama a create_program_playlist.`;
+    const userPrompt = "Genera la playlist ahora.";
 
     const messages: any[] = [
       { role: "system", content: systemPrompt },
@@ -545,15 +524,11 @@ Crea la playlist programada con las canciones del catálogo. Llama a create_prog
         type: "function",
         function: {
           name: "search_library",
-          description:
-            "Busca canciones en la biblioteca de la radio por texto (título, artista o álbum). Devuelve coincidencias con sus IDs.",
+          description: "Busca canciones por texto. Devuelve IDs.",
           parameters: {
             type: "object",
             properties: {
-              query: {
-                type: "string",
-                description: "Término de búsqueda textual (ej. 'Rick Astley').",
-              },
+              query: { type: "string", description: "Texto de búsqueda" },
             },
             required: ["query"],
             additionalProperties: false,
@@ -564,34 +539,20 @@ Crea la playlist programada con las canciones del catálogo. Llama a create_prog
         type: "function",
         function: {
           name: "create_program_playlist",
-          description:
-            "Crea una playlist programada para un bloque de transmisión. DEBE contener entre 10 y 15 canciones del catálogo.",
+          description: "Crea playlist de 10-15 canciones del catálogo.",
           parameters: {
             type: "object",
             properties: {
-              name: {
-                type: "string",
-                description: "Nombre del programa o playlist.",
-              },
-              description: {
-                type: "string",
-                description: "Descripción corta de la playlist (máx 100 caracteres).",
-              },
+              name: { type: "string", description: "Nombre del programa" },
+              description: { type: "string", description: "Descripción corta" },
               tracks: {
                 type: "array",
-                description: "Lista ordenada de 10-15 canciones seleccionadas del catálogo.",
+                description: "10-15 canciones ordenadas del catálogo",
                 items: {
                   type: "object",
                   properties: {
-                    library_track_id: {
-                      type: "string",
-                      description: "El ID real de la canción en library_tracks.",
-                    },
-                    script: {
-                      type: "string",
-                      description:
-                        "Guión de locución opcional (30-45 palabras) para reproducir antes de esta canción, o string vacío. Máximo 2-3 scripts por playlist.",
-                    },
+                    library_track_id: { type: "string", description: "ID del track" },
+                    script: { type: "string", description: "Script opcional 30-45 pal. o vacío. Max 2-3" },
                   },
                   required: ["library_track_id"],
                   additionalProperties: false,

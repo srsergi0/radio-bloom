@@ -54,6 +54,7 @@ services:
       context: .
       dockerfile: ./publisher/Dockerfile
     restart: unless-stopped
+    mem_limit: 512m
     ports:
       - "${API_PORT}:${PUBLISHER_PORT}"
     environment:

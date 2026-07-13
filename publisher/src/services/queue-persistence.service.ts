@@ -81,7 +81,7 @@ export class QueuePersistenceService {
   private async persist(): Promise<void> {
     try {
       const status = await this.buncasterService.getStreamStatus();
-      if (!status.playing || !status.metadata) return;
+      if (!status.playing) return;
 
       const file = await this.buncasterService.getCurrentFile();
       if (!file) return;

@@ -233,7 +233,8 @@ export function createLibraryService(deps: LibraryDeps): LibraryService {
     },
 
     updateLastPlayedByFile(file) {
-      const dbFile = file.replace(/^\/music\//, "");
+      const match = file.replace(/\\/g, "/").match(/(?:^|\/)(songs|interludios)\/(.+)$/);
+      const dbFile = match ? `${match[1]}/${match[2]}` : file.replace(/^\/music\//, "");
       const track = deps.libraryRepo.getTrackByFile(dbFile);
       if (track) deps.libraryRepo.updateLastPlayedAt(track.id);
     },

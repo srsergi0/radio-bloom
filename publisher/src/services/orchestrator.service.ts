@@ -338,7 +338,7 @@ export class OrchestratorService {
    * and enqueues the right number of songs from a playlist to fill that time.
    */
   private async enqueueFromPlaylist(
-    playlist: { tracks: { file?: string; duration: number; script?: string }[] },
+    playlist: { id: string; name: string; tracks: { file?: string; duration: number; script?: string }[] },
     queue: any[],
     status: any,
     activeLocutor: any
@@ -434,6 +434,15 @@ export class OrchestratorService {
         this.recentHistory.push(filepath);
         if (this.recentHistory.length > 15) this.recentHistory.shift();
       }
+    }
+
+    // Mark playlist as played if all its tracks are now in queue
+    const allFilesInPlaylist = playlist.tracks.map((t) => t.file).filter(Boolean) as string[];
+    const newlyQueued = new Set(selectedTracks.map((t) => t.file).filter(Boolean));
+    const allQueued = allFilesInPlaylist.every((f) => queueFiles.has(f) || newlyQueued.has(f));
+    if (allQueued && allFilesInPlaylist.length > 0) {
+      this.playlistRepo.update(playlist.id, { played: true });
+      console.log(`[OrchestratorService] Playlist "${playlist.name}" fully consumed. Marked as played.`);
     }
 
     this.saveHistory().catch(() => {});
@@ -686,14 +695,18 @@ Reglas: 10-15 canciones, no más de 2 del mismo artista, respeta duración. Usa 
 
     // Enqueue songs from the newly created playlist
     await this.enqueueFromPlaylist(
-      { tracks: playlistResult.tracks.map((t: any) => {
-        const libTrack = this.libraryRepo.getTrackById(t.library_track_id);
-        return {
-          file: libTrack?.file,
-          duration: libTrack?.duration || 0,
-          script: t.script || "",
-        };
-      }) },
+      {
+        id: playlist.id,
+        name: playlist.name,
+        tracks: playlistResult.tracks.map((t: any) => {
+          const libTrack = this.libraryRepo.getTrackById(t.library_track_id);
+          return {
+            file: libTrack?.file,
+            duration: libTrack?.duration || 0,
+            script: t.script || "",
+          };
+        }),
+      },
       queue,
       status,
       activeLocutor

@@ -443,7 +443,10 @@ export class PlaylistRepository {
     const row = this.db.drizzle
       .select()
       .from(schema.playlists)
-      .where(eq(schema.playlists.locutorId, locutorId))
+      .where(and(
+        eq(schema.playlists.locutorId, locutorId),
+        eq(schema.playlists.played, 0)
+      ))
       .orderBy(desc(schema.playlists.updatedAt))
       .get();
     if (!row) return null;

@@ -40,7 +40,7 @@ services:
       - ./music/songs:/app/music/songs
       - ./music/interludios:/app/music/interludios
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:${PORT}/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O - http://0.0.0.0:${PORT}/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -1,53 +1,27 @@
 ---
-interface Props {
-  isEn?: boolean;
-}
-
+interface Props { isEn?: boolean; }
 const { isEn = true } = Astro.props;
-
 const currentPath = Astro.url.pathname;
-const esLink = isEn ? `/es${currentPath === "/" ? "" : currentPath}` : currentPath;
-const enLink = isEn ? currentPath : currentPath.replace(/^\/es/, "") || "/";
-
 const homePrefix = currentPath.startsWith("/es") ? "/es" : "";
 const isHome = currentPath === "/" || currentPath === "/es" || currentPath === "/es/";
-
 const liveLink = isHome ? "#live-section" : `${homePrefix || "/"}/#live-section`;
 const scheduleLink = isHome ? "#programs-section" : `${homePrefix || "/"}/#programs-section`;
 const eventsLink = isHome ? "#events-section" : `${homePrefix || "/"}/#events-section`;
-const adminLink = `${homePrefix}/admin`;
 ---
 
-<header class="sticky top-0 z-50 bg-orange border-b-[3px] border-text-dark">
-  <div class="max-w-full px-5 md:px-10 py-4 md:py-0 flex justify-between items-center">
-    <a href={isEn ? "/" : "/es"} class="logo text-2xl md:text-3xl font-black tracking-tighter text-text-dark lowercase leading-none py-3 md:py-4">
-      bloom radio®
-    </a>
-
-    <div class="hidden lg:flex items-center gap-8">
-      <nav class="flex items-center gap-6 font-mono text-xs font-bold">
-        <a href={liveLink} class="text-text-dark no-underline hover:opacity-60 transition-opacity">{isEn ? "LIVE" : "EN VIVO"}</a>
-        <a href={scheduleLink} class="text-text-dark no-underline hover:opacity-60 transition-opacity">{isEn ? "SCHEDULE" : "PROGRAMACIÓN"}</a>
-        <a href={eventsLink} class="text-text-dark no-underline hover:opacity-60 transition-opacity">{isEn ? "EVENTS" : "EVENTOS"}</a>
-        <a href={adminLink} class={`text-text-dark no-underline hover:opacity-60 transition-opacity ${currentPath.includes('/admin') ? 'border-b-2 border-text-dark' : ''}`}>{isEn ? "DJ MANAGER" : "GESTOR DJ"}</a>
-      </nav>
-
-      <div class="w-[3px] h-6 bg-text-dark opacity-30"></div>
-
-      <div class="font-mono text-xs font-bold flex items-center gap-1">
-        <a href={esLink} class={`text-text-dark no-underline px-2 py-1 transition-all ${!isEn ? 'bg-text-dark text-orange' : 'opacity-50 hover:opacity-80'}`}>ES</a>
-        <a href={enLink} class={`text-text-dark no-underline px-2 py-1 transition-all ${isEn ? 'bg-text-dark text-orange' : 'opacity-50 hover:opacity-80'}`}>EN</a>
-      </div>
-    </div>
-
-    <div class="flex lg:hidden items-center gap-3">
-      <div class="font-mono text-xs font-bold flex items-center">
-        <a href={esLink} class={`text-text-dark no-underline px-2 py-1 ${!isEn ? 'bg-text-dark text-orange' : 'opacity-50'}`}>ES</a>
-        <a href={enLink} class={`text-text-dark no-underline px-2 py-1 ${isEn ? 'bg-text-dark text-orange' : 'opacity-50'}`}>EN</a>
-      </div>
-      <a href="#footer" class="font-mono text-xs font-bold text-text-dark no-underline border-b-[3px] border-text-dark pb-0.5">
-        {isEn ? "MENU" : "MENÚ"}
-      </a>
-    </div>
+<!-- Top bar gris como Mac: [icon] Projects Blog Learn Clone me Find me -->
+<div style="background:#d9d9d9;border-bottom:2px solid #000;display:flex;align-items:center;gap:16px;padding:6px 12px;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;">
+  <a href={isEn ? "/" : "/es"} style="text-decoration:none;color:#000;display:flex;align-items:center;gap:6px;">
+    <span style="width:20px;height:20px;border:2px solid #000;background:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;">◉</span>
+    bloom radio®
+  </a>
+  <nav style="display:flex;gap:14px;">
+    <a href={liveLink} style="color:#000;text-decoration:none;">Live</a>
+    <a href={scheduleLink} style="color:#000;text-decoration:none;">Schedule</a>
+    <a href={eventsLink} style="color:#000;text-decoration:none;">Events</a>
+  </nav>
+  <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+    <a href="/es" style={`text-decoration:none;padding:2px 6px;border:1.5px solid #000;${!isEn ? 'background:#000;color:#fff;' : 'background:#fff;color:#000;'}`}>ES</a>
+    <a href="/" style={`text-decoration:none;padding:2px 6px;border:1.5px solid #000;${isEn ? 'background:#000;color:#fff;' : 'background:#fff;color:#000;'}`}>EN</a>
   </div>
-</header>
+</div>

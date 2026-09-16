@@ -1,44 +1,19 @@
 ---
-interface Props {
-  isEn?: boolean;
-}
-
+interface Props { isEn?: boolean; }
 const { isEn = false } = Astro.props;
-
 const features = [
-  {
-    tag: "[ A ]",
-    title: isEn ? "Limitless Music" : "Música sin límites",
-    desc: isEn ? "Continuous curated hits and new releases 24/7." : "Los mejores éxitos y nuevos lanzamientos 24/7 sin comerciales.",
-  },
-  {
-    tag: "[ B ]",
-    title: isEn ? "Exclusive Content" : "Contenido exclusivo",
-    desc: isEn ? "Original shows, artist interviews, and curated sessions." : "Programas originales, entrevistas y sesiones de curaduría exclusivas.",
-  },
-  {
-    tag: "[ C ]",
-    title: isEn ? "Wherever You Are" : "Donde quieras",
-    desc: isEn ? "Listen to us live from anywhere in the world on any device." : "Escúchanos en vivo desde cualquier lugar del mundo y en cualquier dispositivo.",
-  },
-  {
-    tag: "[ D ]",
-    title: isEn ? "Bloom Community" : "Comunidad Bloom",
-    desc: isEn ? "Join our active community and be a part of the sound." : "Únete a nuestra comunidad activa y sé parte del movimiento sonoro.",
-  }
+  { title: isEn ? "Limitless Music" : "Música sin límites", desc: isEn ? "Curated hits 24/7." : "Éxitos curados 24/7." },
+  { title: isEn ? "Exclusive Content" : "Contenido exclusivo", desc: isEn ? "Shows & interviews." : "Programas y entrevistas." },
+  { title: isEn ? "Wherever You Are" : "Donde quieras", desc: isEn ? "Any device, anywhere." : "Cualquier dispositivo." },
+  { title: isEn ? "Bloom Community" : "Comunidad Bloom", desc: isEn ? "Join the sound." : "Únete al sonido." }
 ];
 ---
 
-<section class="max-w-full bg-ice-blue text-text-dark border-b-[3px] border-text-dark">
-  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-    {features.map((feat, idx) => (
-      <div class={`flex flex-col items-start gap-4 p-6 sm:p-8 lg:p-10 ${idx < 3 ? 'border-b-[3px] sm:border-b-[3px] border-text-dark' : ''} ${idx === 0 ? 'sm:border-r-[3px] border-text-dark' : ''} ${idx === 1 ? 'sm:border-r-[3px] border-text-dark' : ''} ${idx === 2 ? 'lg:border-r-[3px] border-text-dark' : ''} ${idx === 3 ? 'sm:border-b-0' : ''} ${idx === 1 ? 'sm:border-b-0 lg:border-b-[3px]' : ''}`}>
-        <span class="font-mono text-sm font-bold text-orange">{feat.tag}</span>
-        <div class="flex flex-col gap-2">
-          <h4 class="text-base sm:text-lg font-black tracking-tight uppercase text-text-dark leading-tight">{feat.title}</h4>
-          <p class="text-sm text-neutral-600 leading-relaxed text-justify font-medium">{feat.desc}</p>
-        </div>
-      </div>
-    ))}
-  </div>
+<section style="border-top:2px solid #000;padding:16px 32px;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;background:#fff;">
+  {features.map(f => (
+    <div style="border:2px solid #000;padding:10px;background:#d9d9d9;box-shadow:4px 4px 0 #000;">
+      <div style="font-family:'Archivo Black',sans-serif;font-size:11px;">{f.title}</div>
+      <div style="font-size:10px;margin-top:4px;opacity:0.7;">{f.desc}</div>
+    </div>
+  ))}
 </section>

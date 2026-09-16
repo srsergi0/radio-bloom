@@ -10,5 +10,6 @@ RUN bun run build
 
 # Production stage
 FROM nginx:alpine
+COPY web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 EXPOSE 80

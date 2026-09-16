@@ -1,46 +1,39 @@
 ---
-import Button from "./ui/Button.astro";
-
-interface Props {
-  isEn?: boolean;
-}
-
+interface Props { isEn?: boolean; }
 const { isEn = false } = Astro.props;
 ---
 
-<section class="bg-ice-blue text-text-dark border-b-[3px] border-text-dark">
-  <div class="px-5 md:px-10 py-10 md:py-16 border-b-[3px] border-text-dark">
-    <h1 class="text-[14vw] md:text-[11vw] lg:text-[9vw] font-black leading-[0.82] tracking-[-0.04em] uppercase text-text-dark">
-      Bloom<br/>Radio
+<!-- Hero grid like Mac: left text, right illustration -->
+<section style="display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:32px 32px 16px 32px;align-items:center;">
+  <div>
+    <h1 style="margin:0;font-family:'Archivo Black',sans-serif;font-size:48px;line-height:0.9;letter-spacing:-0.03em;">
+      Hello.<br/>I'm Bloom.
     </h1>
+    <p style="margin:12px 0 0 0;font-size:12px;line-height:1.5;max-width:360px;">
+      {isEn
+        ? "I'm a free retro radio made for music lovers. Broadcasting lofi, ambient and organic sounds 24/7."
+        : "Soy una radio retro gratis para amantes de la música. Lofi, ambient y sonidos orgánicos 24/7."}
+      <br/>
+      <span style="text-decoration:underline;">{isEn ? "Made with love in Lima." : "Hecha con amor en Lima."}</span>
+    </p>
+    <a href="#live-section" style="margin-top:14px;display:inline-block;background:#d9d9d9;border:2px solid #000;padding:8px 12px;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;color:#000;text-decoration:none;box-shadow:3px 3px 0 #000;">
+      {isEn ? "Listen on Bloom →" : "Escuchar en Bloom →"}
+    </a>
   </div>
 
-  <div class="grid grid-cols-1 lg:grid-cols-3">
-    <div class="p-6 md:p-10 lg:border-r-[3px] border-b-[3px] lg:border-b-0 border-text-dark flex items-center lg:items-start justify-center lg:justify-start">
-      <Button href="#live-section" variant="text" class="font-mono text-base md:text-lg font-bold text-text-dark inline-flex items-center gap-3 py-2">
-        <span class="text-sm">▶</span>
-        {isEn ? "Play Radio" : "Escuchar Radio"}
-      </Button>
-    </div>
+  <!-- Solo SVG en grises -->
+  <div style="display:flex;justify-content:center;align-items:center;">
+    <img src="/robot_logo.svg" alt="Bloom Robot" style="width:100%;max-width:340px;height:auto;filter:grayscale(1) contrast(1.05);display:block;" loading="lazy" />
+  </div>
+</section>
 
-    <div class="p-6 md:p-10 border-b-[3px] lg:border-b-0 lg:border-r-[3px] border-text-dark">
-      <p class="font-sans text-sm md:text-base leading-relaxed text-text-dark text-justify font-medium">
-        {
-          isEn
-            ? "At Bloom Radio, we transcend boundaries to bring you a sonic journey that stretches beyond the horizon. With an eclectic mix of lofi beats, ambient textures, and organic field recordings, we are your ultimate destination for soul-stirring melodies and peaceful soundscapes."
-            : "En Bloom Radio, trascendemos los límites sonoros para ofrecerte un viaje acústico único. Con una mezcla curada de beats lofi, texturas ambient y grabaciones de campo orgánicas, somos tu destino definitivo para melodías inspiradoras y paisajes sonoros pacíficos."
-        }
-      </p>
-    </div>
-
-    <div class="p-6 md:p-10">
-      <p class="font-sans text-sm md:text-base leading-relaxed text-text-dark text-justify font-medium">
-        {
-          isEn
-            ? "Our station is more than just a platform for music - it's a gateway to exploration, focus, and deep relaxation. Whether you are seeking focus for study, stress relief, or underground gems, Bloom Radio promises to ignite your passion for sound and elevate your daily environment."
-            : "Nuestra estación es más que una simple plataforma musical: es una puerta al enfoque, la exploración y la relajación profunda. Ya sea que busques concentrarte para estudiar, aliviar el estrés o descubrir joyas sonoras independientes, Bloom Radio promete elevar tu día a día."
-        }
-      </p>
-    </div>
+<!-- Quick links bar -->
+<section style="padding:0 32px;">
+  <div style="font-family:'Archivo Black',sans-serif;font-size:14px;margin-bottom:6px;">Quick links</div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);border:2px solid #000;">
+    <a href="#live-section" style="background:#d9d9d9;border-right:2px solid #000;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;text-decoration:none;color:#000;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;">Live <span>↗</span></a>
+    <a href="#programs-section" style="background:#d9d9d9;border-right:2px solid #000;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;text-decoration:none;color:#000;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;">Schedule <span>↗</span></a>
+    <a href="#events-section" style="background:#d9d9d9;border-right:2px solid #000;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;text-decoration:none;color:#000;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;">About <span>↗</span></a>
+    <a href="#footer" style="background:#d9d9d9;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;text-decoration:none;color:#000;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;">Contact <span>↗</span></a>
   </div>
 </section>

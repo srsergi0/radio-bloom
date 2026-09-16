@@ -1,261 +1,178 @@
 ---
-interface Props {
-  isEn?: boolean;
-}
-
+interface Props { isEn?: boolean; }
 const { isEn = true } = Astro.props;
 ---
 
-<div class="synth-player bg-black border-[3px] border-white p-5 sm:p-6 flex flex-col gap-5 relative shadow-[8px_8px_0px_#ffffff] hover:shadow-[10px_10px_0px_#ffffff] transition-all hover:-translate-x-0.5 hover:-translate-y-0.5" id="live-player-card">
-  <div class="flex justify-between items-center border-b-[3px] border-white pb-4">
-    <div class="flex items-center gap-2.5">
-      <span class="status-indicator w-2.5 h-2.5 bg-green-500 rounded-full shadow-[0_0_8px_#00ff00] animate-pulse"></span>
-      <span class="text-orange font-bold font-mono text-[10px] sm:text-xs">SIGNAL: ONLINE</span>
-    </div>
-    <div class="flex gap-4">
-      <span class="text-orange font-bold font-mono text-[10px] sm:text-xs opacity-70">320KBPS</span>
-      <span class="text-orange font-bold font-mono text-[10px] sm:text-xs opacity-70">104.2MHZ</span>
-    </div>
+<div id="live-player-card" class="browser" style="max-width:100%;">
+  <div class="browser-bar">
+    <span class="browser-dots"><span></span><span></span></span>
+    <span class="browser-title">bloom://live — ON AIR</span>
+    <span style="width:20px;"></span>
   </div>
-
-  <div class="bg-[#07040a] border-[3px] border-white p-3 sm:p-4 flex flex-col gap-3">
-    <div class="overflow-hidden whitespace-nowrap border-[3px] border-white bg-black p-2.5 text-orange font-mono text-xs sm:text-sm font-bold">
-      <div class="ticker-content" id="track-marquee">
-        {isEn ? "LOADING LIVE SIGNAL BROADCAST..." : "CARGANDO EMISIÓN EN DIRECTO..."}
-      </div>
+  <div style="padding:10px;background:#fff;">
+    <div style="background:#000;color:#fff;font-family:'Space Mono',monospace;font-size:11px;padding:6px 8px;border:2px solid #000;white-space:nowrap;overflow:hidden;">
+      <span id="track-marquee">{isEn ? "LOADING LIVE SIGNAL..." : "CARGANDO SEÑAL..."}</span>
     </div>
-
-    <div class="led-matrix flex justify-between h-12 opacity-15 transition-opacity duration-300" id="led-matrix">
-      {Array.from({ length: 12 }).map((_, colIdx) => (
-        <div class="matrix-col" style={`--col-delay: ${colIdx * 0.15}s`}>
-          {Array.from({ length: 6 }).map((_, cellIdx) => (
-            <div class="matrix-cell" style={`--cell-idx: ${cellIdx}`}></div>
-          ))}
-        </div>
-      ))}
-    </div>
-  </div>
-
-  <div class="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4 sm:gap-6 items-center">
-    <div class="flex sm:flex-col items-center gap-4 sm:gap-3">
-      <button class="synth-play-key w-20 h-20 bg-orange border-[3px] border-white cursor-pointer relative p-0 transition-all shadow-[5px_5px_0px_#ffffff] hover:shadow-[6px_6px_0px_#ffffff] hover:-translate-x-0.5 hover:-translate-y-0.5 active:translate-x-0.5 active:translate-y-0.5 active:shadow-[2px_2px_0px_#ffffff]" id="play-btn" aria-label="Play/Pause">
-        <div class="w-full h-full flex justify-center items-center text-black">
-          <svg class="w-8 h-8" id="play-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M8 5v14l11-7z"/>
-          </svg>
-          <svg class="w-8 h-8 hidden" id="pause-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
-          </svg>
-        </div>
+    <div style="margin-top:8px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;">
+      <button id="play-btn" style="width:56px;height:56px;background:#d9d9d9;border:2px solid #000;box-shadow:3px 3px 0 #000;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;">
+        <span id="play-icon">▶</span><span id="pause-icon" style="display:none;">❚❚</span>
       </button>
-
-      <div class="hidden sm:flex flex-col items-center gap-2">
-        <button class="mute-btn bg-none border-none text-neutral-400 cursor-pointer p-0 hover:text-white transition-colors" id="volume-btn" aria-label="Mute/Unmute">
-          <svg class="w-4 h-4" id="volume-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
-          </svg>
-        </button>
-        <input type="range" min="0" max="1" step="0.05" value="0.8" class="synth-slider w-full h-1 bg-white border border-black outline-none appearance-none" id="volume-slider" aria-label="Volume Slider" />
+      <div>
+        <div id="track-title-text" style="font-family:'Archivo Black',sans-serif;font-size:14px;">Morning Bloom</div>
+        <div id="track-artist-text" style="font-family:'Space Mono',monospace;font-size:10px;opacity:0.7;">con Samantha Lee</div>
+        <div style="margin-top:4px;height:6px;background:#d9d9d9;border:1.5px solid #000;display:flex;">
+          <div style="flex:1;background:#000;width:68%;"></div>
+        </div>
+      </div>
+      <div style="text-align:center;">
+        <input id="volume-slider" type="range" min="0" max="1" step="0.05" value="0.8" style="width:80px;" />
+        <button id="volume-btn" style="display:block;margin:4px auto 0 auto;font-family:'Space Mono',monospace;font-size:9px;border:1.5px solid #000;background:#d9d9d9;padding:2px 6px;cursor:pointer;">MUTE</button>
       </div>
     </div>
-
-    <div class="flex flex-col justify-center sm:border-l-[3px] sm:border-white sm:pl-6">
-      <div class="show-meta min-w-0">
-        <span class="now-playing-tag font-mono text-[10px] text-orange block mb-1">[ {isEn ? "ACTIVE SHOW" : "PROGRAMA ACTIVO"} ]</span>
-        <h4 id="track-title-text" class="text-lg sm:text-xl font-black uppercase text-white tracking-tight truncate leading-none">Morning Bloom</h4>
-        <p id="track-artist-text" class="font-mono text-xs text-neutral-400 truncate mt-1">con Samantha Lee</p>
-      </div>
+    <!-- Visualizer funcional: 16 barras driven by Web Audio Analyser -->
+    <div id="led-matrix" style="margin-top:8px;display:flex;gap:2px;align-items:end;height:18px;">
+      {Array.from({length:16}).map(() => (
+        <div class="eq-bar" style="flex:1;height:4px;background:#000;border:1px solid #000;transition:height 0.08s linear;"></div>
+      ))}
     </div>
   </div>
 </div>
 
-<style>
-  @keyframes pulse-indicator {
-    from { opacity: 0.4; }
-    to { opacity: 1; }
-  }
-
-  .status-indicator {
-    animation: pulse-indicator 1.5s infinite alternate;
-  }
-
-  .ticker-content {
-    display: inline-block;
-    padding-left: 100%;
-    animation: marquee-scroll 12s linear infinite;
-  }
-
-  @keyframes marquee-scroll {
-    0% { transform: translate3d(0, 0, 0); }
-    100% { transform: translate3d(-100%, 0, 0); }
-  }
-
-  .matrix-col {
-    display: flex;
-    flex-direction: column-reverse;
-    gap: 2px;
-    width: 7%;
-  }
-
-  .matrix-cell {
-    height: 6px;
-    background-color: #1a1523;
-  }
-
-  .led-matrix.active .matrix-col .matrix-cell {
-    animation: col-flash 1s steps(6) infinite alternate;
-    animation-delay: var(--col-delay);
-  }
-
-  @keyframes col-flash {
-    0% { background-color: #1a1523; }
-    100% { background-color: var(--color-orange); }
-  }
-
-  .led-matrix.active .matrix-cell:nth-child(n+5) {
-    animation-name: col-flash-alert;
-  }
-
-  @keyframes col-flash-alert {
-    0% { background-color: #1a1523; }
-    100% { background-color: #ff3b00; }
-  }
-
-  .synth-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 14px;
-    height: 24px;
-    background-color: var(--color-orange);
-    border: 2px solid #ffffff;
-    cursor: pointer;
-  }
-
-  .synth-slider::-moz-range-thumb {
-    width: 14px;
-    height: 24px;
-    background-color: var(--color-orange);
-    border: 2px solid #ffffff;
-    cursor: pointer;
-    border-radius: 0;
-  }
-</style>
-
 <script>
-  const STREAM_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:8000/radiobloom.mp3'
-    : '/radiobloom.mp3';
-  const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:8000'
-    : '';
-
+  const API_BASE = '';
+  // Path agnóstico del tier activo (el publisher resuelve opus o mp3)
+  const STREAM_URL = '/radiobloom';
   const audio = new Audio();
   audio.preload = "none";
+  audio.crossOrigin = "anonymous";
 
   const playBtn = document.getElementById("play-btn");
   const playIcon = document.getElementById("play-icon");
   const pauseIcon = document.getElementById("pause-icon");
-  const ledMatrix = document.getElementById("led-matrix");
-  const trackMarquee = document.getElementById("track-marquee");
+  const card = document.getElementById("live-player-card");
+  const marquee = document.getElementById("track-marquee");
+  const volSlider = document.getElementById("volume-slider") as HTMLInputElement;
+  const volBtn = document.getElementById("volume-btn");
+  const tTitle = document.getElementById("track-title-text");
+  const tArtist = document.getElementById("track-artist-text");
+  const bars = Array.from(document.querySelectorAll('.eq-bar')) as HTMLElement[];
 
-  const volumeBtn = document.getElementById("volume-btn");
-  const volumeIcon = document.getElementById("volume-icon");
-  const volumeSlider = document.getElementById("volume-slider") as HTMLInputElement;
+  let isPlaying = false, isMuted = false, prev = 0.8;
+  let audioCtx: AudioContext | null = null;
+  let analyser: AnalyserNode | null = null;
+  let source: MediaElementAudioSourceNode | null = null;
+  let dataArray: Uint8Array | null = null;
+  let rafId: number | null = null;
 
-  const trackTitleText = document.getElementById("track-title-text");
-  const trackArtistText = document.getElementById("track-artist-text");
+  if (volSlider) audio.volume = parseFloat(volSlider.value);
 
-  let isPlaying = false;
-  let isMuted = false;
-  let previousVolume = 0.8;
+  function ensureAudioGraph(): boolean {
+    try {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        analyser.smoothingTimeConstant = 0.8;
+        dataArray = new Uint8Array(analyser.frequencyBinCount);
+        source = audioCtx.createMediaElementSource(audio);
+        source.connect(analyser);
+        analyser.connect(audioCtx.destination);
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      return true;
+    } catch (err) {
+      console.warn("[Player] Web Audio no disponible:", err);
+      return false;
+    }
+  }
 
-  audio.volume = parseFloat(volumeSlider?.value || "0.8");
+  function startVisualizer() {
+    if (!analyser || !dataArray) return;
+    const tick = () => {
+      if (!isPlaying || !analyser || !dataArray) return;
+      analyser.getByteFrequencyData(dataArray);
+      // 16 barras ← 32 bins (promedia de 2 en 2 para suavizar)
+      for (let i = 0; i < bars.length; i++) {
+        const v = (dataArray[i*2] + dataArray[i*2+1]) / 2; // 0-255
+        const h = 4 + (v / 255) * 14; // 4-18px
+        bars[i].style.height = h.toFixed(1) + "px";
+        // Brillo según energía: gris → negro
+        const intensity = Math.round((v / 255) * 40);
+        bars[i].style.background = `rgb(${intensity},${intensity},${intensity})`;
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    tick();
+  }
 
-  function togglePlay() {
+  function stopVisualizer() {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    bars.forEach(b => { b.style.height = "4px"; b.style.background = "#000"; });
+  }
+
+  function toggle() {
     if (isPlaying) {
       audio.pause();
       audio.src = "";
       isPlaying = false;
-      playIcon?.classList.remove("hidden");
-      pauseIcon?.classList.add("hidden");
-      ledMatrix?.classList.remove("active");
+      if (playIcon) playIcon.style.display = "";
+      if (pauseIcon) pauseIcon.style.display = "none";
+      card?.classList.remove("playing");
+      stopVisualizer();
     } else {
+      const ok = ensureAudioGraph();
       audio.src = STREAM_URL;
       audio.load();
-      audio.play().catch(err => console.error("Audio playback error:", err));
-      isPlaying = true;
-      playIcon?.classList.add("hidden");
-      pauseIcon?.classList.remove("hidden");
-      ledMatrix?.classList.add("active");
+      audio.play().then(() => {
+        isPlaying = true;
+        if (playIcon) playIcon.style.display = "none";
+        if (pauseIcon) pauseIcon.style.display = "";
+        card?.classList.add("playing");
+        if (ok) startVisualizer();
+      }).catch(err => {
+        console.error("[Player] play failed:", err);
+      });
     }
   }
 
-  playBtn?.addEventListener("click", togglePlay);
-
-  volumeSlider?.addEventListener("input", (e) => {
-    const target = e.target as HTMLInputElement;
-    const val = parseFloat(target.value);
-    audio.volume = val;
-    isMuted = val === 0;
-    updateVolumeIcon(val);
+  playBtn?.addEventListener("click", toggle);
+  volSlider?.addEventListener("input", e => {
+    const v = parseFloat((e.target as HTMLInputElement).value);
+    audio.volume = v;
+    isMuted = v === 0;
+    if (volBtn) volBtn.textContent = isMuted ? "UNMUTE" : "MUTE";
+  });
+  volBtn?.addEventListener("click", () => {
+    if (isMuted) { audio.volume = prev; if (volSlider) volSlider.value = String(prev); isMuted = false; }
+    else { prev = audio.volume; audio.volume = 0; if (volSlider) volSlider.value = "0"; isMuted = true; }
+    if (volBtn) volBtn.textContent = isMuted ? "UNMUTE" : "MUTE";
   });
 
-  volumeBtn?.addEventListener("click", () => {
-    if (isMuted) {
-      audio.volume = previousVolume;
-      if (volumeSlider) volumeSlider.value = previousVolume.toString();
-      isMuted = false;
-    } else {
-      previousVolume = audio.volume;
-      audio.volume = 0;
-      if (volumeSlider) volumeSlider.value = "0";
-      isMuted = true;
-    }
-    updateVolumeIcon(audio.volume);
-  });
-
-  function updateVolumeIcon(vol: number) {
-    if (!volumeIcon) return;
-    if (vol === 0 || isMuted) {
-      volumeIcon.innerHTML = `<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.21.05-.42.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>`;
-    } else {
-      volumeIcon.innerHTML = `<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>`;
-    }
-  }
-
-  async function fetchMetadata() {
+  async function fetchMeta() {
     try {
-      const response = await fetch(`${API_BASE}/api/stream`);
-      if (response.ok) {
-        const json = await response.json();
-        if (json.ok && json.data) {
-          const title = json.data.title || "Morning Bloom";
-          const artist = json.data.artist || "Samantha Lee";
-
+      const r = await fetch(`${API_BASE}/api/stream`);
+      if (r.ok) {
+        const j = await r.json();
+        if (j.ok && j.data) {
+          const title = j.data.title || "Morning Bloom";
+          const artist = j.data.artist || "Samantha Lee";
           const lang = document.documentElement.lang;
-          const message = lang === 'en'
-            ? `LIVE NOW: ${title.toUpperCase()} BY ${artist.toUpperCase()} - SIGNAL STATUS: EXCELLENT - STREAM RATE: 320 KBPS STABLE - `
-            : `EN EMISIÓN: ${title.toUpperCase()} POR ${artist.toUpperCase()} - ESTADO DE SEÑAL: EXCELENTE - TASA DE BITS: 320 KBPS ESTABLE - `;
-
-          if (trackMarquee && trackMarquee.innerText !== message) {
-            trackMarquee.innerText = message;
-          }
-          if (trackTitleText && trackTitleText.innerText !== title) {
-            trackTitleText.innerText = title;
-          }
-
-          const prefix = lang === 'en' ? 'with' : 'con';
-          const fullArtistText = `${prefix} ${artist}`;
-          if (trackArtistText && trackArtistText.innerText !== fullArtistText) {
-            trackArtistText.innerText = fullArtistText;
-          }
+          const codec = j.stream?.codec ? String(j.stream.codec).toUpperCase() : "LIVE";
+          const bitrate = j.stream?.bitrate ? `${j.stream.bitrate}K` : "";
+          const msg = `${title.toUpperCase()} — ${artist.toUpperCase()} — ${codec}${bitrate}`;
+          if (marquee && marquee.textContent !== msg) marquee.textContent = msg;
+          if (tTitle && tTitle.textContent !== title) tTitle.textContent = title;
+          const pref = lang === 'en' ? 'with' : 'con';
+          const full = `${pref} ${artist}`;
+          if (tArtist && tArtist.textContent !== full) tArtist.textContent = full;
         }
       }
-    } catch (err) {
-      console.warn("Could not fetch metadata:", err);
-    }
+    } catch (e) { console.warn(e); }
   }
+  fetchMeta();
+  setInterval(fetchMeta, 10000);
 
-  fetchMetadata();
-  setInterval(fetchMetadata, 10000);
+  // Limpieza al salir
+  window.addEventListener('beforeunload', () => { if (rafId) cancelAnimationFrame(rafId); try { audioCtx?.close(); } catch {} });
 </script>

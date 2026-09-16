@@ -1,64 +1,16 @@
 ---
-import Card from './ui/Card.astro';
-
-interface Props {
-  isEn?: boolean;
-}
-
+import UpNextMotion from "./UpNextMotion.tsx";
+interface Props { isEn?: boolean; }
 const { isEn = false } = Astro.props;
-
-const shows = [
-  {
-    idx: "[ 01 ]",
-    title: "Morning Bloom",
-    time: isEn ? "Monday to Friday 10:00 AM" : "Lunes a Viernes 10:00 AM",
-  },
-  {
-    idx: "[ 02 ]",
-    title: "Top Bloom",
-    time: isEn ? "Monday to Friday 02:00 PM" : "Lunes a Viernes 02:00 PM",
-  },
-  {
-    idx: "[ 03 ]",
-    title: "Bloom Beats",
-    time: isEn ? "Monday to Friday 06:00 PM" : "Lunes a Viernes 06:00 PM",
-  },
-  {
-    idx: "[ 04 ]",
-    title: "Night Bloom",
-    time: isEn ? "Monday to Thursday 10:00 PM" : "Lunes a Jueves 10:00 PM",
-  }
-];
 ---
 
-<section class="section-pad bg-ice-blue text-text-dark border-b-[3px] border-text-dark max-w-full" id="programs-section">
-  <div class="max-w-[1200px] mx-auto">
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 md:gap-0 mb-10 md:mb-16">
-      <div>
-        <span class="font-mono text-xs sm:text-sm font-bold text-orange block mb-3">[ {isEn ? "WEEKLY SCHEDULE" : "PROGRAMACIÓN SEMANAL"} ]</span>
-        <h2 class="text-3xl md:text-5xl font-black tracking-tighter leading-none uppercase">{isEn ? "Always something for you" : "Siempre hay algo para ti"}</h2>
-      </div>
-      <a href="#programs-section" class="font-mono text-xs sm:text-sm font-bold text-text-dark no-underline flex items-center gap-2 border-b-[3px] border-text-dark pb-1 hover:translate-x-1 hover:-translate-y-1 transition-all">
-        {isEn ? "VIEW ALL SHOWS" : "VER TODOS LOS PROGRAMAS"}
-        <span class="text-base">↗</span>
-      </a>
-    </div>
-
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-      {shows.map((show) => (
-        <Card theme="light" shadow={true} class="p-0! overflow-hidden">
-          <div class="flex items-center gap-4 sm:gap-5 w-full">
-            <div class="w-16 h-16 sm:w-[88px] sm:h-[88px] bg-black text-white flex justify-center items-center border-[3px] border-black flex-shrink-0">
-              <span class="font-mono text-sm sm:text-lg font-bold">{show.idx}</span>
-            </div>
-
-            <div class="flex-grow min-w-0 py-2">
-              <h4 class="text-lg sm:text-xl font-black tracking-tight text-text-dark mb-1 truncate uppercase leading-tight">{show.title}</h4>
-              <p class="text-[11px] sm:text-xs text-neutral-600 font-mono font-bold">{show.time}</p>
-            </div>
-          </div>
-        </Card>
-      ))}
-    </div>
+<!-- Up Next — queue real con Motion (solo anima entradas/salidas, no en carga inicial) -->
+<section id="programs-section" style="background:#d6d6d6;background-image:radial-gradient(#000 0.7px, transparent 0.7px);background-size:4px 4px;border-top:2px solid #000;border-bottom:2px solid #000;padding:24px 32px;">
+  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:16px;">
+    <h2 style="margin:0;font-family:'Archivo Black',sans-serif;font-size:28px;">{isEn ? "Up Next" : "Siguiente"}</h2>
+    <span style="font-family:'Space Mono',monospace;font-size:10px;background:#000;color:#fff;padding:3px 8px;border:2px solid #000;">{isEn ? "from queue • motion" : "desde la cola • motion"}</span>
   </div>
+  <p style="margin:0 0 16px 0;font-family:'Space Mono',monospace;font-size:11px;opacity:0.7;">{isEn ? "What’s coming — animates only when a new song enters/leaves" : "Qué vendrá — anima solo cuando entra/sale una canción"}</p>
+
+  <UpNextMotion client:visible />
 </section>

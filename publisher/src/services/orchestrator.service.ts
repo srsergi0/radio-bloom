@@ -302,35 +302,34 @@ export class OrchestratorService {
       return;
     }
 
-    const activeLocutor = this.locutorService.getActiveLocutorAtCurrentTime();
-    if (activeLocutor) {
-      console.log(
-        `[OrchestratorService] Active AI Locutor: "${activeLocutor.name}" (Voice: ${activeLocutor.voice})`
-      );
-    } else {
-      console.log(
-        "[OrchestratorService] No active scheduled locutor. Falling back to default DJ Bloom."
-      );
-    }
-
-    // 1. Try to find a playlist for this locutor
-    const playlist = activeLocutor
-      ? this.playlistRepo.findActivePlaylistForLocutor(activeLocutor.id)
-      : null;
-
-    if (playlist && playlist.tracks.length > 0) {
-      console.log(
-        `[OrchestratorService] Found playlist "${playlist.name}" for locutor "${activeLocutor!.name}" (${playlist.tracks.length} tracks)`
-      );
-      await this.enqueueFromPlaylist(playlist, queue, status, activeLocutor);
+    // TEMP: IA deshabilitada — solo lógica least-played (más antigua / nunca sonada)
+    console.log("[OrchestratorService] IA temporalmente deshabilitada — encolando least-played (nunca o hace más tiempo).");
+    const leastPlayed = this.libraryRepo.getLeastPlayedTracks(20);
+    // Filtrar las que ya están en cola
+    const queueFiles = new Set(
+      queue.map((q: any) => (q.file || "").replace(/^\/app\/music\//, "").replace(/^\/music\//, "")).filter(Boolean)
+    );
+    const recentSet = new Set(
+      this.recentHistory.map((f) => f.replace(/^\/app\/music\//, "").replace(/^\/music\//, ""))
+    );
+    const candidates = leastPlayed.filter((t) => !queueFiles.has(t.file) && !recentSet.has(t.file));
+    const pool = candidates.length > 0 ? candidates : leastPlayed.filter((t) => !queueFiles.has(t.file));
+    const toEnqueue = pool.slice(0, 5);
+    if (toEnqueue.length === 0) {
+      console.warn("[OrchestratorService] No hay candidatos least-played para encolar.");
       return;
     }
-
-    // 2. No playlist found → AI DJ Phase 2
-    console.log(
-      "[OrchestratorService] No playlist found for this locutor. Triggering AI DJ Phase 2..."
-    );
-    await this.runAgentPhase2(status, queue, activeLocutor);
+    console.log(`[OrchestratorService] Encolando ${toEnqueue.length} least-played: ${toEnqueue.map((t) => `"${t.title}"`).join(", ")}`);
+    for (const track of toEnqueue) {
+      const rid = await this.buncasterService.queuePush(`/music/${track.file}`);
+      if (rid) {
+        this.recentHistory.push(track.file);
+        if (this.recentHistory.length > 15) this.recentHistory.shift();
+        // Actualiza lastPlayedAt para rotación correcta
+        this.libraryService.updateLastPlayedByFile(`/music/${track.file}`);
+      }
+    }
+    return;
   }
 
   /**
@@ -385,13 +384,17 @@ export class OrchestratorService {
         return f.replace(/^\/music\//, "");
       }).filter(Boolean)
     );
+    // Avoid re-queuing tracks already in queue or recently played
+    const recentSet = new Set(
+      this.recentHistory.map((f) => f.replace(/^\/app\/music\//, "").replace(/^\/music\//, ""))
+    );
     const selectedTracks: typeof playlist.tracks = [];
     let totalTime = 0;
 
     for (const track of playlist.tracks) {
       if (!track.file) continue;
-      // Skip if already in queue
-      if (queueFiles.has(track.file)) continue;
+      // Skip if already in queue or recently queued (prevents loop of first tracks)
+      if (queueFiles.has(track.file) || recentSet.has(track.file)) continue;
       if (totalTime + track.duration > remainingTimeSec + 30) break; // 30s tolerance
       selectedTracks.push(track);
       totalTime += track.duration;

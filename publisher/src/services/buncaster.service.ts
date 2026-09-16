@@ -12,13 +12,16 @@ function toDbPath(filepath: string): string {
 }
 
 function toContainerPath(filepath: string): string {
-  // "songs/file.mp3" → "/app/music/songs/file.mp3"
-  // "interludios/file.mp3" → "/app/music/interludios/file.mp3"
-  // "/music/songs/file.mp3" → "/app/music/songs/file.mp3"
-  // "/app/music/songs/file.mp3" → "/app/music/songs/file.mp3"
-  if (filepath.startsWith("/app/music/")) return filepath;
-  if (filepath.startsWith("/music/")) return `/app/music/${filepath.slice(7)}`;
-  return `/app/music/${filepath}`;
+  // buncaster-cli (BunRadio) espera rutas relativas "music/..." (relativas a /app)
+  // Ej: "songs/file.mp3" → "music/songs/file.mp3"
+  // Compatibilidad: "/app/music/songs/file.mp3" y "/music/songs/file.mp3" también → "music/songs/file.mp3"
+  const normalized = filepath.replace(/\\/g, "/");
+  const match = normalized.match(/(?:^|\/)(songs|interludios)\/(.+)$/);
+  if (match) return `music/${match[1]}/${match[2]}`;
+  if (normalized.startsWith("music/")) return normalized;
+  if (normalized.startsWith("/music/")) return normalized.slice(1);
+  if (normalized.startsWith("/app/music/")) return normalized.slice(5);
+  return `music/${normalized.replace(/^\//, "")}`;
 }
 
 function extractTitleArtist(filename: string): { title: string; artist: string } {
@@ -160,6 +163,23 @@ export class BuncasterService {
         duration: 0,
         elapsed: 0,
       };
+    }
+  }
+
+  // ── Tier Info ───────────────────────────────────────────
+
+  public async getTierInfo(): Promise<{ codec: "OPUS" | "MP3"; bitrate: number | null }> {
+    const tier = (process.env.STREAM_TIER || "dual").toLowerCase();
+    const codec: "OPUS" | "MP3" = tier === "mp3" ? "MP3" : "OPUS";
+    try {
+      const status = await this.buncasterClient.getStatus();
+      const bitrate =
+        codec === "OPUS" && status.opusTierEnabled
+          ? status.opusTierBitrateKbps
+          : status.fallbackBitrateKbps;
+      return { codec, bitrate: bitrate ?? null };
+    } catch {
+      return { codec, bitrate: null };
     }
   }
 

@@ -160,6 +160,14 @@ export class BuncasterQueueService {
     return this.queue.getWaiting();
   }
 
+  async getActive(): Promise<Job<QueueAddJob>[]> {
+    return this.queue.getActive();
+  }
+
+  getQueue(): Queue {
+    return this.queue;
+  }
+
   async getJobCounts() {
     return this.queue.getJobCounts("waiting", "active", "completed", "failed");
   }

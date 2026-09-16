@@ -25,7 +25,7 @@ services:
   # Buncaster - Streaming Engine (Bun + FFmpeg)
   # ──────────────────────────────────────────────
   buncaster:
-    image: ghcr.io/srsergi0/buncaster:latest
+    image: ghcr.io/srsergi0/buncaster-cli:latest
     container_name: buncaster
     restart: unless-stopped
     depends_on:
@@ -33,18 +33,12 @@ services:
         condition: service_completed_successfully
     ports:
       - "${PORT}:${PORT}"
-      - "${RTMP_PORT}:${RTMP_PORT}"
+      - "${SRT_PORT:-1936}:1936/udp"
     env_file:
       - .env
     volumes:
-      - ./music/songs:/app/music/songs
-      - ./music/interludios:/app/music/interludios
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://0.0.0.0:${PORT}/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      - ./music:/app/music
+    # Healthcheck usa el integrado de la imagen (HEALTHCHECK cada 30s en /health)
 
   # ──────────────────────────────────────────────
   # Publisher - API + Stream Broadcaster
@@ -70,9 +64,11 @@ services:
       - AI_DJ_ENABLED=${AI_DJ_ENABLED}
       - AI_DJ_OPENROUTER_MODEL=${AI_DJ_OPENROUTER_MODEL}
       - AI_DJ_VOICE=${AI_DJ_VOICE}
+      - STREAM_TIER=${STREAM_TIER:-dual}
+      - OPUS_UPSTREAM_URL=${OPUS_UPSTREAM_URL:-}
+      - MP3_UPSTREAM_URL=${MP3_UPSTREAM_URL:-}
     volumes:
-      - ./music/songs:/app/music/songs
-      - ./music/interludios:/app/music/interludios
+      - ./music:/app/music
       - radio-publisher-data:/app/data
     depends_on:
       init:
@@ -97,24 +93,24 @@ services:
         condition: service_started
 
   # ──────────────────────────────────────────────
-  # FTP - Song Upload Server (vsftpd)
+  # FTP - Song Upload Server (vsftpd) - DISABLED
   # ──────────────────────────────────────────────
-  ftp:
-    image: fauria/vsftpd
-    restart: unless-stopped
-    ports:
-      - "${FTP_PORT}:21"
-      - "${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}:${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}"
-    volumes:
-      - ./music/songs:/home/vsftpd/radio/songs
-      - ./music/interludios:/home/vsftpd/radio/interludios
-    environment:
-      - FTP_USER=${FTP_USER_NAME}
-      - FTP_PASS=${FTP_USER_PASS}
-      - PASV_ADDRESS=${FTP_PUBLIC_HOST}
-      - PASV_MIN_PORT=${FTP_PASSIVE_MIN}
-      - PASV_MAX_PORT=${FTP_PASSIVE_MAX}
-      - LOG_STDOUT=YES
+  # ftp:
+  #   image: fauria/vsftpd
+  #   restart: unless-stopped
+  #   ports:
+  #     - "${FTP_PORT}:21"
+  #     - "${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}:${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}"
+  #   volumes:
+  #     - ./music/songs:/home/vsftpd/radio/songs
+  #     - ./music/interludios:/home/vsftpd/radio/interludios
+  #   environment:
+  #     - FTP_USER=${FTP_USER_NAME}
+  #     - FTP_PASS=${FTP_USER_PASS}
+  #     - PASV_ADDRESS=${FTP_PUBLIC_HOST}
+  #     - PASV_MIN_PORT=${FTP_PASSIVE_MIN}
+  #     - PASV_MAX_PORT=${FTP_PASSIVE_MAX}
+  #     - LOG_STDOUT=YES
 
 volumes:
   radio-publisher-data:

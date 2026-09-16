@@ -26,10 +26,10 @@ El sistema está compuesto por 4 microservicios principales que se ejecutan en c
    - **Conexión**: Permite la carga directa de canciones vía cliente FTP. Los archivos subidos se guardan en el volumen compartido `songs/` o `interludios/`. El publisher detecta automáticamente los cambios y los indexa.
    - **Credenciales**: Usuario `radio`, contraseña `radiobloom` (configuradas en `.env`).
 
-4. **`buncaster` (Streaming Engine)**:
-   - **Puerto**: `4321` (HTTP Stream + Admin Panel) / `1935` (RTMP Live Input).
-   - **Imagen**: `ghcr.io/srsergi0/buncaster:latest`
-   - **Conexión**: Lee continuamente los archivos de audio en `music/songs/` e `music/interludios/`. Emite el flujo continuo (stream) de audio en formato MP3 hacia el puerto `4321`. Acepta transmisiones en vivo vía RTMP (OBS Studio) en el puerto `1935`. Incluye panel de administración DJ Booth en `/admin`.
+4. **`buncaster` (Streaming Engine — buncaster-cli / BunRadio)**:
+   - **Puerto**: `4321` (HTTP Stream + Admin Panel, `PORT`/`DASHBOARD_PORT`) / `1936/udp` (SRT Live Input, `SRT_PORT`; `RTMP_PORT=1935` legacy alias).
+   - **Imagen**: `ghcr.io/srsergi0/buncaster-cli:latest`
+   - **Conexión**: Lee continuamente los archivos de audio en `music/` (`songs/` + `interludios/`) montado en `/app/music`. Emite dual-tier MP3 320k + Opus 96k (`/stream`, `/mp3`, `/opus`) en puerto `4321`. Acepta transmisiones en vivo vía SRT (`srt://host:1936?streamid=live/<KEY>`) en `1936/udp`. Healthcheck integrado en la imagen (`/health` cada 30s); el compose ya no lo sobreescribe con `wget`.
 
 ---
 
@@ -618,6 +618,17 @@ Buncaster incluye las siguientes tools MCP:
 - **Herramienta `create_program_playlist`**: El LLM crea una playlist permanente en BD con los IDs reales del catálogo. El sistema guarda la playlist, calcula duración total, y la encola automáticamente.
 - **Método `getLeastPlayedTracks`**: Nuevo en `LibraryRepository` — ordena canciones por `lastPlayedAt` ASC (nulas primero) para dar prioridad a las que más tiempo llevan sin sonar.
 - **Archivos modificados**: `schema.ts`, `database.ts` (migración), `types.ts`, `playlist.repo.ts` (nuevos métodos), `orchestrator.service.ts` (Phase 2 + reescritura de `enqueueNext`), `router.ts` (endpoints actualizados), `library.repo.ts` (`getLeastPlayedTracks`), `index.ts` (DI), `web/types.ts`.
+
+### Migración a buncaster-cli / BunRadio (Sept 2026)
+
+- **Imagen**: `ghcr.io/srsergi0/buncaster:latest` → `ghcr.io/srsergi0/buncaster-cli:latest` (BunRadio).
+- **Puertos**: RTMP `1935/tcp` → SRT `1936/udp` (`SRT_PORT` en `.env`; `RTMP_PORT` queda como legacy alias). Web/stream sigue en `PORT=4321`.
+- **Docker**: Healthcheck custom con `wget` eliminado — buncaster-cli trae su propio `HEALTHCHECK` (`/health` cada 30s). Volumen `music` unificado a `./music:/app/music` (antes dos binds separados `songs`/`interludios`). `FALLBACK_SOURCE` cambia de `music/songs` a `music` (parent dir, permite `songs/` + `interludios/` con un solo fallback). `ENABLE_OPUS_TIER=true` añadido (dual MP3 320k + Opus 96k en `/mp3`/`/opus`).
+- **REST API**: Endpoints migrados de `/admin/api/*` a `/api/*` documentados en BunRadio (`/api/queue`, `/api/queue/add`, `/api/queue/remove`, `/api/queue/move`, `/api/queue/clear`, `/api/skip`, `/health`, `/status`). Cliente mantiene fallback dual (prueba `/api/*` primero, luego `/admin/api/*` legacy) para compatibilidad. `getCurrentTrack()` ahora con fallback parseando `/health` (`fallback.currentTrack` string) y `/status`. `shufflePlaylist` y `toggleFallback` sin equivalente en BunRadio → no-op con éxito. `toContainerPath` cambia de absoluto `/app/music/...` a relativo `music/...` (BunRadio resuelve relativo a `/app`).
+- **Publisher Stream**: `buncaster.client.ts:getStreamUrl()` → `/mp3`; `index.ts` ahora con dual `MP3_URL`/`OPUS_URL` y dos `StreamBroadcaster` (`mp3`→`/radiobloom.mp3`, `opus`→`/radiobloom.opus`, default `/stream`/`/radiobloom` usa Opus si `ENABLE_OPUS_TIER!=false`). `router.ts` `/api/system/status` ahora reporta `srtPort` + `rtmpPort` legacy y `streamUrl`→`/mp3`.
+- **Web Player**: `Player.astro` migrado a Opus por defecto (`/radiobloom.opus`, `OPUS 96K`), fallback a MP3 si Opus falla, título actualizado a `OPUS 96k / MP3 320k`.
+- **Infra**: Workflow `Buncaster-cli/.github/workflows/docker-publish.yml` arreglado para no pushear a `buncaster` desde el fork (solo `buncaster-cli`), paquete GHCR `buncaster-cli` hecho público.
+- **Archivos modificados**: `docker-compose.yml`, `.env`, `.env.example`, `publisher/src/infrastructure/buncaster.client.ts`, `publisher/src/services/buncaster.service.ts`, `publisher/src/index.ts`, `publisher/src/api/router.ts`, `web/src/components/Player.astro`, `AGENTS.md`, `BITACORA.md`.
 
 ### 🔧 Fix MCP Server — Reconexión desde MCP Inspector (Julio 2026)
 

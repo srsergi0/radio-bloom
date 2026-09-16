@@ -21,6 +21,9 @@ export interface BuncasterStatus {
   currentTrack: BuncasterCurrentTrack | null;
   uptimeSeconds: number;
   fallbackActive: boolean;
+  opusTierEnabled?: boolean;
+  opusTierBitrateKbps?: number;
+  fallbackBitrateKbps?: number;
 }
 
 export class BuncasterClient {
@@ -34,7 +37,7 @@ export class BuncasterClient {
     private readonly port: number,
     private readonly adminUser: string,
     private readonly adminPassword: string,
-    private readonly reconnectIntervalMs = 2000
+    private readonly reconnectIntervalMs = 2000,
   ) {
     this.baseUrl = `http://${host}:${port}`;
     this.authHeader =
@@ -59,12 +62,12 @@ export class BuncasterClient {
       this.reconnectAttempts++;
       if (this.reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         console.log(
-          `[BuncasterClient] Buncaster not ready (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}). Retrying in ${this.reconnectIntervalMs}ms...`
+          `[BuncasterClient] Buncaster not ready (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}). Retrying in ${this.reconnectIntervalMs}ms...`,
         );
         setTimeout(() => this.checkHealth(), this.reconnectIntervalMs);
       } else {
         console.error(
-          `[BuncasterClient] Stopped reconnecting after ${MAX_RECONNECT_ATTEMPTS} attempts.`
+          `[BuncasterClient] Stopped reconnecting after ${MAX_RECONNECT_ATTEMPTS} attempts.`,
         );
       }
     }
@@ -92,7 +95,7 @@ export class BuncasterClient {
 
   private async request<T>(
     path: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
   ): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       ...options,
@@ -106,17 +109,34 @@ export class BuncasterClient {
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(
-        `Buncaster API error: ${res.status} ${res.statusText} - ${text}`
+        `Buncaster API error: ${res.status} ${res.statusText} - ${text}`,
       );
     }
 
     return res.json() as Promise<T>;
   }
 
+  private async requestWithFallback<T>(
+    paths: string[],
+    options: RequestInit = {},
+  ): Promise<T> {
+    let lastErr: any = null;
+    for (const path of paths) {
+      try {
+        return await this.request<T>(path, options);
+      } catch (err: any) {
+        lastErr = err;
+        // 404 -> try next alias, otherwise also try next
+        continue;
+      }
+    }
+    throw lastErr ?? new Error("All fallback paths failed");
+  }
+
   // ── Stream ──────────────────────────────────────────────
 
   public getStreamUrl(): string {
-    return `${this.baseUrl}/stream`;
+    return `${this.baseUrl}/mp3`;
   }
 
   public getStreamResponse(): Promise<Response> {
@@ -133,120 +153,193 @@ export class BuncasterClient {
 
   // ── Current Track ───────────────────────────────────────
 
-  public async getCurrentTrack(): Promise<BuncasterCurrentTrack | null> {
+  // buncaster-cli exposes the file of the deck currently playing only in
+  // /debug-state. /health gives just the display title and the upcoming queue,
+  // so using queue[0] there showed the NEXT track as "now playing".
+  private async getActiveDeckFile(): Promise<string | null> {
     try {
-      const data = await this.request<{ currentTrack: BuncasterCurrentTrack | null }>(
-        "/admin/api/current"
-      );
-      return data.currentTrack;
-    } catch {
-      return null;
+      const debugState = await this.request<any>("/debug-state");
+      const activeDeck: string | undefined = debugState?.activeDeck;
+      const decks = activeDeck ? [activeDeck, "A", "B"] : ["A", "B"];
+      for (const deck of decks) {
+        const file = debugState?.[`deck${deck}`]?.currentTrackFile;
+        if (typeof file === "string" && file.length > 0) return file;
+      }
+    } catch {}
+    return null;
+  }
+
+  public async getCurrentTrack(): Promise<BuncasterCurrentTrack | null> {
+    // 1. Legacy + new dedicated endpoint
+    for (const ep of ["/admin/api/current", "/api/current"]) {
+      try {
+        const data = await this.request<{ currentTrack: BuncasterCurrentTrack | null }>(ep);
+        if (data && "currentTrack" in data) return data.currentTrack;
+        // Some servers return the track directly
+        if (data && (data as any).file) return data as unknown as BuncasterCurrentTrack;
+      } catch {}
     }
+    // 2. Derive from /health (buncaster-cli: fallback.currentTrack = "Artist - Title")
+    try {
+      const health = await this.request<any>("/health");
+      const ctStr: string | undefined = health?.fallback?.currentTrack;
+      // If health has structured currentTrack
+      if (health?.currentTrack?.file) return health.currentTrack as BuncasterCurrentTrack;
+      if (typeof ctStr === "string" && ctStr.length > 0) {
+        // Synthesize a track from the display string so upper layers have something to show
+        const dash = ctStr.indexOf(" - ");
+        const title = dash > 0 ? ctStr.slice(dash + 3).trim() : ctStr;
+        const artist = dash > 0 ? ctStr.slice(0, dash).trim() : "";
+        // Use the file of the deck actually playing (not the head of the queue)
+        const activeFile = await this.getActiveDeckFile();
+        return {
+          file: activeFile ?? ctStr,
+          title,
+          artist,
+          duration: 0,
+          startedAt: Date.now(),
+        };
+      }
+    } catch {}
+    // 3. Try /status fallback parsing
+    try {
+      const status = await this.request<any>("/status");
+      if (status?.currentTrack?.file) return status.currentTrack as BuncasterCurrentTrack;
+      if (status?.fallback?.currentTrack?.file) return status.fallback.currentTrack as BuncasterCurrentTrack;
+    } catch {}
+    return null;
   }
 
   // ── Queue Management ────────────────────────────────────
 
   public async getQueue(): Promise<BuncasterQueueItem[]> {
-    try {
-      const data = await this.request<{ queue: string[] }>(
-        "/admin/api/queue"
-      );
-      const raw = data.queue || [];
-      return raw.map((file, index) => ({ index, file, title: "", artist: "" }));
-    } catch {
-      return [];
+    const candidates = ["/api/queue", "/admin/api/queue"];
+    for (const ep of candidates) {
+      try {
+        const data = await this.request<any>(ep);
+        const raw: any[] = data.queue || data.items || data.data || [];
+        if (!Array.isArray(raw)) continue;
+        // buncaster-cli may return string[] or object[]
+        return raw.map((entry: any, index: number) => {
+          if (typeof entry === "string") {
+            return { index, file: entry, title: "", artist: "" };
+          }
+          return {
+            index: entry.index ?? index,
+            file: entry.file ?? entry.path ?? String(entry),
+            title: entry.title ?? "",
+            artist: entry.artist ?? "",
+          };
+        });
+      } catch {}
     }
+    return [];
   }
 
   public async pushToQueue(file: string): Promise<boolean> {
-    try {
-      await this.request("/admin/api/queue/push", {
-        method: "POST",
-        body: JSON.stringify({ file }),
-      });
-      return true;
-    } catch (err: any) {
-      console.error("[BuncasterClient] pushToQueue failed:", err.message);
-      return false;
+    const candidates = ["/api/queue/add", "/admin/api/queue/push"];
+    for (const ep of candidates) {
+      try {
+        await this.request(ep, {
+          method: "POST",
+          body: JSON.stringify({ file }),
+        });
+        return true;
+      } catch {}
     }
+    console.error("[BuncasterClient] pushToQueue failed: all endpoints rejected for", file);
+    return false;
   }
 
   public async removeFromQueue(index: number): Promise<boolean> {
-    try {
-      await this.request("/admin/api/queue/remove", {
-        method: "POST",
-        body: JSON.stringify({ index }),
-      });
-      return true;
-    } catch (err: any) {
-      console.error("[BuncasterClient] removeFromQueue failed:", err.message);
-      return false;
+    const candidates = ["/api/queue/remove", "/admin/api/queue/remove"];
+    for (const ep of candidates) {
+      try {
+        await this.request(ep, {
+          method: "POST",
+          body: JSON.stringify({ index }),
+        });
+        return true;
+      } catch {}
     }
+    console.error("[BuncasterClient] removeFromQueue failed:", index);
+    return false;
   }
 
   public async clearQueue(): Promise<boolean> {
-    try {
-      await this.request("/admin/api/queue/clear", { method: "POST" });
-      return true;
-    } catch (err: any) {
-      console.error("[BuncasterClient] clearQueue failed:", err.message);
-      return false;
+    const candidates = ["/api/queue/clear", "/admin/api/queue/clear"];
+    for (const ep of candidates) {
+      try {
+        await this.request(ep, { method: "POST" });
+        return true;
+      } catch {}
     }
+    console.error("[BuncasterClient] clearQueue failed");
+    return false;
   }
 
   public async moveInQueue(from: number, to: number): Promise<boolean> {
-    try {
-      await this.request("/admin/api/queue/move", {
-        method: "POST",
-        body: JSON.stringify({ from, to }),
-      });
-      return true;
-    } catch (err: any) {
-      console.error("[BuncasterClient] moveInQueue failed:", err.message);
-      return false;
+    const candidates = ["/api/queue/move", "/admin/api/queue/move"];
+    for (const ep of candidates) {
+      try {
+        await this.request(ep, {
+          method: "POST",
+          body: JSON.stringify({ from, to }),
+        });
+        return true;
+      } catch {}
     }
+    console.error("[BuncasterClient] moveInQueue failed:", { from, to });
+    return false;
   }
 
   // ── Playback Controls ───────────────────────────────────
 
   public async skip(): Promise<boolean> {
-    try {
-      await this.request("/admin/api/skip", { method: "POST" });
-      return true;
-    } catch (err: any) {
-      console.error("[BuncasterClient] skip failed:", err.message);
-      return false;
+    const candidates = ["/api/skip", "/admin/api/skip"];
+    for (const ep of candidates) {
+      try {
+        await this.request(ep, { method: "POST" });
+        return true;
+      } catch {}
     }
+    console.error("[BuncasterClient] skip failed");
+    return false;
   }
 
   public async shufflePlaylist(): Promise<boolean> {
+    // Not documented in buncaster-cli; try legacy, otherwise no-op
     try {
       await this.request("/admin/api/playlist/shuffle", { method: "POST" });
       return true;
-    } catch (err: any) {
-      console.error("[BuncasterClient] shufflePlaylist failed:", err.message);
-      return false;
+    } catch {
+      // buncaster-cli has no shuffle — fallback is directory-based, ignore
+      return true;
     }
   }
 
   public async toggleFallback(): Promise<boolean> {
-    try {
-      await this.request("/admin/api/fallback/toggle", { method: "POST" });
-      return true;
-    } catch (err: any) {
-      console.error("[BuncasterClient] toggleFallback failed:", err.message);
-      return false;
+    const candidates = ["/admin/api/fallback/toggle", "/api/fallback/toggle"];
+    for (const ep of candidates) {
+      try {
+        await this.request(ep, { method: "POST" });
+        return true;
+      } catch {}
     }
+    // buncaster-cli: /api/fallback changes folder, not pause. Treat as no-op but succeed
+    // so pausePlayback/startPlayback don't throw
+    return true;
   }
 
   // ── File Library ────────────────────────────────────────
 
   public async getFiles(): Promise<string[]> {
-    try {
-      const data = await this.request<{ files: string[] }>("/admin/api/files");
-      return data.files || [];
-    } catch {
-      return [];
+    for (const ep of ["/api/files", "/admin/api/files"]) {
+      try {
+        const data = await this.request<{ files: string[] }>(ep);
+        return data.files || [];
+      } catch {}
     }
+    return [];
   }
 }

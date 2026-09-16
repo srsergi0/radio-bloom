@@ -28,7 +28,15 @@ const BUNCASTER_HOST = process.env.BUNCASTER_HOST || "buncaster";
 const BUNCASTER_PORT = parseInt(process.env.BUNCASTER_PORT || "4321", 10);
 const BUNCASTER_ADMIN_USER = process.env.BUNCASTER_ADMIN_USER || "admin";
 const BUNCASTER_ADMIN_PASSWORD = process.env.BUNCASTER_ADMIN_PASSWORD || "radiobloom";
-const STREAM_URL = `http://${BUNCASTER_HOST}:${BUNCASTER_PORT}/stream`;
+// Tier del stream: "dual" (mp3 + opus) | "opus" (solo opus) | "mp3" (solo mp3)
+const STREAM_TIER = (process.env.STREAM_TIER || "dual").toLowerCase();
+const OPUS_ENABLED = STREAM_TIER !== "mp3";
+const MP3_ENABLED = STREAM_TIER !== "opus";
+// Upstreams hacia buncaster (overridables si el tier único se sirve en otra ruta)
+const MP3_URL = process.env.MP3_UPSTREAM_URL || `http://${BUNCASTER_HOST}:${BUNCASTER_PORT}/mp3`;
+const OPUS_URL = process.env.OPUS_UPSTREAM_URL || `http://${BUNCASTER_HOST}:${BUNCASTER_PORT}/opus`;
+const STREAM_URL = MP3_URL; // legacy alias para broadcaster mp3
+const USE_OPUS = OPUS_ENABLED;
 
 const DIST_DIR =
   process.env.NODE_ENV === "production"
@@ -152,7 +160,10 @@ class StreamBroadcaster {
   private isStreaming = false;
   private static readonly MAX_CLIENTS = 500;
 
-  constructor() {
+  constructor(
+    private readonly upstreamUrl: string,
+    private readonly label: string,
+  ) {
     this.startStreaming();
   }
 
@@ -162,25 +173,25 @@ class StreamBroadcaster {
 
     while (true) {
       try {
-        console.log(`[Broadcaster] Connecting to Buncaster upstream at ${STREAM_URL}...`);
+        console.log(`[Broadcaster:${this.label}] Connecting to Buncaster upstream at ${this.upstreamUrl}...`);
         const auth = "Basic " + Buffer.from(`${BUNCASTER_ADMIN_USER}:${BUNCASTER_ADMIN_PASSWORD}`).toString("base64");
-        const res = await fetch(STREAM_URL, { headers: { Authorization: auth } });
+        const res = await fetch(this.upstreamUrl, { headers: { Authorization: auth } });
         if (!res.ok || !res.body) {
           throw new Error(`Upstream returned status ${res.status}`);
         }
 
         const reader = res.body.getReader();
-        console.log("[Broadcaster] Connected to upstream successfully.");
+        console.log(`[Broadcaster:${this.label}] Connected to upstream successfully.`);
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
-            console.log("[Broadcaster] Upstream connection closed. Reconnecting...");
+            console.log(`[Broadcaster:${this.label}] Upstream connection closed. Reconnecting...`);
             break;
           }
           this.pushData(value);
         }
       } catch (err: any) {
-        console.error("[Broadcaster] Upstream connection failed:", err.message);
+        console.error(`[Broadcaster:${this.label}] Upstream connection failed:`, err.message);
         let silenceMs = 0;
         while (silenceMs < 30000 && this.clients.size > 0) {
           this.pushData(SILENT_MP3_FRAME);
@@ -223,7 +234,9 @@ class StreamBroadcaster {
   }
 }
 
-const broadcaster = new StreamBroadcaster();
+const mp3Broadcaster = MP3_ENABLED ? new StreamBroadcaster(MP3_URL, "mp3") : null;
+const opusBroadcaster = OPUS_ENABLED ? new StreamBroadcaster(OPUS_URL, "opus") : null;
+const broadcaster = USE_OPUS ? opusBroadcaster! : mp3Broadcaster!; // alias para compatibilidad
 
 // ============================================================
 // 6. HTTP Server (Bun.serve)
@@ -234,15 +247,17 @@ const _server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
 
-    if (url.pathname === "/radiobloom.mp3") {
+    if (url.pathname === "/radiobloom.mp3" || url.pathname === "/mp3") {
+      const b = mp3Broadcaster;
+      if (!b) return new Response("MP3 tier disabled", { status: 404 });
       let clientController: ReadableStreamDefaultController | null = null;
       const stream = new ReadableStream({
         start(controller) {
           clientController = controller;
-          broadcaster.registerClient(controller);
+          b.registerClient(controller);
         },
         cancel() {
-          if (clientController) broadcaster.unregisterClient(clientController);
+          if (clientController) b.unregisterClient(clientController);
         },
       });
 
@@ -259,15 +274,71 @@ const _server = Bun.serve({
       });
     }
 
+    if (url.pathname === "/radiobloom.opus" || url.pathname === "/opus") {
+      const b = opusBroadcaster;
+      if (!b) return new Response("Opus tier disabled", { status: 404 });
+      let clientController: ReadableStreamDefaultController | null = null;
+      const stream = new ReadableStream({
+        start(controller) {
+          clientController = controller;
+          b.registerClient(controller);
+        },
+        cancel() {
+          if (clientController) b.unregisterClient(clientController);
+        },
+      });
+
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          "Content-Type": "audio/ogg; codecs=opus",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+          "Content-Encoding": "identity",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+
+    // Default /radiobloom.* alias: usa Opus si está disponible
+    if (url.pathname === "/radiobloom" || url.pathname === "/stream") {
+      const useOpus = USE_OPUS && opusBroadcaster !== null;
+      const targetBroadcaster = (useOpus ? opusBroadcaster : mp3Broadcaster)!;
+      const mime = useOpus ? "audio/ogg; codecs=opus" : "audio/mpeg";
+      let clientController: ReadableStreamDefaultController | null = null;
+      const stream = new ReadableStream({
+        start(controller) {
+          clientController = controller;
+          targetBroadcaster.registerClient(controller);
+        },
+        cancel() {
+          if (clientController) targetBroadcaster.unregisterClient(clientController);
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          "Content-Type": mime,
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+          "Content-Encoding": "identity",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+
     return apiRouter.fetch(req);
   },
 });
 
 console.log(`[server] Radio Bloom API + Stream on port ${PORT}`);
-console.log(`[server] Stream: http://localhost:${PORT}/radiobloom.mp3`);
+console.log(`[server] STREAM_TIER = ${STREAM_TIER} (mp3: ${MP3_ENABLED ? "on" : "off"}, opus: ${OPUS_ENABLED ? "on" : "off"})`);
+if (MP3_ENABLED) console.log(`[server] Stream MP3:  http://localhost:${PORT}/radiobloom.mp3  (→ ${MP3_URL})`);
+if (OPUS_ENABLED) console.log(`[server] Stream Opus: http://localhost:${PORT}/radiobloom.opus (→ ${OPUS_URL}) ${USE_OPUS ? "[default]" : ""}`);
 console.log(`[server] API:    http://localhost:${PORT}/api/`);
 console.log(`[server] Queues: http://localhost:${PORT}/admin/queues`);
-console.log(`[server] Radio Bloom Composition Root ready`);
 
 process.on("SIGINT", async () => {
   console.log("[shutdown] SIGINT received, shutting down gracefully...");

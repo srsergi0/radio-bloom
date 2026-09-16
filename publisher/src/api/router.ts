@@ -150,9 +150,10 @@ export function createApiRouter(deps: ApiDependencies): Hono {
       data: {
         buncaster: {
           connected: buncasterConnected,
+          srtPort: parseInt(process.env.SRT_PORT || process.env.RTMP_PORT || "1936", 10),
           rtmpPort: parseInt(process.env.RTMP_PORT || "1935", 10),
           httpPort: parseInt(process.env.BUNCASTER_PORT || "4321", 10),
-          streamUrl: `http://localhost:${process.env.BUNCASTER_PORT || "4321"}/stream`,
+          streamUrl: `http://localhost:${process.env.BUNCASTER_PORT || "4321"}/mp3`,
         },
         config,
       },
@@ -289,15 +290,19 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   // ============================================================
 
   app.get("/api/stream", async (c) => {
-    const track = await deps.buncasterService.getCurrentTrack();
+    const [track, stream] = await Promise.all([
+      deps.buncasterService.getCurrentTrack(),
+      deps.buncasterService.getTierInfo(),
+    ]);
 
     if (!track) {
-      return c.json({ ok: true, data: null });
+      return c.json({ ok: true, data: null, stream });
     }
 
     return c.json({
       ok: true,
       data: track,
+      stream,
     });
   });
 
@@ -958,17 +963,9 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   // STATIC FILES (Astro Landing Page)
   // ============================================================
 
-  // SPA fallback: admin client-side routing -> serve admin/index.html
-  app.use(
-    "/admin/*",
-    serveStatic({
-      root: deps.distDir,
-      rewriteRequestPath: (p) => {
-        if (p.startsWith("/admin/queues")) return p;
-        return "/admin/index.html";
-      },
-    })
-  );
+  // Admin SPA eliminado — solo API. /admin/* retorna 404 (excepto /admin/queues que es Bull-Board)
+  app.get("/admin", (c) => c.json({ ok: false, error: "Admin dashboard eliminado — usar API" }, 404));
+  app.get("/admin/*", (c) => c.json({ ok: false, error: "Admin dashboard eliminado — usar API" }, 404));
 
   app.use(
     "/*",

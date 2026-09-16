@@ -33,6 +33,7 @@ dist/
 # Runtime data
 publisher/data/
 music/interludios/
+ai-dj-archive/
 
 # Logs
 *.log

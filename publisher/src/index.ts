@@ -152,6 +152,36 @@ const SILENT_MP3_FRAME = new Uint8Array([
   0x00, 0x00, 0x00, 0x00,
 ]);
 
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
+// Devuelve las 2 primeras páginas Ogg (OpusHead + OpusTags) si el buffer empieza con ellas
+function extractOggOpusHeaders(buf: Uint8Array): Uint8Array | null {
+  let offset = 0;
+  let pagesFound = 0;
+  while (offset + 27 <= buf.length) {
+    if (buf[offset] !== 0x4f || buf[offset + 1] !== 0x67 || buf[offset + 2] !== 0x67 || buf[offset + 3] !== 0x53) {
+      return null;
+    }
+    const numSegments = buf[offset + 26];
+    if (offset + 27 + numSegments > buf.length) return null;
+    let payloadLen = 0;
+    for (let i = 0; i < numSegments; i++) payloadLen += buf[offset + 27 + i];
+    const pageLen = 27 + numSegments + payloadLen;
+    if (offset + pageLen > buf.length) return null;
+    pagesFound++;
+    offset += pageLen;
+    if (pagesFound === 2) return buf.slice(0, offset);
+  }
+  return null;
+}
+
 class StreamBroadcaster {
   private buffer: Uint8Array[] = [];
   private maxBufferBytes = 1.5 * 1024 * 1024;
@@ -160,9 +190,16 @@ class StreamBroadcaster {
   private isStreaming = false;
   private static readonly MAX_CLIENTS = 500;
 
+  // Cabeceras Ogg/Opus (OpusHead + OpusTags) que hay que anteponer a cada oyente nuevo
+  private headerBytes: Uint8Array | null = null;
+  private headerScan: Uint8Array[] = [];
+  private headerScanBytes = 0;
+  private headerDone = false;
+
   constructor(
     private readonly upstreamUrl: string,
     private readonly label: string,
+    private readonly captureOggHeaders = false,
   ) {
     this.startStreaming();
   }
@@ -173,6 +210,11 @@ class StreamBroadcaster {
 
     while (true) {
       try {
+        // Cada conexión nueva a buncaster vuelve a recibir las cabeceras: recaptúralas
+        this.headerDone = false;
+        this.headerScan = [];
+        this.headerScanBytes = 0;
+
         console.log(`[Broadcaster:${this.label}] Connecting to Buncaster upstream at ${this.upstreamUrl}...`);
         const auth = "Basic " + Buffer.from(`${BUNCASTER_ADMIN_USER}:${BUNCASTER_ADMIN_PASSWORD}`).toString("base64");
         const res = await fetch(this.upstreamUrl, { headers: { Authorization: auth } });
@@ -194,7 +236,7 @@ class StreamBroadcaster {
         console.error(`[Broadcaster:${this.label}] Upstream connection failed:`, err.message);
         let silenceMs = 0;
         while (silenceMs < 30000 && this.clients.size > 0) {
-          this.pushData(SILENT_MP3_FRAME);
+          this.roll(SILENT_MP3_FRAME);
           await new Promise((r) => setTimeout(r, 26));
           silenceMs += 26;
         }
@@ -207,6 +249,34 @@ class StreamBroadcaster {
   }
 
   private pushData(value: Uint8Array) {
+    if (this.captureOggHeaders && !this.headerDone) {
+      this.headerScan.push(value);
+      this.headerScanBytes += value.length;
+      const combined = concatBytes(this.headerScan);
+      const headers = extractOggOpusHeaders(combined);
+      if (headers) {
+        this.headerBytes = headers;
+        this.headerDone = true;
+        this.headerScan = [];
+        this.headerScanBytes = 0;
+        this.roll(combined.subarray(headers.length));
+        return;
+      }
+      if (this.headerScanBytes >= 65536) {
+        // No hay cabeceras Ogg (p. ej. MP3): deja de esperar y suelta lo retenido
+        this.headerDone = true;
+        this.headerScan = [];
+        this.headerScanBytes = 0;
+        this.roll(combined);
+        return;
+      }
+      return;
+    }
+    this.roll(value);
+  }
+
+  private roll(value: Uint8Array) {
+    if (value.length === 0) return;
     this.buffer.push(value);
     this.bufferBytes += value.length;
     while (this.bufferBytes > this.maxBufferBytes) {
@@ -223,6 +293,9 @@ class StreamBroadcaster {
       try { controller.close(); } catch {}
       return;
     }
+    if (this.headerBytes && this.headerBytes.length > 0) {
+      try { controller.enqueue(this.headerBytes); } catch { return; }
+    }
     for (const chunk of this.buffer) {
       try { controller.enqueue(chunk); } catch { return; }
     }
@@ -235,7 +308,7 @@ class StreamBroadcaster {
 }
 
 const mp3Broadcaster = MP3_ENABLED ? new StreamBroadcaster(MP3_URL, "mp3") : null;
-const opusBroadcaster = OPUS_ENABLED ? new StreamBroadcaster(OPUS_URL, "opus") : null;
+const opusBroadcaster = OPUS_ENABLED ? new StreamBroadcaster(OPUS_URL, "opus", true) : null;
 const broadcaster = USE_OPUS ? opusBroadcaster! : mp3Broadcaster!; // alias para compatibilidad
 
 // ============================================================

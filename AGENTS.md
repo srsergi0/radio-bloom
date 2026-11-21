@@ -15,11 +15,19 @@ Los puertos de Bloom están conectados a **Cloudflare Tunnel**. NO cambiar los p
 
 Puertos críticos:
 - `9876` — API Publisher
-- `6379` — Redis
+- `6379` — Redis: **ya no se publica** (solo red docker, con `REDIS_PASSWORD`). La instancia expuesta fue comprometida en oct-2026; no volver a publicarla.
 - `4321` — Buncaster HTTP Stream + Admin Panel (BunRadio `PORT` / `DASHBOARD_PORT`)
+- `4433/udp` — MoQ/WebTransport (servicio `moq-relay`, audio de baja latencia; `MOQ_ENABLED` en `.env`)
 - `1936/udp` — SRT (OBS Live Input, `SRT_PORT`; `RTMP_PORT=1935` legacy alias)
 - `21` + `30000-30100` — FTP
 - `3000` — Publisher interno
+
+# Dominio: radio.tceoslabs.com
+
+- La radio (marca visible **Radio Tceos**) se publica en **https://radio.tceoslabs.com** con un túnel propio `bloom-radio` (id `a3e9e5f6-8352-4b00-bc00-7a5b96a0f446`, gestionado localmente), servicio `tunnel` de este compose → `http://web:80` (nginx). Sin puertos publicados.
+- Config sin secretos en `tunnel/config.yml`. Credenciales **fuera del repo**: `/etc/cloudflared-bloom/credentials.json` (uid 65532, 0400).
+- El dominio antiguo `radio-bloom.taptapp.xyz` sigue sirviéndose por el túnel "Hostinguer" (gestionado desde el panel de Cloudflare) hacia el publisher.
+- Rutas técnicas (`/radiobloom.opus`, claves `bloom:*` de localStorage) se mantienen por compatibilidad.
 
 # Carpetas de Música
 

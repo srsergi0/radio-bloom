@@ -12,7 +12,7 @@ export default function Embed() {
   const p = useStore(player);
   const track = now?.track;
   const interlude = track?.type === "interludio";
-  const title = !track ? "Bloom Radio" : interlude ? "Locución" : track.title;
+  const title = !track ? "Radio Tceos" : interlude ? "Locución" : track.title;
   const artist = !track ? "Lima · 24/7" : interlude ? (now?.host?.name ?? "") : track.artist;
   const active = isActive(p.status);
   const busy = p.status === "loading" || p.status === "reconnecting";
@@ -33,7 +33,7 @@ export default function Embed() {
       <Cover src={track?.coverUrl} seed={track?.key ?? "bloom"} label={title} className="embed__cover" />
       <div className="embed__text">
         <a className="embed__brand" href="/" target="_blank" rel="noreferrer">
-          <span className={`onair__dot ${now?.onAir.isLive ? "is-live" : ""}`} /> bloom<em>radio</em>
+          <span className={`onair__dot ${now?.onAir.isLive ? "is-live" : ""}`} /> radio<em>tceos</em>
           {listeners && listeners.current > 0 && <span className="embed__count"> · {listeners.current} escuchando</span>}
         </a>
         <span className="embed__title">{title}</span>

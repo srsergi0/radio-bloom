@@ -10,7 +10,7 @@ interface Props {
   lang: Lang;
 }
 const { title, description, lang } = Astro.props;
-const canonical = new URL(Astro.url.pathname, Astro.site ?? "https://radio-bloom.taptapp.xyz");
+const canonical = new URL(Astro.url.pathname, Astro.site ?? "https://radio.tceoslabs.com");
 const alt = lang === "es" ? "/en/" : "/";
 ---
 
@@ -30,7 +30,7 @@ const alt = lang === "es" ? "/en/" : "/";
     <link rel="manifest" href="/manifest.webmanifest" />
 
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Bloom Radio" />
+    <meta property="og:site_name" content="Radio Tceos" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:image" content="/og.png" />
@@ -46,7 +46,7 @@ const alt = lang === "es" ? "/en/" : "/";
     <script type="application/ld+json" set:html={JSON.stringify({
       "@context": "https://schema.org",
       "@type": "RadioStation",
-      name: "Bloom Radio",
+      name: "Radio Tceos",
       description,
       areaServed: "Worldwide",
       address: { "@type": "PostalAddress", addressLocality: "Lima", addressCountry: "PE" },

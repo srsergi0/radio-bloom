@@ -20,7 +20,7 @@ const es = lang === "es";
           ? "Añádela a tu pantalla de inicio: se abre al toque, sigue sonando con la pantalla bloqueada y responde a los controles de tus auriculares."
           : "Add it to your home screen: opens instantly, keeps playing with the screen locked and responds to your headphone controls."}
       </p>
-      <button type="button" class="btn" data-install hidden>{es ? "Instalar Bloom" : "Install Bloom"}</button>
+      <button type="button" class="btn" data-install hidden>{es ? "Instalar Radio Tceos" : "Install Radio Tceos"}</button>
       <p class="card__hint" data-install-hint>
         {es ? "En iPhone: Compartir → Añadir a pantalla de inicio." : "On iPhone: Share → Add to Home Screen."}
       </p>
@@ -65,7 +65,7 @@ const es = lang === "es";
   });
 
   const embedCode = document.querySelector<HTMLElement>("[data-embed-code]");
-  const embedHtml = `<iframe src="${new URL("/embed", location.href).href}" width="100%" height="100" style="border:0;border-radius:18px" allow="autoplay" title="Bloom Radio"></iframe>`;
+  const embedHtml = `<iframe src="${new URL("/embed", location.href).href}" width="100%" height="100" style="border:0;border-radius:18px" allow="autoplay" title="Radio Tceos"></iframe>`;
   if (embedCode) embedCode.textContent = embedHtml;
   document.querySelector<HTMLButtonElement>("[data-copy-embed]")?.addEventListener("click", async (e) => {
     const btn = e.currentTarget as HTMLButtonElement;

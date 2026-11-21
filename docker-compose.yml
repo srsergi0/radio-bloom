@@ -16,8 +16,16 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    # Sin puerto publicado (solo red interna) y con contraseña: la instancia
+    # expuesta en 0.0.0.0:6379 fue comprometida en oct-2026.
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD requerido}
+      --protected-mode yes
+      --rename-command REPLICAOF ""
+      --rename-command SLAVEOF ""
+      --rename-command MODULE ""
+      --rename-command DEBUG ""
     volumes:
       - redis_data:/data
 
@@ -38,6 +46,7 @@ services:
       - .env
     volumes:
       - ./music:/app/music
+      - moq-secrets:/moq-secrets   # certificados efímeros + clave JWT de MoQ
     # Healthcheck usa el integrado de la imagen (HEALTHCHECK cada 30s en /health)
 
   # ──────────────────────────────────────────────
@@ -57,7 +66,7 @@ services:
       - BUNCASTER_ADMIN_USER=${ADMIN_USER}
       - BUNCASTER_ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - PORT=${PUBLISHER_PORT}
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
       - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
@@ -99,6 +108,43 @@ services:
         condition: service_started
 
   # ──────────────────────────────────────────────
+  # MoQ relay - audio de baja latencia por WebTransport (UDP 4433)
+  # Imagen local: docker build -t buncaster-moq-relay:0.17.17 /root/projects/buncaster-cli/moq/relay
+  # ──────────────────────────────────────────────
+  moq-relay:
+    image: buncaster-moq-relay:0.17.17
+    container_name: moq-relay
+    restart: unless-stopped
+    depends_on:
+      - buncaster
+    environment:
+      MOQ_LIMIT_PER_IP: "8"
+    volumes:
+      - moq-secrets:/certs:ro
+    ports:
+      - "4433:4433/udp"   # solo este; 4434 (publicación) queda en la red docker
+    cpus: 1.0
+    mem_limit: 256m
+
+  # ──────────────────────────────────────────────
+  # Tunnel - radio.tceoslabs.com (Cloudflare Tunnel propio, sin puertos)
+  # ──────────────────────────────────────────────
+  tunnel:
+    image: cloudflare/cloudflared:2026.11.1
+    container_name: bloom-tunnel
+    restart: unless-stopped
+    command: tunnel --config /etc/cloudflared/config.yml run
+    depends_on:
+      web:
+        condition: service_started
+    volumes:
+      - ./tunnel/config.yml:/etc/cloudflared/config.yml:ro
+      - /etc/cloudflared-bloom/credentials.json:/etc/cloudflared/credentials.json:ro
+    mem_limit: 64m
+    cpus: 0.25
+    read_only: true
+
+  # ──────────────────────────────────────────────
   # FTP - Song Upload Server (vsftpd) - DISABLED
   # ──────────────────────────────────────────────
   # ftp:
@@ -121,3 +167,4 @@ services:
 volumes:
   radio-publisher-data:
   redis_data:
+  moq-secrets:

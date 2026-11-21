@@ -45,14 +45,14 @@ export default function Station({ lang }: { lang: Lang }) {
   useEffect(() => {
     if (!track) return;
     const title = isInterlude ? s.interlude : track.title;
-    const artist = isInterlude ? (host?.name ?? "Bloom Radio") : track.artist;
-    document.title = `${active ? "▶ " : ""}${title} — ${artist} · Bloom Radio`;
+    const artist = isInterlude ? (host?.name ?? "Radio Tceos") : track.artist;
+    document.title = `${active ? "▶ " : ""}${title} — ${artist} · Radio Tceos`;
     if ("mediaSession" in navigator) {
       const art = track.coverUrl ? new URL(track.coverUrl, location.href).href : new URL("/icons/icon-512.png", location.href).href;
       navigator.mediaSession.metadata = new MediaMetadata({
         title,
         artist,
-        album: track.album ?? "Bloom Radio · Lima",
+        album: track.album ?? "Radio Tceos · Lima",
         artwork: [{ src: art, sizes: "512x512" }],
       });
     }
@@ -74,7 +74,7 @@ export default function Station({ lang }: { lang: Lang }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const title = !track ? "Bloom Radio" : isInterlude ? s.interlude : track.title;
+  const title = !track ? "Radio Tceos" : isInterlude ? s.interlude : track.title;
   const artist = !track ? "" : isInterlude ? (host?.name ?? "") : track.artist;
   const next = now?.upNext?.find((u) => u.type === "song");
   const isLive = now?.onAir.isLive ?? false;

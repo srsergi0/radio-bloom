@@ -353,6 +353,17 @@ Buncaster incluye las siguientes tools MCP:
 
 ## Cambios Recientes
 
+### Seguridad Redis, motor bajo demanda y MoQ en producción (Nov 2026)
+
+- **Redis**: sin puerto publicado, `--requirepass ${REDIS_PASSWORD}`, sin `REPLICAOF/SLAVEOF/MODULE/DEBUG`, volumen nuevo. El publisher conecta con `redis://:${REDIS_PASSWORD}@redis:6379/0`; BullMQ (TTS, torrents) vuelve a funcionar.
+- **Motor (Buncaster `faf7383`)**: `MP3_ON_DEMAND=true` y `SRT_ON_DEMAND=true` en `.env` → CPU en reposo ~4 % (antes ~11 %), 1 solo ffmpeg (encoder opus). Rollback de imagen: `buncaster-cli:pre-moq`.
+- **MoQ fase A**: servicio `moq-relay` (imagen local `buncaster-moq-relay:0.17.17`, UDP 4433, volumen `moq-secrets` compartido con buncaster), `MOQ_ENABLED=true`, `MOQ_PUBLIC_URL=https://185.139.1.222:4433`, fallback a `https://radio.tceoslabs.com/radiobloom.opus`. Demo: `http://localhost:4321/moq/demo` (retraso medido ~0,35 s). Integración en la web (fase B) pendiente. Rollback: `MOQ_ENABLED=false` + recrear buncaster; `docker compose rm -sf moq-relay`.
+
+### Radio Tceos en radio.tceoslabs.com (Nov 2026)
+
+- **Marca visible**: "Bloom Radio" → **Radio Tceos** en la web, Studio, embed, manifest, OG, `station.name` de `/api/live/now` y `/status-json.xsl`. Rutas técnicas sin cambios.
+- **Dominio**: `https://radio.tceoslabs.com` por túnel propio (`tunnel/config.yml` + servicio `tunnel` en `docker-compose.yml`, credenciales en `/etc/cloudflared-bloom/`). Canonical y `og:url` apuntan al dominio nuevo.
+
 ### Web 2.0 — Pedidos, corazones, Studio y embed (Nov 2026)
 
 - **Pide una canción** (`#pedidos`): búsqueda en `/api/live/search`, pedido con nombre y dedicatoria (`POST /api/live/requests`), muro en vivo (SSE `requests`). La canción pedida muestra "Pedida por …" en el escenario (`track.request`).

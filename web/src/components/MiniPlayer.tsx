@@ -23,7 +23,7 @@ export default function MiniPlayer({ lang }: { lang: Lang }) {
 
   const track = now?.track;
   const interlude = track?.type === "interludio";
-  const title = !track ? "Bloom Radio" : interlude ? s.interlude : track.title;
+  const title = !track ? "Radio Tceos" : interlude ? s.interlude : track.title;
   const artist = !track ? "" : interlude ? (now?.host?.name ?? "") : track.artist;
   const active = isActive(p.status);
   const busy = p.status === "loading" || p.status === "reconnecting";

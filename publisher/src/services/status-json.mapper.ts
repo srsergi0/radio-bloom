@@ -46,7 +46,7 @@ export function publicOrigin(
 
 export function nowTitle(now: Pick<LiveNowPayload, "track" | "station">): string {
   const t = now.track;
-  if (!t?.title) return now.station?.name || "Bloom Radio";
+  if (!t?.title) return now.station?.name || "Radio Tceos";
   return t.artist ? `${t.artist} - ${t.title}` : t.title;
 }
 
@@ -62,7 +62,7 @@ export function buildIcecastStatus(input: {
       admin: "",
       host: input.host.replace(/:\d+$/, ""),
       location: "Lima, Perú",
-      server_id: "Bloom Radio",
+      server_id: "Radio Tceos",
       source: {
         audio_info: `bitrate=${bitrate}`,
         bitrate,
@@ -71,7 +71,7 @@ export function buildIcecastStatus(input: {
         listeners: input.now.listeners?.current ?? 0,
         listenurl: `${input.origin}/radiobloom.opus`,
         server_description: "Radio por internet desde Lima, Perú — música 24/7 con locutores de IA",
-        server_name: "Bloom Radio",
+        server_name: "Radio Tceos",
         server_type: "audio/ogg",
         stream_start_iso8601: new Date(input.streamStartMs).toISOString(),
         title: nowTitle(input.now),

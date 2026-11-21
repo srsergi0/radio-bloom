@@ -1,4 +1,4 @@
-// Studio: sala de control privada de Bloom Radio
+// Studio: sala de control privada de Radio Tceos
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { clock, describeVoice, limaHM } from "../../lib/format";
 import { searchLibrary } from "../../lib/live";
@@ -52,7 +52,7 @@ function Login({ onDone }: { onDone: () => void }) {
   return (
     <div className="studio-center">
       <form className="studio-login panel" onSubmit={submit}>
-        <p className="eyebrow">Bloom Radio</p>
+        <p className="eyebrow">Radio Tceos</p>
         <h1 className="display">Studio</h1>
         <label className="field">
           <span>Token de acceso</span>
@@ -118,7 +118,7 @@ function Console({ onLogout }: { onLogout: () => void }) {
       <header className="studio__bar">
         <span className="hdr__brand">
           ✿ <span>
-            bloom<em>studio</em>
+            tceos<em>studio</em>
           </span>
         </span>
         <span className={`studio__status ${ov?.engine.ok ? "is-ok" : "is-bad"}`}>

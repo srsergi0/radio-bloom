@@ -1,6 +1,6 @@
 // Service worker mínimo: hace la web instalable y sirve la "cáscara" sin red.
 // Nunca cachea el audio ni la API en vivo.
-const CACHE = "bloom-shell-v2";
+const CACHE = "tceos-radio-shell-v3";
 const SHELL = ["/", "/en/", "/favicon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {

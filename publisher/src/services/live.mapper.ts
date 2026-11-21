@@ -21,7 +21,7 @@ import type {
 import { toDbPath } from "./buncaster.service";
 
 export const LIVE_TIMEZONE = "America/Lima";
-export const STATION = { name: "Bloom Radio", city: "Lima", timezone: LIVE_TIMEZONE } as const;
+export const STATION = { name: "Radio Tceos", city: "Lima", timezone: LIVE_TIMEZONE } as const;
 export const PERSONALITY_MAX_CHARS = 180;
 export const COVER_ROUTE_PREFIX = "/api/live/cover/";
 const WEEK_MINUTES = 7 * 1440;

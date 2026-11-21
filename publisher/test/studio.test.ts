@@ -705,7 +705,7 @@ describe("ReachService", () => {
 
 describe("status-json mapping", () => {
   const now: any = {
-    station: { name: "Bloom Radio", city: "Lima", timezone: "America/Lima" },
+    station: { name: "Radio Tceos", city: "Lima", timezone: "America/Lima" },
     track: { title: "Protect My Energy", artist: "Little Simz" },
     listeners: { current: 4, opus: 4, mp3: 0, peakToday: 9 },
     stream: { opus: "/radiobloom.opus", mp3: "/radiobloom.mp3", bitrateKbps: 192 },
@@ -720,7 +720,7 @@ describe("status-json mapping", () => {
         admin: "",
         host: "radio.example.org",
         location: "Lima, Perú",
-        server_id: "Bloom Radio",
+        server_id: "Radio Tceos",
         source: {
           audio_info: "bitrate=192",
           bitrate: 192,
@@ -729,7 +729,7 @@ describe("status-json mapping", () => {
           listeners: 4,
           listenurl: "https://radio.example.org/radiobloom.opus",
           server_description: expect.any(String),
-          server_name: "Bloom Radio",
+          server_name: "Radio Tceos",
           server_type: "audio/ogg",
           stream_start_iso8601: "2026-10-17T00:00:00.000Z",
           title: "Little Simz - Protect My Energy",
@@ -741,7 +741,7 @@ describe("status-json mapping", () => {
   test("host fallback + titles", () => {
     expect(publicOrigin(h({ host: "localhost:9876" }), false).origin).toBe("http://localhost:9876");
     expect(publicOrigin(h({ host: "evil<script>" }), false).host).toBe("185.139.1.222");
-    expect(nowTitle({ ...now, track: null })).toBe("Bloom Radio");
+    expect(nowTitle({ ...now, track: null })).toBe("Radio Tceos");
     expect(nowTitle({ ...now, track: { title: "Solo", artist: "" } })).toBe("Solo");
   });
 });

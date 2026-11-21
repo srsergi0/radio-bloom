@@ -1,0 +1,13 @@
+# Túnel propio de Bloom para radio.tceoslabs.com (gestionado localmente).
+# Credenciales fuera del repo: /etc/cloudflared-bloom/credentials.json (uid 65532, 0400).
+tunnel: a3e9e5f6-8352-4b00-bc00-7a5b96a0f446
+credentials-file: /etc/cloudflared/credentials.json
+no-autoupdate: true
+ingress:
+  - hostname: radio.tceoslabs.com
+    service: http://web:80
+    originRequest:
+      # streams de audio y SSE: conexiones largas
+      keepAliveTimeout: 90s
+      disableChunkedEncoding: false
+  - service: http_status:404

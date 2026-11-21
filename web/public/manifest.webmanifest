@@ -1,6 +1,6 @@
 {
-  "name": "Bloom Radio",
-  "short_name": "Bloom",
+  "name": "Radio Tceos",
+  "short_name": "Radio Tceos",
   "description": "Radio 24/7 desde Lima: música curada, locutores con IA y transmisiones en vivo.",
   "start_url": "/?source=pwa",
   "scope": "/",

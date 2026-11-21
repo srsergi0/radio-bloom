@@ -285,7 +285,7 @@ describe("live.mapper — now payload", () => {
     expect(Object.keys(p).sort()).toEqual(
       ["host", "listeners", "onAir", "serverTime", "station", "stream", "track", "upNext"].sort()
     );
-    expect(p.station).toEqual({ name: "Bloom Radio", city: "Lima", timezone: "America/Lima" });
+    expect(p.station).toEqual({ name: "Radio Tceos", city: "Lima", timezone: "America/Lima" });
     expect(p.onAir).toEqual({ isLive: false, source: "autodj" });
     expect(p.track?.elapsed).toBe(63.7);
     expect(p.upNext).toHaveLength(5);

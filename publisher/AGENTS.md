@@ -66,6 +66,14 @@ src/
 - SQLite via Drizzle ORM — never raw SQL unless unavoidable.
 - All env vars validated in `env.ts` via type schema.
 
+## Studio auth & key env vars
+
+- `STUDIO_TOKEN` / `STUDIO_SESSION_SECRET` (in root `.env`, passed via `docker-compose.yml`): protect the control API — see `src/services/studio-auth.ts` (`requiresStudioAuth`) and BITACORA "🔐 Studio API". Unset token = API open + startup warning.
+- `REQUESTS_AUTO_APPROVE` (default `false`), `PUBLIC_HOST` (SRT URL host, default `185.139.1.222`), `SRT_PORT`, `RTMP_STREAM_KEY`.
+- Scripts hitting mutating endpoints must send `Authorization: Bearer $STUDIO_TOKEN` (`src/scripts/studio-auth-headers.ts`).
+- Never enqueue through BullMQ for new features (Redis is unreliable): use `BuncasterService.enqueueFile()`.
+- Redeploy publisher only with `docker compose up -d --build --no-deps publisher` (otherwise a changed `.env` also recreates `buncaster`).
+
 ## Testing
 
 ```bash

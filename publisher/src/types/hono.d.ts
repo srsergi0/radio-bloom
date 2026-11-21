@@ -5,9 +5,13 @@ declare module "hono" {
       formData(): Promise<FormData>;
       param(name: string): string;
       query(name: string): string | undefined;
+      header(name: string): string | undefined;
+      method: string;
       path: string;
       raw: Request;
     };
+    /** Bun.serve passes the Server here when called as app.fetch(req, server). */
+    env: any;
     json(data: any, status?: number): Response;
     newResponse(
       body: any,
@@ -25,7 +29,7 @@ declare module "hono" {
     all(path: string, ...handlers: H[]): this;
     use(path: string, middleware: any): this;
     use(middleware: any): this;
-    fetch(req: Request): Response | Promise<Response>;
+    fetch(req: Request, env?: any): Response | Promise<Response>;
   }
 
   export { Context, Hono };

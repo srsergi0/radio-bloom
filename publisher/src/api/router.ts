@@ -12,8 +12,17 @@ import type { BuncasterService } from "../services/buncaster.service";
 import type { BuncasterQueueService } from "../services/buncaster-queue.service";
 import type { LocutorService } from "../services/locutor.service";
 import type { TorrentService } from "../services/torrent.service";
+import { toPublicQueueItems } from "../services/buncaster.service";
+import type { StudioAuthConfig } from "../services/studio-auth";
 import type { TtsService } from "../services/tts.service";
 import { isRateLimitExempt, type LiveRouteDeps, registerLiveRoutes } from "./live.routes";
+import {
+  registerStudioAuth,
+  registerStudioRoutes,
+  requestClientIp,
+  type StudioRouteDeps,
+  studioAuthFromEnv,
+} from "./studio.routes";
 
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024; // 200MB
 
@@ -121,6 +130,10 @@ export interface ApiDependencies {
   ttsService: TtsService;
   /** Public listener API (/api/live/*). Optional so tests can build the router without it. */
   live?: LiveRouteDeps;
+  /** Studio auth (defaults to STUDIO_TOKEN / STUDIO_SESSION_SECRET from env). */
+  studioAuth?: StudioAuthConfig;
+  /** Studio endpoints (/api/studio/overview, requests, queue, skip). */
+  studio?: Omit<StudioRouteDeps, "buncasterService">;
 }
 
 export function createApiRouter(deps: ApiDependencies): Hono {
@@ -136,12 +149,18 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   app.use("*", async (c: any, next: any) => {
     // SSE + covers are exempt: behind nginx/Cloudflare many listeners share one IP header
     if (isRateLimitExempt(c.req.path)) return next();
-    const ip = c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown";
-    if (!checkRateLimit(ip)) {
+    if (!checkRateLimit(requestClientIp(c))) {
       return c.json({ ok: false, error: "Rate limit exceeded" }, 429);
     }
     await next();
   });
+
+  // Studio auth: control endpoints need the session cookie or Bearer STUDIO_TOKEN
+  // (see services/studio-auth.ts → requiresStudioAuth for the full matrix).
+  registerStudioAuth(app, deps.studioAuth ?? studioAuthFromEnv());
+  if (deps.studio) {
+    registerStudioRoutes(app, { ...deps.studio, buncasterService: deps.buncasterService });
+  }
 
   // ============================================================
   // SYSTEM
@@ -388,28 +407,7 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   app.get("/api/stream/queue", async (c) => {
     try {
       const { items } = await deps.buncasterService.queueList();
-      const clean = items.map(({ file, ...rest }) => {
-        // For interludios: only return rid, id, type, script
-        if (rest.type === "interludio") {
-          return {
-            rid: rest.rid,
-            id: rest.id,
-            type: rest.type,
-            script: rest.script,
-            pending: rest.pending,
-          };
-        }
-        // For songs: return rid, id, artist, title, type
-        return {
-          rid: rest.rid,
-          id: rest.id,
-          artist: rest.artist,
-          title: rest.title,
-          type: rest.type,
-          pending: rest.pending,
-        };
-      });
-      return c.json({ ok: true, data: clean });
+      return c.json({ ok: true, data: toPublicQueueItems(items) });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 500);
     }
@@ -426,7 +424,11 @@ export function createApiRouter(deps: ApiDependencies): Hono {
 
   app.delete("/api/stream/queue/:rid", async (c) => {
     try {
-      const rid = c.req.param("rid");
+      // rid is an index ("3") or a file path; the web sends encodeURIComponent(rid)
+      let rid = c.req.param("rid");
+      try {
+        rid = decodeURIComponent(rid);
+      } catch {}
       const ok = await deps.buncasterService.queueRemove(rid);
       if (!ok) {
         return c.json(

@@ -4,6 +4,7 @@
  *   bun run src/scripts/put-song-in-queue.ts "bad bunny"
  *   bun run src/scripts/put-song-in-queue.ts --interludio "Bienvenidos a Radio Bloom"
  */
+import { studioHeaders } from "./studio-auth-headers";
 
 const API_BASE = "http://localhost:3000";
 
@@ -20,7 +21,7 @@ async function main() {
     console.log(`Queuing TTS interludio: "${script.slice(0, 50)}..."`);
     const res = await fetch(`${API_BASE}/api/stream/queue`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: studioHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify([{ script }]),
     });
     const data = (await res.json()) as any;
@@ -55,7 +56,7 @@ async function main() {
 
   const queueRes = await fetch(`${API_BASE}/api/stream/queue`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: studioHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify([{ id: track.id }]),
   });
   const queueData = (await queueRes.json()) as any;

@@ -4,6 +4,10 @@ declare module "drizzle-orm" {
   export function or(...conditions: any[]): any;
   export function and(...conditions: any[]): any;
   export function desc(column: any): any;
+  export function asc(column: any): any;
+  export function gte(left: any, right: any): any;
+  export function lt(left: any, right: any): any;
+  export function inArray(column: any, values: any[]): any;
   export function sql<T = any>(strings: TemplateStringsArray, ...values: any[]): T;
   export namespace sql {
     function raw(value: string): any;
@@ -13,6 +17,7 @@ declare module "drizzle-orm" {
     from(table: any): DrizzleSelect;
     where(condition: any): DrizzleSelect;
     orderBy(...columns: any[]): DrizzleSelect;
+    groupBy(...columns: any[]): DrizzleSelect;
     limit(n: number): DrizzleSelect;
     offset(n: number): DrizzleSelect;
     $dynamic(): DrizzleSelect;
@@ -24,7 +29,11 @@ declare module "drizzle-orm" {
   export interface DrizzleDb {
     select(...columns: any[]): DrizzleSelect;
     insert(table: any): {
-      values(data: any): { run(): any; onConflictDoUpdate(config: any): { run(): any } };
+      values(data: any): {
+        run(): any;
+        onConflictDoUpdate(config: any): { run(): any };
+        onConflictDoNothing(config?: any): { run(): any };
+      };
     };
     update(table: any): { set(data: any): { run(): any; where(condition: any): { run(): any } } };
     delete(table: any): { run(): any; where(condition: any): { run(): any } };

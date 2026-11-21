@@ -111,6 +111,8 @@ radio/
 │   ├── test/
 │   │   ├── api.test.ts                   # Tests de endpoints de la API (legacy: aún usa deps de Liquidsoap, falla)
 │   │   ├── live.test.ts                  # Tests de la Listener API: mapper puro (schedule, host, track, listeners) + play_history
+│   │   ├── studio.test.ts                # Auth Studio (matriz público/protegido, cookie/bearer, token sin definir, brute-force), pedidos, hearts, reach, status-json
+│   │   ├── locutor.test.ts               # Locutores + horarios (async/await + voces Edge-TTS reales; necesita red)
 │   │   └── integration.test.ts
 │   └── src/
 │       ├── index.ts                      # Servidor principal (Bun.serve, DI)
@@ -118,7 +120,8 @@ radio/
 │       │
 │       ├── api/
 │       │   ├── router.ts                 # Rutas REST (Hono): biblioteca, cola, playlists, subida de archivos
-│       │   └── live.routes.ts            # Listener API pública /api/live/* (now, history, schedule, events SSE, cover)
+│       │   ├── live.routes.ts            # Listener API pública /api/live/* (now, history, schedule, events SSE, cover, search, requests, hearts) + /status-json.xsl
+│       │   └── studio.routes.ts          # Auth Studio (middleware + login/logout/me), /api/studio/* (overview, requests, queue, skip), requestClientIp()
 │       │
 │       ├── domain/
 │       │   └── types.ts                  # Tipos TypeScript compartidos (Track, StreamStatus, etc.)
@@ -136,7 +139,10 @@ radio/
 │       │   ├── playback-state.repo.ts    # Estado de reproducción actual
 │       │   ├── playlist.repo.ts          # CRUD de playlists y tracks
 │       │   ├── locutor.repo.ts           # CRUD de locutores de IA y horarios
-│       │   └── play-history.repo.ts      # Historial público de reproducción (tabla play_history, máx 500 filas)
+│       │   ├── play-history.repo.ts      # Historial público de reproducción (tabla play_history, máx 500 filas)
+│       │   ├── song-request.repo.ts      # Pedidos de oyentes (tabla song_requests, máx 2000 filas)
+│       │   ├── hearts.repo.ts            # Corazones (tabla track_hearts, PK (track_key, ip_hash) = 1 por IP)
+│       │   └── listener-samples.repo.ts  # Oyentes por bucket de 5 min (tabla listener_samples, 24 h)
 │       │
 │       ├── services/                     # Lógica de Negocio
 │       │   ├── config.service.ts         # Gestión de configuración
@@ -149,9 +155,15 @@ radio/
 │       │   ├── live.service.ts           # Listener API: poller único de Buncaster (2s) + estado en memoria + fan-out SSE
 │       │   ├── live.mapper.ts            # Funciones puras: payload now, expansión de horarios, host activo (Lima), keys
 │       │   ├── cover.service.ts          # Carátulas: extracción ffmpeg → /app/data/covers/<key>.jpg (+ .miss), fallback Spotify
+│       │   ├── studio-auth.ts            # Puro: matriz de acceso requiresStudioAuth, sesión HMAC, cookies, clientIpFrom, LoginGuard (10 fallos/15 min)
+│       │   ├── song-requests.mapper.ts   # Puro: validación/saneado de pedidos, límites, lista pública
+│       │   ├── song-requests.service.ts  # Pedidos: búsqueda, crear, aprobar (encola DIRECTO en Buncaster, sin BullMQ), queued→played, auto-aprobación
+│       │   ├── hearts.service.ts         # Corazones: dedupe por IP hash, cache de conteos, SSE `hearts` throttled 1/s por key
+│       │   ├── reach.service.ts          # Oyentes 24 h (buckets 5 min, memoria + SQLite) + cache de Buncaster /health (engine)
+│       │   ├── status-json.mapper.ts     # Puro: /status-json.xsl estilo Icecast para directorios de radio
 │       │   └── metadata-enrichment.service.ts  # Enriquecimiento desde Spotify
 │       │
-│       └── scripts/                      # Scripts de utilidad
+│       └── scripts/                      # Scripts de utilidad (studio-auth-headers.ts: Bearer $STUDIO_TOKEN para los que llaman a la API de control)
 │           ├── test-isrc-youtube.ts
 │           ├── test-youtube-premium.ts
 │           └── check_db.ts
@@ -169,6 +181,8 @@ radio/
         ├── styles/global.css             # Sistema visual (tokens, --accent animable con @property)
         ├── pages/index.astro             # Español (default)
         ├── pages/en/index.astro          # Inglés
+        ├── pages/studio.astro            # Studio (noindex, client:only)
+        ├── pages/embed.astro             # Reproductor embebible
         ├── lib/
         │   ├── types.ts                  # Contrato de /api/live/*
         │   ├── store.ts                  # Store observable compartido entre islas (useSyncExternalStore)
@@ -184,6 +198,11 @@ radio/
             ├── Feed.tsx                  # Lo que viene + historial (client:only)
             ├── Schedule.tsx              # Parrilla semanal 24h por día (client:only)
             ├── MiniPlayer.tsx            # Barra inferior fija + botón Escuchar de la cabecera
+            ├── Requests.tsx              # "Pide una canción": búsqueda, dedicatoria y muro de pedidos en vivo (client:only)
+            ├── Heart.tsx                 # Corazón por pista (uno por navegador, conteo en vivo por SSE)
+            ├── Embed.tsx                 # Reproductor compacto para iframes (/embed)
+            ├── studio/StudioApp.tsx      # Studio privado (/studio): login por token, al aire, saltar, cola, pedidos, OBS/SRT
+            ├── studio/ListenersChart.tsx # Oyentes 24 h (SVG, cruz + tooltip)
             ├── Cover.tsx, Icons.tsx, Logo.astro
             └── Header/Footer/HowItWorks/Anywhere.astro
 ```
@@ -240,21 +259,53 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 
 ## 📻 Listener API pública (Bloom 2.0) — `/api/live/*`
 
-Pública, solo `GET`, formato `{ ok: true, data }`. Contrato para la web nueva. Todo sale del estado en memoria de `LiveService` (un único poller a Buncaster `/status` + `/api/queue` cada 2s); ningún request consulta Buncaster por su cuenta.
+Pública, formato `{ ok: true, data }` (errores `{ ok: false, error }`). Solo `GET` salvo `POST /api/live/requests` y `POST /api/live/hearts`. Contrato para la web nueva. Todo sale del estado en memoria de `LiveService` (un único poller a Buncaster `/status` + `/api/queue` cada 2s); ningún request consulta Buncaster por su cuenta.
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| `GET` | `/api/live/now` | `{ station, onAir{isLive,source}, track, host, listeners, stream, upNext[≤5], serverTime }`. Título/artista de Buncaster `nowPlaying`; álbum/spotifyUrl de la biblioteca (match por ruta `music/songs/..` → `songs/..`) |
-| `GET` | `/api/live/history?limit=20` | Últimas canciones (máx 50), más nuevas primero. Tabla `play_history` (se guardan solo `song`, no interludios/live) |
+| `GET` | `/api/live/now` | `{ station, onAir{isLive,source}, track, host, listeners, stream, upNext[≤5], serverTime }`. Título/artista de Buncaster `nowPlaying`; álbum/spotifyUrl de la biblioteca (match por ruta `music/songs/..` → `songs/..`). `track` incluye `hearts: number` y `request: { name, message } \| null` (dedicatoria si la canción es un pedido) |
+| `GET` | `/api/live/history?limit=20` | Últimas canciones (máx 50), más nuevas primero. Tabla `play_history` (se guardan solo `song`, no interludios/live). Cada item: `key` (misma derivación que `now`) + `hearts` |
+| `GET` | `/api/live/search?q=&limit=` | Solo canciones, `q` ≥ 2 chars, máx 20: `[{ id, title, artist, album, coverUrl, duration, requestable, reason?: "recently_played"\|"already_requested" }]` |
+| `GET` | `/api/live/requests` | Pedidos públicos: pending + queued + últimos 10 played, más nuevos primero (nunca rejected, nunca IPs): `[{ id, title, artist, coverUrl, name, message, status, createdAt }]` |
+| `POST` | `/api/live/requests` | `{ trackId, name? (≤32), message? (≤140) }` → `{ id, status: "pending" }` (`"queued"` si se auto-aprobó). Errores: `invalid` 400, `not_found` 404, `rate_limited` 429 (+`retryAfter` s), `recently_played` / `already_requested` / `queue_full` 409 |
+| `POST` | `/api/live/hearts` | `{ key }` → `{ key, count }`. 1 corazón por IP (hash) por key; idempotente. `invalid` 400 / `not_found` 404 (key que no es la actual ni está en el historial) |
 | `GET` | `/api/live/schedule` | `{ timezone, now{dayOfWeek,minute}, slots[] }` — horarios diarios expandidos a 7 días, solo locutores activos |
-| `GET` | `/api/live/events` | SSE: `event: now` al conectar y al cambiar track/isLive/host/upNext/cover; `event: listeners` (throttle 5s); `: ping` cada 20s. **Exento del rate limiter** |
+| `GET` | `/api/live/events` | SSE: `event: now` al conectar y al cambiar track/isLive/host/upNext/cover/request; `event: requests` (lista pública; al conectar y en cada cambio); `event: hearts` `{ key, count }` (throttle 1/s por key); `event: listeners` (throttle 5s); `: ping` cada 20s. **Exento del rate limiter** |
 | `GET` | `/api/live/cover/:key` | JPEG ≤600px de la carátula embebida (cache disco, `max-age=86400`) o 404. **Exento del rate limiter** |
+| `GET` | `/status-json.xsl` | JSON estilo Icecast para directorios de radio (`icestats.source{listeners, listener_peak, title, listenurl absoluta, bitrate…}`), `Access-Control-Allow-Origin: *`. ⚠️ Solo vía `:9876`/publisher — el nginx de `web/` aún no lo proxya |
 
 Notas:
 - `key` = sha1(ruta de biblioteca)[0..12] (live: hash de título+artista). `host.id`/`locutorId` = hash numérico FNV-1a del id string del locutor (estable).
 - **Oyentes reales** = clientes de los `StreamBroadcaster` del publisher + oyentes directos de Buncaster − la conexión upstream propia del publisher (Buncaster cuenta al publisher como 1 oyente opus). `peakToday` en memoria, reset a medianoche de Lima.
 - `source: "queue"` se infiere: Buncaster reporta cola y fallback igual (`type: "fallback"`), así que si el archivo estaba en el snapshot anterior de la cola → `queue`.
 - Carátulas: 316/323 canciones tienen arte embebido (mjpeg/png → se normaliza a JPEG). Misses → `<key>.miss` y `coverUrl: null`.
+- **Pedidos**: límites = 1 pedido por IP cada 10 min (solo cuentan los guardados), canción no sonada en los últimos 60 min (`play_history`), no pendiente/en cola (pedidos pending/queued + cola de Buncaster), máx 30 pendientes. Texto: trim, sin caracteres de control/bidi, sin URLs. `queued → played` lo detecta el poller de `LiveService` al empezar la canción. Housekeeping (1/min): pending > 12 h → rejected; queued que salió de la cola sin verse sonar (> 30 min) → played (si está en historial) o rejected. `REQUESTS_AUTO_APPROVE=true` aprueba mientras haya < 3 en cola.
+- ⚠️ **Buncaster pre-carga la cabeza de la cola en el deck libre** (crossfade): un pedido aprobado desaparece de `/api/queue` y de `GET /api/stream/queue` aunque suena a continuación (se ve en `/debug-state`). Además `DELETE /api/stream/queue/0` con la cola visible vacía devuelve ok y **descarta ese track pre-cargado**.
+- IPs: nunca se guardan en claro; `ip_hash` = HMAC-SHA256 con sal derivada de `STUDIO_SESSION_SECRET` (rotarlo resetea dedupe de corazones/límites por IP).
+
+---
+
+## 🔐 Studio API (control) — auth
+
+Toda mutación bajo `/api/*` exige sesión del Studio salvo `POST /api/studio/login`, `POST /api/live/requests` y `POST /api/live/hearts`. También exigen auth estos GET: `/api/stream/skip`, `/api/library/rescan`, `/api/torrents/*`, `/api/system/config`, `/api/studio/*` (salvo `/me`), y cualquier método en `/buncaster-admin/*`, `/buncaster-events`, `/admin/queues*`. Matriz en `services/studio-auth.ts → requiresStudioAuth` (rutas normalizadas: decodificadas, minúsculas, sin `//` ni `/` final). Sin credencial → `401 { ok:false, error:"unauthorized" }`.
+
+- Credencial: cookie `bloom_studio` (HMAC-SHA256 con `STUDIO_SESSION_SECRET`, expira a 30 días, `HttpOnly; SameSite=Strict; Path=/` + `Secure` si `x-forwarded-proto`/`cf-visitor` dicen https) **o** `Authorization: Bearer <STUDIO_TOKEN>`.
+- `STUDIO_TOKEN` vacío → todo abierto (compatibilidad) + warning `[SECURITY]` al arrancar. Valores en `/root/projects/bloom/.env` (`STUDIO_TOKEN`, `STUDIO_SESSION_SECRET`), pasados en `docker-compose.yml`.
+- IP de cliente (rate limits, hashes): `cf-connecting-ip` → `x-real-ip` → 1º de `x-forwarded-for` → socket (`server.requestIP`).
+- Scripts (`scripts/seed_locutors.sh`, `publisher/src/scripts/*.ts`) envían `Authorization: Bearer $STUDIO_TOKEN` si la variable existe.
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `POST` | `/api/studio/login` | `{ token }` (comparación en tiempo constante) → cookie + `{ authenticated: true, expiresAt }`. 10 fallos / 15 min por IP → `429 rate_limited` + `retryAfter` |
+| `POST` | `/api/studio/logout` | Borra la cookie (requiere sesión) |
+| `GET` | `/api/studio/me` | `{ authenticated: boolean }` (público; `true` si la auth está desactivada) |
+| `GET` | `/api/studio/overview` | `{ now (= /api/live/now), queue (= GET /api/stream/queue), requestsPending, listeners24h[{t,n}] (bucket 5 min, máx del bucket, 24 h, persistido), engine{ok,uptimeSeconds,rssMb,live} (Buncaster /health, cache 60 s), live{srtUrl, streamKeyConfigured} }`. `srtUrl` = `srt://<PUBLIC_HOST\|185.139.1.222>:<SRT_PORT>?streamid=live/<RTMP_STREAM_KEY>` (la clave solo aquí) |
+| `GET` | `/api/studio/requests` | Todos los pedidos (incl. rejected, últimos 200) + `trackId`, `ipHash` (8 chars), `updatedAt` |
+| `POST` | `/api/studio/requests/:id/approve` | pending → encola en Buncaster (REST directo, **sin BullMQ**) → `queued`. Errores `not_found` 404, `invalid_state` 409, `enqueue_failed` 502 |
+| `POST` | `/api/studio/requests/:id/reject` | pending/queued → `rejected` (si estaba queued intenta quitarlo de la cola) |
+| `POST` | `/api/studio/queue` | `{ trackId }` (cualquier track de biblioteca) → encola directo en Buncaster → `{ queued: true }`; `not_found` 404 |
+| `POST` | `/api/studio/skip` | Salta la canción actual → `{ ok: true }` |
+| `DELETE` | `/api/stream/queue/:rid` | (existente, ahora protegido) `rid` = índice o ruta de archivo; acepta `encodeURIComponent(rid)` con `/` (`%2F`). No usa BullMQ |
 
 ---
 
@@ -302,6 +353,29 @@ Buncaster incluye las siguientes tools MCP:
 
 ## Cambios Recientes
 
+### Web 2.0 — Pedidos, corazones, Studio y embed (Nov 2026)
+
+- **Pide una canción** (`#pedidos`): búsqueda en `/api/live/search`, pedido con nombre y dedicatoria (`POST /api/live/requests`), muro en vivo (SSE `requests`). La canción pedida muestra "Pedida por …" en el escenario (`track.request`).
+- **Corazones**: en la pista al aire y en el historial (`POST /api/live/hearts`, SSE `hearts`); uno por navegador (`localStorage bloom:hearts`), leído tras hidratar.
+- **Studio** (`/studio`): login con `STUDIO_TOKEN`, panel con al aire, saltar (`/api/studio/skip`), cola (quitar / `POST /api/studio/queue`), pedidos (aprobar/rechazar), oyentes 24 h y URL SRT para OBS.
+- **Embed** (`/embed`) + snippet copiable en "Llévala contigo". **nginx**: `/status-json.xsl` (directorios Icecast), `/studio/` sin caché y `absolute_redirect off`.
+- Nota: el dominio público pasa por el publisher, que sirve su propia copia de `web/dist` (horneada en su imagen); los cambios de web requieren rebuild de `web` **y** de `publisher`.
+
+### Studio: auth de la API de control + pedidos + corazones + overview (Nov 2026, Bloom 2.0)
+
+- **Seguridad**: antes toda mutación era pública (skip, vaciar cola, borrar tracks, upload, torrents). Ahora middleware de auth Studio (cookie HMAC `bloom_studio` o `Bearer STUDIO_TOKEN`) — ver sección 🔐. `STUDIO_TOKEN` / `STUDIO_SESSION_SECRET` generados y añadidos a `.env`; placeholders en `.env.example`; pasados en `docker-compose.yml` (junto a `REQUESTS_AUTO_APPROVE`, `PUBLIC_HOST`, `SRT_PORT`, `RTMP_STREAM_KEY`).
+- **Rate limiter general** usa ahora `requestClientIp()` (`cf-connecting-ip` primero) en vez de la cabecera `x-forwarded-for` completa. `index.ts` pasa `server` a `apiRouter.fetch(req, server)` para leer la IP del socket.
+- **Nuevos endpoints**: `/api/live/search`, `GET/POST /api/live/requests`, `POST /api/live/hearts`, `/status-json.xsl`, `/api/studio/{login,logout,me,overview,requests,requests/:id/approve,requests/:id/reject,queue,skip}`.
+- **Payloads**: `now.track` gana `hearts` + `request`; items de `/api/live/history` ganan `key` + `hearts`. SSE: `event: requests`, `event: hearts`.
+- **Tablas nuevas** (migración idempotente en `database.ts`): `song_requests`, `track_hearts`, `listener_samples`.
+- **Sin BullMQ**: aprobar pedidos y `POST /api/studio/queue` usan `BuncasterService.enqueueFile()` (REST directo a Buncaster). `POST /api/stream/queue` sigue pasando por BullMQ (roto mientras Redis esté comprometido).
+- `buncaster.service.ts`: `toPublicQueueItems()` exportado (lo usan `GET /api/stream/queue` y overview; interludios con script ahora traen `id`); `queueRemove()` acepta índice **o** ruta de archivo; circuit breaker de BullMQ (si falla, se salta 60 s → `GET /api/stream/queue` ya no tarda 2 s por llamada).
+- `buncaster.client.ts`: `getHealthWithTimeout()`. `live.service.ts`: hooks `requests`/`hearts`, `broadcast()`, `getQueueFiles()`, `getCurrentFile()`, `getCurrentTrackKey()`, `getListenerCount()`, `isHealthy()`.
+- Tipos stub (`src/types/hono.d.ts`, `drizzle.d.ts`): `c.env`, `c.req.header/method`, `fetch(req, env)`, `asc/gte/lt/inArray`, `groupBy`, `onConflictDoNothing`.
+- Tests: `test/studio.test.ts` (69 casos). `test/locutor.test.ts` arreglado (await + voces reales): antes sus promesas rechazadas sin await contaminaban otros archivos de test. Suite: 91 pass / 1 fail (`api.test.ts` legacy, no carga).
+- ⚠️ Pendiente fuera del publisher: `web/nginx.conf` no proxya `/status-json.xsl` (en `:80` devuelve el HTML de la SPA).
+- ⚠️ Cambiar `.env` hace que `docker compose up -d --build publisher` **recree también `buncaster`** (usa `env_file: .env`) → corte breve del stream. Usar `--no-deps` para redeploys solo del publisher.
+
 ### Web 2.0 — Rediseño total de la web de escucha (Nov 2026, Bloom 2.0)
 
 - **Eliminado**: web "retro/brutalista" (Hero, LiveShow, ProgramList con horario inventado, Lottie, imágenes stock, shadcn/Tailwind) y sus dependencias.
@@ -321,7 +395,7 @@ Buncaster incluye las siguientes tools MCP:
 - `buncaster.service.ts`: `toDbPath` exportado; `queueList()` limita a 2s las llamadas BullMQ (si Redis no responde, `GET /api/stream/queue` devolvía nada y colgaba).
 - `spotifyUrl` solo se expone si es una URL real de `open.spotify.com` (la biblioteca tiene basura de tags, p. ej. `www.SongsLover.com`).
 - Re-seed de los 42 locutores con `scripts/seed_locutors.sh` (la DB estaba vacía).
-- ⚠️ **Redis**: expuesto en `0.0.0.0:6379` sin contraseña → atacado (oct 2026: `SLAVEOF` a master externo; luego alguien puso `requirepass`). Conexiones nuevas reciben `NOAUTH` y BullMQ (TTS/torrents) no funciona tras reiniciar el publisher. Pendiente decisión del dueño (bind interno + password + reiniciar Redis).
+- ⚠️ **Redis**: expuesto en `0.0.0.0:6379` sin contraseña → atacado (oct 2026: `SLAVEOF` a master externo; luego alguien puso `requirepass`). Conexiones nuevas reciben `NOAUTH` y BullMQ (TTS/torrents) no funciona tras reiniciar el publisher. Pendiente decisión del dueño (bind interno + password + reiniciar Redis). Las funciones nuevas del Studio (aprobar pedidos, `POST /api/studio/queue`, `DELETE /api/stream/queue/:rid`, skip) no dependen de Redis.
 
 ### Eliminación de cola manual (Julio 2026)
 

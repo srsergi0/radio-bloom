@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { player, setStreams } from "./player";
 import { createStore, useStore } from "./store";
-import type { HistoryItem, Listeners, NowPayload, SchedulePayload } from "./types";
+import type { HistoryItem, Listeners, NowPayload, RequestItem, SchedulePayload, SearchResult } from "./types";
 
 interface Snapshot {
   at: number; // reloj del cliente
@@ -17,6 +17,11 @@ interface LiveState {
   listeners: Listeners | null;
   history: HistoryItem[];
   schedule: SchedulePayload | null;
+  requests: RequestItem[];
+  /** Contadores de corazones recibidos por SSE (pisan a los de los payloads) */
+  hearts: Record<string, number>;
+  /** Pistas a las que este navegador ya les dio corazón */
+  myHearts: Record<string, true>;
   /** serverTime - Date.now() */
   offset: number;
 }
@@ -27,8 +32,19 @@ export const live = createStore<LiveState>({
   listeners: null,
   history: [],
   schedule: null,
+  requests: [],
+  hearts: {},
+  myHearts: {},
   offset: 0,
 });
+
+function readMyHearts(): Record<string, true> {
+  try {
+    return JSON.parse(localStorage.getItem("bloom:hearts") || "{}");
+  } catch {
+    return {};
+  }
+}
 
 let started = false;
 let es: EventSource | null = null;
@@ -78,6 +94,11 @@ async function loadSchedule() {
   if (s) live.set({ schedule: s });
 }
 
+async function loadRequests() {
+  const r = await getJSON<RequestItem[]>("/api/live/requests");
+  if (r) live.set({ requests: r });
+}
+
 async function poll() {
   const n = await getJSON<NowPayload>("/api/live/now");
   if (n) {
@@ -119,6 +140,21 @@ function connect() {
       /* evento malformado */
     }
   });
+  es.addEventListener("requests", (e) => {
+    try {
+      live.set({ requests: JSON.parse((e as MessageEvent).data) });
+    } catch {
+      /* evento malformado */
+    }
+  });
+  es.addEventListener("hearts", (e) => {
+    try {
+      const { key, count } = JSON.parse((e as MessageEvent).data) as { key: string; count: number };
+      live.set((s) => ({ hearts: { ...s.hearts, [key]: count } }));
+    } catch {
+      /* evento malformado */
+    }
+  });
   es.onerror = () => {
     // EventSource reintenta solo; mientras tanto mantenemos datos frescos por polling
     live.set({ connection: es?.readyState === EventSource.CLOSED ? "offline" : "connecting" });
@@ -129,11 +165,15 @@ function connect() {
 export function startLive() {
   if (started || typeof window === "undefined") return;
   started = true;
+  // Se lee tras hidratar (no en el estado inicial) para no desajustar el HTML estático
+  live.set({ myHearts: readMyHearts() });
   void poll();
   connect();
   void loadHistory();
   void loadSchedule();
+  void loadRequests();
   window.setInterval(loadSchedule, 10 * 60_000);
+  window.setInterval(loadRequests, 60_000);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && es?.readyState === EventSource.CLOSED) connect();
   });
@@ -167,7 +207,18 @@ export function useNow() {
   }, [lag, s.snapshots.length]);
 
   const now = pickSnapshot(s.snapshots, lag);
-  return { now, lag, listeners: s.listeners, connection: s.connection, offset: s.offset, history: s.history, schedule: s.schedule };
+  return {
+    now,
+    lag,
+    listeners: s.listeners,
+    connection: s.connection,
+    offset: s.offset,
+    history: s.history,
+    schedule: s.schedule,
+    requests: s.requests,
+    hearts: s.hearts,
+    myHearts: s.myHearts,
+  };
 }
 
 export function useSchedule() {
@@ -176,4 +227,65 @@ export function useSchedule() {
     startLive();
   }, []);
   return { schedule: s.schedule, offset: s.offset };
+}
+
+// ───────── Interacción del oyente ─────────
+
+export function heartCount(key: string | undefined, fromPayload: number | undefined): number {
+  if (!key) return fromPayload ?? 0;
+  return live.get().hearts[key] ?? fromPayload ?? 0;
+}
+
+export async function sendHeart(key: string, current: number) {
+  const s = live.get();
+  if (s.myHearts[key]) return;
+  const myHearts = { ...s.myHearts, [key]: true as const };
+  // Optimista: el corazón se marca al instante
+  live.set({ myHearts, hearts: { ...s.hearts, [key]: current + 1 } });
+  try {
+    localStorage.setItem("bloom:hearts", JSON.stringify(myHearts));
+  } catch {
+    /* almacenamiento no disponible */
+  }
+  try {
+    const r = await fetch("/api/live/hearts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key }),
+    });
+    const j = await r.json();
+    if (j?.ok) live.set((st) => ({ hearts: { ...st.hearts, [key]: j.data.count } }));
+  } catch {
+    /* sin red: se queda el optimista */
+  }
+}
+
+export async function searchLibrary(q: string, signal?: AbortSignal): Promise<SearchResult[]> {
+  try {
+    const r = await fetch(`/api/live/search?q=${encodeURIComponent(q)}&limit=12`, { signal });
+    const j = await r.json();
+    return j?.ok ? j.data : [];
+  } catch {
+    return [];
+  }
+}
+
+export type RequestError = "rate_limited" | "recently_played" | "already_requested" | "queue_full" | "not_found" | "invalid" | "network";
+
+export async function submitRequest(body: { trackId: string; name?: string; message?: string }): Promise<{ ok: true } | { ok: false; error: RequestError; retryAfter?: number }> {
+  try {
+    const r = await fetch("/api/live/requests", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => null);
+    if (j?.ok) {
+      void loadRequests();
+      return { ok: true };
+    }
+    return { ok: false, error: (j?.error as RequestError) ?? "network", retryAfter: j?.retryAfter };
+  } catch {
+    return { ok: false, error: "network" };
+  }
 }

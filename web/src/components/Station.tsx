@@ -9,6 +9,7 @@ import { useStore } from "../lib/store";
 import type { LiveTrack } from "../lib/types";
 import BloomVisualizer from "./BloomVisualizer";
 import Cover from "./Cover";
+import Heart from "./Heart";
 import { PlayIcon, Spinner, StopIcon, VolumeIcon } from "./Icons";
 
 export default function Station({ lang }: { lang: Lang }) {
@@ -106,6 +107,12 @@ export default function Station({ lang }: { lang: Lang }) {
           {artist}
           {track?.album && !isInterlude && <span className="np__album"> · {track.album}</span>}
         </p>
+        {track?.request && !isInterlude && (
+          <p className="dedication">
+            <span className="dedication__who">{s.requestedBy(track.request.name)}</span>
+            {track.request.message && <span className="dedication__msg">“{track.request.message}”</span>}
+          </p>
+        )}
 
         {track && track.duration > 0 && <Progress track={track} offset={offset} lag={lag} />}
 
@@ -124,6 +131,8 @@ export default function Station({ lang }: { lang: Lang }) {
               {p.status === "loading" ? s.connecting : p.status === "reconnecting" ? s.reconnecting : active ? s.stop : s.listen}
             </span>
           </button>
+
+          {!isInterlude && <Heart trackKey={track?.key} count={track?.hearts} label={s.heart} labelOn={s.hearted} />}
 
           <div className="volume">
             <button type="button" className="icon-btn" onClick={toggleMute} aria-label={p.muted ? s.unmute : s.mute}>

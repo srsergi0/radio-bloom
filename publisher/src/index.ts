@@ -7,18 +7,25 @@ import { DatabaseConnection } from "./infrastructure/database";
 import { ConfigRepository } from "./repositories/sqlite/config.repo";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
 import { LocutorRepository } from "./repositories/sqlite/locutor.repo";
+import { HeartsRepository } from "./repositories/sqlite/hearts.repo";
+import { ListenerSamplesRepository } from "./repositories/sqlite/listener-samples.repo";
 import { PlayHistoryRepository } from "./repositories/sqlite/play-history.repo";
 import { PlaybackStateRepository } from "./repositories/sqlite/playback-state.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
+import { SongRequestRepository } from "./repositories/sqlite/song-request.repo";
 import { BuncasterService } from "./services/buncaster.service";
 import { BuncasterQueueService } from "./services/buncaster-queue.service";
 import { ConfigService } from "./services/config.service";
 import { CoverService } from "./services/cover.service";
+import { HeartsService } from "./services/hearts.service";
 import { createLibraryService } from "./services/library.service";
 import { LiveService } from "./services/live.service";
 import { LocutorService } from "./services/locutor.service";
 import { OrchestratorService } from "./services/orchestrator.service";
 import { QueuePersistenceService } from "./services/queue-persistence.service";
+import { ReachService } from "./services/reach.service";
+import { SongRequestsService } from "./services/song-requests.service";
+import { resolveSessionSecret } from "./services/studio-auth";
 import { TorrentService } from "./services/torrent.service";
 import { TtsService } from "./services/tts.service";
 
@@ -69,6 +76,24 @@ const playlistRepo = new PlaylistRepository(dbConnection);
 const playbackStateRepo = new PlaybackStateRepository(dbConnection);
 const locutorRepo = new LocutorRepository(dbConnection);
 const playHistoryRepo = new PlayHistoryRepository(dbConnection, 500);
+const songRequestRepo = new SongRequestRepository(dbConnection);
+const heartsRepo = new HeartsRepository(dbConnection);
+const listenerSamplesRepo = new ListenerSamplesRepository(dbConnection);
+
+// Studio auth (control API). Unset token → API stays open (backward compat) — warn loudly.
+const STUDIO_TOKEN = process.env.STUDIO_TOKEN?.trim() || "";
+const STUDIO_SESSION_SECRET = process.env.STUDIO_SESSION_SECRET?.trim() || "";
+if (!STUDIO_TOKEN) {
+  const bar = "!".repeat(72);
+  console.warn(`${bar}\n[SECURITY] STUDIO_TOKEN is not set: every control endpoint (skip, queue,`);
+  console.warn("[SECURITY] library delete/upload, torrents, admin proxies) is PUBLIC.");
+  console.warn(`[SECURITY] Set STUDIO_TOKEN (openssl rand -hex 32) in .env and restart.\n${bar}`);
+} else if (!STUDIO_SESSION_SECRET) {
+  console.warn("[studio] STUDIO_SESSION_SECRET not set — deriving the cookie key from STUDIO_TOKEN.");
+}
+// Salt for listener IP hashes (requests/hearts): stable as long as the secret is.
+const IP_SALT = resolveSessionSecret({ token: STUDIO_TOKEN, sessionSecret: STUDIO_SESSION_SECRET });
+const REQUESTS_AUTO_APPROVE = /^(1|true|yes|on)$/i.test(process.env.REQUESTS_AUTO_APPROVE || "");
 
 // ============================================================
 // 3. Services & Use Cases Instantiation
@@ -137,12 +162,38 @@ const coverService = new CoverService(
   libraryRepo,
   playHistoryRepo
 );
-const liveService = new LiveService({
+// Listener requests + hearts. Closures reference liveService lazily (created just below).
+const songRequestsService: SongRequestsService = new SongRequestsService({
+  repo: songRequestRepo,
+  libraryRepo,
+  historyRepo: playHistoryRepo,
+  coverService,
+  // Direct Buncaster REST enqueue — never BullMQ (Redis is unreliable)
+  enqueueFile: (filepath) => buncasterService.enqueueFile(filepath),
+  removeFromQueue: (file) => buncasterService.queueRemove(file),
+  getQueueFiles: (): Set<string> => liveService.getQueueFiles(),
+  getCurrentFile: () => liveService.getCurrentFile(),
+  isEngineHealthy: () => liveService.isHealthy(),
+  ipSalt: IP_SALT,
+  autoApprove: REQUESTS_AUTO_APPROVE,
+  onPublicChange: (list) => liveService.broadcast("requests", list),
+});
+const heartsService: HeartsService = new HeartsService({
+  repo: heartsRepo,
+  ipSalt: IP_SALT,
+  isKnownKey: (key) =>
+    liveService.getCurrentTrackKey() === key || playHistoryRepo.findFileByKey(key) !== null,
+  onCount: (key, count) => liveService.broadcast("hearts", { key, count }),
+});
+
+const liveService: LiveService = new LiveService({
   buncasterClient,
   libraryRepo,
   locutorService,
   historyRepo: playHistoryRepo,
   coverService,
+  requests: songRequestsService,
+  hearts: heartsService,
   opusEnabled: OPUS_ENABLED,
   mp3Enabled: MP3_ENABLED,
   getLocalListeners: () => ({
@@ -152,6 +203,12 @@ const liveService = new LiveService({
     mp3Upstream: mp3Broadcaster?.isUpstreamConnected() ?? false,
   }),
 });
+
+const reachService = new ReachService(
+  listenerSamplesRepo,
+  () => liveService.getListenerCount(),
+  buncasterClient
+);
 
 // ============================================================
 // 4. API & Static Router Instantiation
@@ -168,7 +225,15 @@ const apiRouter = createApiRouter({
   musicDir: MUSIC_DIR,
   distDir: DIST_DIR,
   ttsService,
-  live: { liveService, coverService },
+  live: {
+    liveService,
+    coverService,
+    requests: songRequestsService,
+    hearts: heartsService,
+    reach: reachService,
+  },
+  studioAuth: { token: STUDIO_TOKEN || null, sessionSecret: STUDIO_SESSION_SECRET || null },
+  studio: { liveService, requests: songRequestsService, reach: reachService },
 });
 
 // ============================================================
@@ -354,6 +419,7 @@ const opusBroadcaster = OPUS_ENABLED ? new StreamBroadcaster(OPUS_URL, "opus", t
 const broadcaster = USE_OPUS ? opusBroadcaster! : mp3Broadcaster!; // alias para compatibilidad
 
 liveService.start();
+reachService.start();
 
 // ============================================================
 // 6. HTTP Server (Bun.serve)
@@ -361,7 +427,7 @@ liveService.start();
 const _server = Bun.serve({
   port: PORT,
   idleTimeout: 255,
-  async fetch(req) {
+  async fetch(req, server) {
     const url = new URL(req.url);
 
     if (url.pathname === "/radiobloom.mp3" || url.pathname === "/mp3") {
@@ -446,7 +512,8 @@ const _server = Bun.serve({
       });
     }
 
-    return apiRouter.fetch(req);
+    // Pass the server so routes can read the socket IP (server.requestIP)
+    return apiRouter.fetch(req, server);
   },
 });
 
@@ -461,6 +528,8 @@ process.on("SIGINT", async () => {
   console.log("[shutdown] SIGINT received, shutting down gracefully...");
   orchestratorService.stop();
   liveService.stop();
+  reachService.stop();
+  heartsService.stop();
   libraryService.shutdown();
   _server.stop();
   await torrentService.close().catch(() => {});
@@ -471,6 +540,8 @@ process.on("SIGTERM", async () => {
   console.log("[shutdown] SIGTERM received, shutting down gracefully...");
   orchestratorService.stop();
   liveService.stop();
+  reachService.stop();
+  heartsService.stop();
   libraryService.shutdown();
   _server.stop();
   await torrentService.close().catch(() => {});

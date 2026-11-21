@@ -106,6 +106,18 @@ export interface LiveTrack {
   type: LiveTrackType;
 }
 
+/** Dedication attached to the current track when it was a listener request. */
+export interface LiveTrackRequest {
+  name: string | null;
+  message: string | null;
+}
+
+/** `track` as sent in /api/live/now (LiveTrack + hearts + request). */
+export interface LiveNowTrack extends LiveTrack {
+  hearts: number;
+  request: LiveTrackRequest | null;
+}
+
 export interface LiveShow {
   start: string; // "HH:MM" (America/Lima)
   duration: number; // minutes
@@ -143,7 +155,7 @@ export interface LiveUpNextItem {
 export interface LiveNowPayload {
   station: { name: string; city: string; timezone: string };
   onAir: { isLive: boolean; source: LiveSource };
-  track: LiveTrack | null;
+  track: LiveNowTrack | null;
   host: LiveHost | null;
   listeners: LiveListeners;
   stream: LiveStreamInfo;
@@ -152,6 +164,8 @@ export interface LiveNowPayload {
 }
 
 export interface LiveHistoryItem {
+  key: string;
+  hearts: number;
   title: string;
   artist: string;
   album: string | null;

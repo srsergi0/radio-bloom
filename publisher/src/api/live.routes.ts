@@ -1,12 +1,26 @@
 import type { Hono } from "hono";
 import type { CoverService } from "../services/cover.service";
+import type { HeartsService } from "../services/hearts.service";
 import { isValidTrackKey } from "../services/live.mapper";
 import type { LiveService, LiveSubscriber } from "../services/live.service";
+import type { ReachService } from "../services/reach.service";
+import type { SongRequestsService } from "../services/song-requests.service";
+import { buildIcecastStatus, publicOrigin } from "../services/status-json.mapper";
+import { isHttpsRequest } from "../services/studio-auth";
+import { requestClientIp } from "./studio.routes";
 
 export interface LiveRouteDeps {
   liveService: LiveService;
   coverService: CoverService;
+  /** Listener song requests (search + POST/GET /api/live/requests). */
+  requests?: SongRequestsService;
+  /** Hearts (POST /api/live/hearts). */
+  hearts?: HeartsService;
+  /** Engine uptime for /status-json.xsl stream_start. */
+  reach?: ReachService;
 }
+
+const PROCESS_STARTED_AT = Date.now();
 
 /** Routes that must bypass the per-IP rate limiter (many listeners can share one proxy IP). */
 export function isRateLimitExempt(path: string): boolean {
@@ -35,6 +49,74 @@ export function registerLiveRoutes(app: Hono, deps: LiveRouteDeps): void {
 
   app.get("/api/live/schedule", (c) => {
     return c.json({ ok: true, data: liveService.getSchedule() });
+  });
+
+  // ── Requests ("pedidos") ─────────────────────────────────
+
+  const requests = deps.requests;
+  if (requests) {
+    app.get("/api/live/search", (c) => {
+      return c.json({ ok: true, data: requests.search(c.req.query("q"), c.req.query("limit")) });
+    });
+
+    app.get("/api/live/requests", (c) => {
+      return c.json({ ok: true, data: requests.listPublic() });
+    });
+
+    app.post("/api/live/requests", async (c) => {
+      const body = await c.req.json().catch(() => null);
+      const res = await requests.create(body, requestClientIp(c));
+      if (!res.ok) {
+        const payload: Record<string, unknown> = { ok: false, error: res.error };
+        if (res.retryAfter !== undefined) payload.retryAfter = res.retryAfter;
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (res.retryAfter !== undefined) headers["Retry-After"] = String(res.retryAfter);
+        return new Response(JSON.stringify(payload), { status: res.status, headers });
+      }
+      return c.json({ ok: true, data: { id: res.id, status: res.status } });
+    });
+  }
+
+  // ── Hearts ───────────────────────────────────────────────
+
+  const hearts = deps.hearts;
+  if (hearts) {
+    app.post("/api/live/hearts", async (c) => {
+      const body = await c.req.json().catch(() => null);
+      const res = hearts.heart(body?.key, requestClientIp(c));
+      if (!res.ok) return c.json({ ok: false, error: res.error }, res.status);
+      return c.json({ ok: true, data: { key: res.key, count: res.count } });
+    });
+  }
+
+  // ── Icecast-compatible status for radio directories ─────
+
+  app.get("/status-json.xsl", async (c) => {
+    const headers = c.req.raw.headers;
+    const { host, origin } = publicOrigin(
+      headers,
+      isHttpsRequest(headers),
+      process.env.PUBLIC_HOST?.trim() || undefined
+    );
+    const engine = deps.reach?.peekEngine();
+    const streamStartMs =
+      engine?.ok && engine.uptimeSeconds > 0
+        ? Date.now() - engine.uptimeSeconds * 1000
+        : PROCESS_STARTED_AT;
+    const body = buildIcecastStatus({
+      now: await liveService.getNow(),
+      host,
+      origin,
+      streamStartMs,
+    });
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-cache",
+      },
+    });
   });
 
   app.get("/api/live/cover/:key", async (c) => {

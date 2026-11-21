@@ -193,5 +193,49 @@ export class DatabaseConnection {
     this.client.exec(
       "CREATE INDEX IF NOT EXISTS idx_play_history_track_key ON play_history(track_key)"
     );
+
+    // Listener song requests (/api/live/requests, /api/studio/requests)
+    this.client.exec(`
+      CREATE TABLE IF NOT EXISTS song_requests (
+        id TEXT PRIMARY KEY,
+        track_id TEXT NOT NULL,
+        file TEXT NOT NULL,
+        track_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        artist TEXT DEFAULT '',
+        name TEXT,
+        message TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        ip_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        queued_at INTEGER,
+        played_at INTEGER
+      )
+    `);
+    this.client.exec(
+      "CREATE INDEX IF NOT EXISTS idx_song_requests_status ON song_requests(status, created_at)"
+    );
+    this.client.exec(
+      "CREATE INDEX IF NOT EXISTS idx_song_requests_ip ON song_requests(ip_hash, created_at)"
+    );
+
+    // Hearts (/api/live/hearts): PK dedupes one heart per IP hash per track key
+    this.client.exec(`
+      CREATE TABLE IF NOT EXISTS track_hearts (
+        track_key TEXT NOT NULL,
+        ip_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (track_key, ip_hash)
+      )
+    `);
+
+    // Studio reach chart (5-minute listener buckets)
+    this.client.exec(`
+      CREATE TABLE IF NOT EXISTS listener_samples (
+        t INTEGER PRIMARY KEY,
+        n INTEGER NOT NULL DEFAULT 0
+      )
+    `);
   }
 }

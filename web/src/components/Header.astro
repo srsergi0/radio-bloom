@@ -7,8 +7,8 @@ interface Props { lang: Lang }
 const { lang } = Astro.props;
 const es = lang === "es";
 const nav = es
-  ? [["#ahora", "Ahora"], ["#programacion", "Programación"], ["#historial", "Historial"], ["#como-funciona", "Cómo funciona"]]
-  : [["#ahora", "Now"], ["#programacion", "Schedule"], ["#historial", "History"], ["#como-funciona", "How it works"]];
+  ? [["#ahora", "Ahora"], ["#programacion", "Programación"], ["#pedidos", "Pedidos"], ["#como-funciona", "Cómo funciona"]]
+  : [["#ahora", "Now"], ["#programacion", "Schedule"], ["#pedidos", "Requests"], ["#como-funciona", "How it works"]];
 ---
 
 <header class="hdr">

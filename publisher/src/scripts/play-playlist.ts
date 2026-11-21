@@ -1,3 +1,5 @@
+import { studioHeaders } from "./studio-auth-headers";
+
 const API_BASE = "http://localhost:3000";
 
 const [, , playlistId, ...rest] = process.argv;
@@ -14,7 +16,7 @@ async function main() {
 
   const res = await fetch(`${API_BASE}/api/playlists/${playlistId}/play`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: studioHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ shuffle }),
   });
 

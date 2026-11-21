@@ -12,6 +12,7 @@ import type {
   LiveSource,
   LiveStreamInfo,
   LiveTrack,
+  LiveTrackRequest,
   LiveUpNextItem,
   Locutor,
   LocutorSchedule,
@@ -345,13 +346,18 @@ export interface LiveStateSnapshot {
   listeners: LiveListeners;
   stream: LiveStreamInfo;
   upNext: LiveUpNextItem[];
+  /** Hearts of the current track (default 0). */
+  hearts?: number;
+  /** Dedication when the current track is a played listener request. */
+  request?: LiveTrackRequest | null;
 }
 
 export function buildNowPayload(state: LiveStateSnapshot, now: number): LiveNowPayload {
+  const track = withElapsed(state.track, now);
   return {
     station: { ...STATION },
     onAir: { isLive: state.isLive, source: state.source },
-    track: withElapsed(state.track, now),
+    track: track ? { ...track, hearts: state.hearts ?? 0, request: state.request ?? null } : null,
     host: state.host,
     listeners: { ...state.listeners },
     stream: { ...state.stream },
@@ -371,5 +377,6 @@ export function nowSignature(state: LiveStateSnapshot): string {
     state.source,
     h ? [h.id, h.show?.start ?? null, h.show?.endsAt ?? null] : null,
     state.upNext.map((u) => [u.title, u.artist, u.type, u.coverUrl]),
+    state.request ? [state.request.name, state.request.message] : null,
   ]);
 }

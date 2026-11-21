@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import type { DatabaseConnection } from "../../infrastructure/database";
 import * as schema from "./schema";
 
@@ -58,6 +58,24 @@ export class PlayHistoryRepository {
       .limit(1)
       .get();
     return row?.file || null;
+  }
+
+  /** Newest playedAt for each key (keys never played are absent). */
+  public lastPlayedAtByKeys(trackKeys: string[]): Map<string, number> {
+    const out = new Map<string, number>();
+    if (trackKeys.length === 0) return out;
+    const rows = this.db.drizzle
+      .select({ key: schema.playHistory.trackKey, last: sql`max(${schema.playHistory.playedAt})` })
+      .from(schema.playHistory)
+      .where(inArray(schema.playHistory.trackKey, trackKeys))
+      .groupBy(schema.playHistory.trackKey)
+      .all();
+    for (const r of rows) out.set(r.key, Number(r.last));
+    return out;
+  }
+
+  public lastPlayedAt(trackKey: string): number | null {
+    return this.lastPlayedAtByKeys([trackKey]).get(trackKey) ?? null;
   }
 
   private prune(): void {

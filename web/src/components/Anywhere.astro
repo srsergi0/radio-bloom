@@ -34,6 +34,14 @@ const es = lang === "es";
       </div>
     </article>
     <article class="card">
+      <h3>{es ? "Ponla en tu web" : "Put it on your site"}</h3>
+      <p>{es ? "Un reproductor compacto con lo que suena en vivo. Copia y pega este código." : "A compact player showing what's on air. Copy and paste this code."}</p>
+      <div class="copy">
+        <code data-embed-code>&lt;iframe src="/embed"…</code>
+        <button type="button" class="btn btn--ghost" data-copy-embed data-done={es ? "Copiado ✓" : "Copied ✓"}>{es ? "Copiar" : "Copy"}</button>
+      </div>
+    </article>
+    <article class="card">
       <h3>{es ? "Con el teclado" : "From the keyboard"}</h3>
       <p>{es ? "Pulsa la barra espaciadora en cualquier parte de la página para encender o apagar la radio." : "Press the space bar anywhere on the page to turn the radio on or off."}</p>
       <kbd class="kbd">{es ? "Espacio" : "Space"}</kbd>
@@ -49,6 +57,21 @@ const es = lang === "es";
     const original = btn.textContent;
     try {
       await navigator.clipboard.writeText(code?.textContent ?? "");
+      btn.textContent = btn.dataset.done ?? "✓";
+      setTimeout(() => (btn.textContent = original), 1800);
+    } catch {
+      /* portapapeles no disponible */
+    }
+  });
+
+  const embedCode = document.querySelector<HTMLElement>("[data-embed-code]");
+  const embedHtml = `<iframe src="${new URL("/embed", location.href).href}" width="100%" height="100" style="border:0;border-radius:18px" allow="autoplay" title="Bloom Radio"></iframe>`;
+  if (embedCode) embedCode.textContent = embedHtml;
+  document.querySelector<HTMLButtonElement>("[data-copy-embed]")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement;
+    const original = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(embedHtml);
       btn.textContent = btn.dataset.done ?? "✓";
       setTimeout(() => (btn.textContent = original), 1800);
     } catch {

@@ -3,10 +3,15 @@
 # With delays to avoid rate limiting
 API="http://localhost:9876/api"
 DELAY=0.3
+# Control API is protected: send Authorization: Bearer $STUDIO_TOKEN when set
+AUTH=()
+if [ -n "${STUDIO_TOKEN:-}" ]; then
+  AUTH=(-H "Authorization: Bearer $STUDIO_TOKEN")
+fi
 
 create_locutor() {
   local name="$1" voice="$2" personality="$3"
-  local resp=$(curl -s -X POST "$API/locutors" \
+  local resp=$(curl -s "${AUTH[@]}" -X POST "$API/locutors" \
     -H "Content-Type: application/json" \
     -d "{\"name\":\"$name\",\"voice\":\"$voice\",\"personality\":\"$personality\",\"isActive\":true,\"isDefault\":false}")
   local id=$(echo "$resp" | jq -r '.data.id // empty')
@@ -21,7 +26,7 @@ create_locutor() {
 create_schedule() {
   local loc_id="$1" type="$2" day="$3" start="$4" dur="$5"
   sleep "$DELAY"
-  local resp=$(curl -s -X POST "$API/locutors/$loc_id/schedules" \
+  local resp=$(curl -s "${AUTH[@]}" -X POST "$API/locutors/$loc_id/schedules" \
     -H "Content-Type: application/json" \
     -d "{\"type\":\"$type\",\"dayOfWeek\":$day,\"startHour\":\"$start\",\"duration\":$dur}")
   local ok=$(echo "$resp" | jq -r '.ok')

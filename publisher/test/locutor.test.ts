@@ -15,8 +15,8 @@ describe("Locutor & Scheduling Tests", () => {
     service = new LocutorService(repo);
   });
 
-  test("should create and retrieve locutors", () => {
-    const loc = service.createLocutor({
+  test("should create and retrieve locutors", async () => {
+    const loc = await service.createLocutor({
       name: "Locutor Prueba",
       voice: "es-PE-AlexNeural",
       personality: "Una personalidad amigable",
@@ -32,16 +32,16 @@ describe("Locutor & Scheduling Tests", () => {
     expect(retrieved!.name).toBe("Locutor Prueba");
   });
 
-  test("should enforce single default locutor", () => {
-    const loc1 = service.createLocutor({
+  test("should enforce single default locutor", async () => {
+    const loc1 = await service.createLocutor({
       name: "DJ 1",
-      voice: "voice1",
+      voice: "es-PE-CamilaNeural",
       personality: "p1",
       isDefault: true,
     });
-    const loc2 = service.createLocutor({
+    const loc2 = await service.createLocutor({
       name: "DJ 2",
-      voice: "voice2",
+      voice: "es-MX-JorgeNeural",
       personality: "p2",
       isDefault: true,
     });
@@ -53,10 +53,10 @@ describe("Locutor & Scheduling Tests", () => {
     expect(dbLoc2!.isDefault).toBe(true);
   });
 
-  test("should detect scheduling overlaps (daily vs daily)", () => {
-    const loc = service.createLocutor({
+  test("should detect scheduling overlaps (daily vs daily)", async () => {
+    const loc = await service.createLocutor({
       name: "DJ Bloom",
-      voice: "voice",
+      voice: "es-ES-AlvaroNeural",
       personality: "p",
     });
 
@@ -91,9 +91,9 @@ describe("Locutor & Scheduling Tests", () => {
     expect(sch3.id).toBeDefined();
   });
 
-  test("should detect scheduling overlaps (daily vs weekly)", () => {
-    const loc1 = service.createLocutor({ name: "DJ 1", voice: "v", personality: "p" });
-    const loc2 = service.createLocutor({ name: "DJ 2", voice: "v", personality: "p" });
+  test("should detect scheduling overlaps (daily vs weekly)", async () => {
+    const loc1 = await service.createLocutor({ name: "DJ 1", voice: "es-AR-ElenaNeural", personality: "p" });
+    const loc2 = await service.createLocutor({ name: "DJ 2", voice: "es-AR-ElenaNeural", personality: "p" });
 
     // loc1 has daily schedule 10:00 - 11:00
     service.createSchedule({
@@ -126,9 +126,9 @@ describe("Locutor & Scheduling Tests", () => {
     expect(sch.id).toBeDefined();
   });
 
-  test("should detect scheduling overlaps wrapping around midnight", () => {
-    const loc1 = service.createLocutor({ name: "DJ 1", voice: "v", personality: "p" });
-    const loc2 = service.createLocutor({ name: "DJ 2", voice: "v", personality: "p" });
+  test("should detect scheduling overlaps wrapping around midnight", async () => {
+    const loc1 = await service.createLocutor({ name: "DJ 1", voice: "es-AR-ElenaNeural", personality: "p" });
+    const loc2 = await service.createLocutor({ name: "DJ 2", voice: "es-AR-ElenaNeural", personality: "p" });
 
     // Sunday (day 0) 23:30 - Monday 00:30 (duration 60)
     service.createSchedule({

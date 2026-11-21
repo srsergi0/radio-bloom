@@ -1,6 +1,7 @@
 /**
  * Test script to reproduce queue error with duplicate songs
  */
+import { studioHeaders } from "./studio-auth-headers";
 
 const API = "http://localhost:3000";
 
@@ -9,7 +10,7 @@ async function main() {
 
   // 1. Limpiar cola
   console.log("1. Limpiando cola...");
-  await fetch(`${API}/api/stream/queue`, { method: "DELETE" });
+  await fetch(`${API}/api/stream/queue`, { method: "DELETE", headers: studioHeaders() });
   console.log("   Cola vaciada\n");
 
   // 2. Buscar y añadir canción "bad"
@@ -22,7 +23,7 @@ async function main() {
   console.log("   Añadiendo a la cola...");
   await fetch(`${API}/api/stream/queue`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: studioHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify([{ id: song.id }]),
   });
   await new Promise((r) => setTimeout(r, 2000));
@@ -43,7 +44,7 @@ async function main() {
   console.log("4. Añadiendo interludio TTS...");
   await fetch(`${API}/api/stream/queue`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: studioHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify([{ script: "Ha sonado Bad Bunny" }]),
   });
   await new Promise((r) => setTimeout(r, 3000));
@@ -64,7 +65,7 @@ async function main() {
   console.log("6. Añadiendo la misma canción 'bad' otra vez...");
   await fetch(`${API}/api/stream/queue`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: studioHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify([{ id: song.id }]),
   });
   await new Promise((r) => setTimeout(r, 2000));

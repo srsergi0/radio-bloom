@@ -5,6 +5,7 @@ import { clock, limaHM } from "../lib/format";
 import { type Lang, t } from "../lib/i18n";
 import { useNow } from "../lib/live";
 import Cover from "./Cover";
+import Heart from "./Heart";
 
 const ease = [0.22, 1, 0.36, 1] as const;
 
@@ -89,6 +90,7 @@ export default function Feed({ lang }: { lang: Lang }) {
                         {h.duration > 0 && <span className="track__dur"> · {clock(h.duration)}</span>}
                       </span>
                     </span>
+                    <Heart trackKey={h.key} count={h.hearts} label={s.heart} labelOn={s.hearted} size="sm" />
                   </motion.li>
                 );
               })}

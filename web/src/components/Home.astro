@@ -2,6 +2,7 @@
 import Station from "./Station";
 import Feed from "./Feed";
 import Schedule from "./Schedule";
+import Requests from "./Requests";
 import MiniPlayer from "./MiniPlayer";
 import HowItWorks from "./HowItWorks.astro";
 import Anywhere from "./Anywhere.astro";
@@ -14,6 +15,7 @@ const { lang } = Astro.props;
 <Station client:load lang={lang} />
 <div class="wrap">
   <Feed client:only="react" lang={lang} />
+  <Requests client:only="react" lang={lang} />
   <Schedule client:only="react" lang={lang} />
   <HowItWorks lang={lang} />
   <Anywhere lang={lang} />

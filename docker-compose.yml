@@ -67,6 +67,12 @@ services:
       - STREAM_TIER=${STREAM_TIER:-dual}
       - OPUS_UPSTREAM_URL=${OPUS_UPSTREAM_URL:-}
       - MP3_UPSTREAM_URL=${MP3_UPSTREAM_URL:-}
+      - STUDIO_TOKEN=${STUDIO_TOKEN:-}
+      - STUDIO_SESSION_SECRET=${STUDIO_SESSION_SECRET:-}
+      - REQUESTS_AUTO_APPROVE=${REQUESTS_AUTO_APPROVE:-false}
+      - PUBLIC_HOST=${PUBLIC_HOST:-}
+      - SRT_PORT=${SRT_PORT:-1936}
+      - RTMP_STREAM_KEY=${RTMP_STREAM_KEY:-}
     volumes:
       - ./music:/app/music
       - radio-publisher-data:/app/data

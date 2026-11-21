@@ -3,6 +3,7 @@ import type {
   LiveListeners,
   LiveNowPayload,
   LiveSchedulePayload,
+  LiveTrackRequest,
   LiveUpNextItem,
   Track,
 } from "../domain/types";
@@ -53,6 +54,17 @@ export interface LiveServiceDeps {
   mp3Enabled: boolean;
   getLocalListeners: () => LocalListenerProbe;
   pollIntervalMs?: number;
+  /** Listener requests: marks queued requests as played when their song starts. */
+  requests?: {
+    onTrackStart(file: string, now: number): LiveTrackRequest | null;
+    tick?(now: number): void;
+    listPublic(): unknown[];
+  };
+  /** Heart counts for the current track and history items. */
+  hearts?: {
+    count(key: string): number;
+    counts(keys: string[]): Map<string, number>;
+  };
 }
 
 const POLL_INTERVAL_MS = 2000;
@@ -108,6 +120,8 @@ export class LiveService {
   private currentPlayId: string | null = null;
   private currentLib: Track | null = null;
   private currentFromQueue = false;
+  private currentRequest: LiveTrackRequest | null = null;
+  private currentFile: string | null = null;
   private liveSince: number | null = null;
   private prevQueueFiles = new Set<string>();
   private upNextSig = "";
@@ -175,7 +189,14 @@ export class LiveService {
   }
 
   public getHistory(limit: number): LiveHistoryItem[] {
-    return this.deps.historyRepo.list(limit).map((r) => ({
+    const rows = this.deps.historyRepo.list(limit);
+    let hearts = new Map<string, number>();
+    try {
+      hearts = this.deps.hearts?.counts(rows.map((r) => r.trackKey)) ?? hearts;
+    } catch {}
+    return rows.map((r) => ({
+      key: r.trackKey,
+      hearts: hearts.get(r.trackKey) ?? 0,
       title: r.title,
       artist: r.artist,
       album: r.album || null,
@@ -189,11 +210,44 @@ export class LiveService {
   public async subscribe(sub: LiveSubscriber): Promise<(() => void) | null> {
     if (this.subscribers.size >= MAX_SUBSCRIBERS) return null;
     const payload = await this.getNow();
-    if (!sub.send(`retry: 5000\n\n${sseEvent("now", payload)}`)) return null;
+    let initial = `retry: 5000\n\n${sseEvent("now", payload)}`;
+    try {
+      if (this.deps.requests) initial += sseEvent("requests", this.deps.requests.listPublic());
+    } catch {}
+    if (!sub.send(initial)) return null;
     this.subscribers.add(sub);
     return () => {
       this.subscribers.delete(sub);
     };
+  }
+
+  /** Pushes an arbitrary SSE event (`requests`, `hearts`, ...) to every subscriber. */
+  public broadcast(event: string, data: unknown): void {
+    if (this.subscribers.size > 0) this.fanOut(sseEvent(event, data));
+  }
+
+  /** Library paths ("songs/..") in Buncaster's queue at the last poll. */
+  public getQueueFiles(): Set<string> {
+    return new Set(this.prevQueueFiles);
+  }
+
+  /** Library path of the file playing now (null on live/silence). */
+  public getCurrentFile(): string | null {
+    return this.currentFile;
+  }
+
+  /** Key of the track on air (what listeners can heart), or null. */
+  public getCurrentTrackKey(): string | null {
+    return this.state?.track?.key ?? null;
+  }
+
+  public getListenerCount(): number {
+    return this.state?.listeners.current ?? 0;
+  }
+
+  /** False after repeated Buncaster /status failures. */
+  public isHealthy(): boolean {
+    return this.failures === 0 && this.np !== null;
   }
 
   // ── Poller ────────────────────────────────────────────────
@@ -229,6 +283,11 @@ export class LiveService {
         this.queue = queueRes.value;
         this.prevQueueFiles = new Set(this.queue.map((q) => toDbPath(q.file)));
       }
+      try {
+        this.deps.requests?.tick?.(now);
+      } catch (err: any) {
+        console.error("[LiveService] requests tick failed:", err.message);
+      }
       this.publish(now);
     } catch (err: any) {
       console.error("[LiveService] tick failed:", err.message);
@@ -250,6 +309,8 @@ export class LiveService {
 
     this.currentPlayId = playId;
     this.currentLib = null;
+    this.currentRequest = null;
+    this.currentFile = np?.file && !isLive ? toDbPath(np.file) : null;
     // Queue tracks are reported as "fallback" by Buncaster: infer from the previous queue snapshot
     this.currentFromQueue = !!np?.file && this.prevQueueFiles.has(toDbPath(np.file));
     if (!np?.file || isLive) return;
@@ -260,6 +321,14 @@ export class LiveService {
     } catch {}
 
     if (isInterludioFile(np.file) || this.currentLib?.type === "interludio") return;
+
+    if (this.deps.requests) {
+      try {
+        this.currentRequest = this.deps.requests.onTrackStart(dbPath, now);
+      } catch (err: any) {
+        console.error("[LiveService] request hook failed:", err.message);
+      }
+    }
 
     const coverKey = this.deps.coverService.register(np.file);
     this.deps.coverService
@@ -322,8 +391,16 @@ export class LiveService {
       now,
     });
     const isLive = !!np && (np.isLive || np.type === "live");
+    let hearts = 0;
+    if (track && this.deps.hearts) {
+      try {
+        hearts = this.deps.hearts.count(track.key);
+      } catch {}
+    }
 
     return {
+      hearts,
+      request: track ? this.currentRequest : null,
       isLive,
       source: resolveSource(np, this.currentFromQueue),
       track,

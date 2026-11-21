@@ -172,6 +172,11 @@ export class BuncasterClient {
     return this.request<BuncasterStatus>("/status", { signal: AbortSignal.timeout(timeoutMs) });
   }
 
+  /** /health (status, uptime seconds, memory MB, nowPlaying) with a hard timeout. */
+  public async getHealthWithTimeout(timeoutMs = 3000): Promise<any> {
+    return this.request<any>("/health", { signal: AbortSignal.timeout(timeoutMs) });
+  }
+
   // ── Current Track ───────────────────────────────────────
 
   // buncaster-cli exposes the file of the deck currently playing only in

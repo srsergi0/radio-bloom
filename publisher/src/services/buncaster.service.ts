@@ -11,6 +11,42 @@ export function toDbPath(filepath: string): string {
   return match ? `${match[1]}/${match[2]}` : forwardSlash;
 }
 
+export interface QueueListItem {
+  rid: string;
+  type: "song" | "interludio";
+  id?: string;
+  artist?: string;
+  title?: string;
+  script?: string;
+  file?: string;
+  pending?: boolean;
+}
+
+/** Public shape of GET /api/stream/queue items (also /api/studio/overview `queue`). */
+export function toPublicQueueItems(items: QueueListItem[]) {
+  return items.map((item) => {
+    // Interludios: only rid, id, type, script (+ pending)
+    if (item.type === "interludio") {
+      return {
+        rid: item.rid,
+        id: item.id,
+        type: item.type,
+        script: item.script,
+        pending: item.pending,
+      };
+    }
+    // Songs: rid, id, artist, title, type (+ pending)
+    return {
+      rid: item.rid,
+      id: item.id,
+      artist: item.artist,
+      title: item.title,
+      type: item.type,
+      pending: item.pending,
+    };
+  });
+}
+
 function toContainerPath(filepath: string): string {
   // buncaster-cli (BunRadio) espera rutas relativas "music/..." (relativas a /app)
   // Ej: "songs/file.mp3" → "music/songs/file.mp3"
@@ -42,6 +78,9 @@ export class BuncasterService {
   private static readonly MANUAL_CLEAR_COOLDOWN_MS = 120_000;
   private static readonly SCRIPT_CACHE_MAX = 200;
   private queueService: BuncasterQueueService | null = null;
+  // Redis/BullMQ down → skip the pending-jobs lookup for a while instead of paying 2s per call
+  private bullMqDownUntil = 0;
+  private static readonly BULLMQ_RETRY_MS = 60_000;
   // Cache for TTS interludios scripts (Buncaster doesn't store scripts)
   private readonly indexToScript = new Map<number, string>();
   private readonly fileToScript = new Map<string, string>();
@@ -227,7 +266,7 @@ export class BuncasterService {
   }> {
     // Get pending items from BullMQ queue
     let pendingItems: any[] = [];
-    if (this.queueService) {
+    if (this.queueService && Date.now() >= this.bullMqDownUntil) {
       try {
         // Bounded: if Redis is unreachable/unauthenticated BullMQ waits forever, which used to
         // hang GET /api/stream/queue. Degrade to Buncaster-only items instead.
@@ -255,7 +294,11 @@ export class BuncasterService {
           };
         });
       } catch (err: any) {
-        console.error("[BuncasterService] Error fetching pending jobs:", err.message);
+        this.bullMqDownUntil = Date.now() + BuncasterService.BULLMQ_RETRY_MS;
+        console.error(
+          "[BuncasterService] Error fetching pending jobs (skipping BullMQ for 60s):",
+          err.message
+        );
       }
     }
 
@@ -298,6 +341,7 @@ export class BuncasterService {
         if (isInterludio && script) {
           return {
             rid: String(item.index),
+            id: dbFile,
             type: "interludio" as const,
             script,
             file: item.file || undefined,
@@ -322,10 +366,30 @@ export class BuncasterService {
     }
   }
 
+  /**
+   * Appends a library file to Buncaster's queue directly over REST (no BullMQ/Redis).
+   * Returns whether Buncaster accepted it.
+   */
+  public async enqueueFile(filepath: string): Promise<boolean> {
+    try {
+      return await this.buncasterClient.pushToQueue(toContainerPath(filepath));
+    } catch {
+      return false;
+    }
+  }
+
   public async queueRemove(rid: string): Promise<boolean> {
     try {
-      const index = parseInt(rid, 10);
-      if (Number.isNaN(index)) return false;
+      let index = /^\d+$/.test(rid.trim()) ? parseInt(rid, 10) : Number.NaN;
+      if (Number.isNaN(index)) {
+        // rid given as a file path ("music/songs/..", "songs/..") → resolve its queue index
+        if (rid.startsWith("pending-")) return false;
+        const target = toDbPath(rid);
+        const queue = await this.buncasterClient.getQueue();
+        const found = queue.find((q) => q.file === rid || toDbPath(q.file) === target);
+        if (!found) return false;
+        index = found.index;
+      }
       const success = await this.buncasterClient.removeFromQueue(index);
       if (success) {
         this.indexToScript.delete(index);

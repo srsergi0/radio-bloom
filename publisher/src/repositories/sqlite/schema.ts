@@ -88,3 +88,34 @@ export const playHistory = sqliteTable("play_history", {
   duration: real("duration").notNull().default(0),
   playedAt: integer("played_at").notNull(), // epoch ms
 });
+
+// Listener song requests ("pedidos") — /api/live/requests + /api/studio/requests
+export const songRequests = sqliteTable("song_requests", {
+  id: text("id").primaryKey(),
+  trackId: text("track_id").notNull(),
+  file: text("file").notNull(),
+  trackKey: text("track_key").notNull(),
+  title: text("title").notNull(),
+  artist: text("artist").default(""),
+  name: text("name"),
+  message: text("message"),
+  status: text("status").notNull().default("pending"), // pending | queued | played | rejected
+  ipHash: text("ip_hash").notNull(),
+  createdAt: integer("created_at").notNull(), // epoch ms
+  updatedAt: integer("updated_at").notNull(),
+  queuedAt: integer("queued_at"),
+  playedAt: integer("played_at"),
+});
+
+// Hearts: one row per (track key, IP hash) → dedupe by primary key
+export const trackHearts = sqliteTable("track_hearts", {
+  trackKey: text("track_key").notNull(),
+  ipHash: text("ip_hash").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
+// Studio reach chart: one row per 5-minute bucket (max listeners seen in it), last 24 h
+export const listenerSamples = sqliteTable("listener_samples", {
+  t: integer("t").primaryKey(), // bucket start, epoch ms
+  n: integer("n").notNull().default(0),
+});

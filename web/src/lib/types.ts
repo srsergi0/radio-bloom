@@ -11,6 +11,8 @@ export interface LiveTrack {
   coverUrl: string | null;
   spotifyUrl: string | null;
   type: "song" | "interludio";
+  hearts?: number;
+  request?: { name: string | null; message: string | null } | null;
 }
 
 export interface LiveHost {
@@ -40,6 +42,8 @@ export interface NowPayload {
 }
 
 export interface HistoryItem {
+  key?: string;
+  hearts?: number;
   title: string;
   artist: string;
   album: string | null;
@@ -63,4 +67,48 @@ export interface SchedulePayload {
   timezone: string;
   now: { dayOfWeek: number; minute: number };
   slots: ScheduleSlot[];
+}
+
+export interface SearchResult {
+  id: string;
+  title: string;
+  artist: string;
+  album: string | null;
+  coverUrl: string | null;
+  duration: number;
+  requestable: boolean;
+  reason?: "recently_played" | "already_requested";
+}
+
+export type RequestStatus = "pending" | "queued" | "played" | "rejected";
+
+export interface RequestItem {
+  id: string;
+  title: string;
+  artist: string;
+  coverUrl: string | null;
+  name: string | null;
+  message: string | null;
+  status: RequestStatus;
+  createdAt: number;
+  ipHash?: string;
+}
+
+export interface QueueItem {
+  rid: string;
+  id: string;
+  type: "song" | "interludio";
+  artist?: string;
+  title?: string;
+  script?: string;
+  pending?: boolean;
+}
+
+export interface StudioOverview {
+  now: NowPayload;
+  queue: QueueItem[];
+  requestsPending: number;
+  listeners24h: Array<{ t: number; n: number }>;
+  engine: { ok: boolean; uptimeSeconds: number; rssMb: number | null; live: boolean };
+  live: { srtUrl: string; streamKeyConfigured: boolean };
 }

@@ -5,7 +5,7 @@ import type { LibraryRepository } from "../repositories/sqlite/library.repo";
 import type { PlaylistRepository } from "../repositories/sqlite/playlist.repo";
 import type { BuncasterQueueService } from "./buncaster-queue.service";
 
-function toDbPath(filepath: string): string {
+export function toDbPath(filepath: string): string {
   const forwardSlash = filepath.replace(/\\/g, "/");
   const match = forwardSlash.match(/(?:^|\/)(songs|interludios)\/(.+)$/);
   return match ? `${match[1]}/${match[2]}` : forwardSlash;
@@ -229,8 +229,15 @@ export class BuncasterService {
     let pendingItems: any[] = [];
     if (this.queueService) {
       try {
-        const waitingJobs = await this.queueService.getQueue().getWaiting();
-        const activeJobs = await this.queueService.getQueue().getActive();
+        // Bounded: if Redis is unreachable/unauthenticated BullMQ waits forever, which used to
+        // hang GET /api/stream/queue. Degrade to Buncaster-only items instead.
+        const bullQueue = this.queueService.getQueue();
+        const [waitingJobs, activeJobs] = await Promise.race([
+          Promise.all([bullQueue.getWaiting(), bullQueue.getActive()]),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("BullMQ timeout (Redis unavailable?)")), 2000)
+          ),
+        ]);
         const pendingJobs = [...activeJobs, ...waitingJobs];
 
         pendingItems = pendingJobs.map((job) => {

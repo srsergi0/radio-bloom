@@ -1,0 +1,14 @@
+---
+interface Props { size?: number; class?: string }
+const { size = 28, class: cls = "" } = Astro.props;
+const petals = Array.from({ length: 8 }, (_, i) => i * 45);
+---
+<svg class={`logo-mark ${cls}`} width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
+  <g transform="translate(32 32)">
+    {petals.map((a) => (
+      <ellipse rx="7" ry="15" cy="-14" transform={`rotate(${a})`} fill="currentColor" opacity="0.9" />
+    ))}
+    <circle r="8.5" fill="var(--bg, #0b0b0c)" />
+    <circle r="4.5" fill="currentColor" />
+  </g>
+</svg>

@@ -85,3 +85,94 @@ export interface LocutorSchedule {
   startHour: string; // "HH:MM" e.g. "14:00"
   duration: number; // in minutes
 }
+
+// ============================================================
+// Listener API (/api/live/*) — public, read-only contract
+// ============================================================
+
+export type LiveSource = "autodj" | "queue" | "live";
+export type LiveTrackType = "song" | "interludio";
+
+export interface LiveTrack {
+  key: string;
+  title: string;
+  artist: string;
+  album: string | null;
+  duration: number; // seconds
+  elapsed: number; // seconds at serverTime
+  startedAt: number; // epoch ms
+  coverUrl: string | null;
+  spotifyUrl: string | null;
+  type: LiveTrackType;
+}
+
+export interface LiveShow {
+  start: string; // "HH:MM" (America/Lima)
+  duration: number; // minutes
+  endsAt: number; // epoch ms
+}
+
+export interface LiveHost {
+  id: number;
+  name: string;
+  voice: string;
+  personality: string; // first ~180 chars
+  show: LiveShow | null;
+}
+
+export interface LiveListeners {
+  current: number;
+  opus: number;
+  mp3: number;
+  peakToday: number;
+}
+
+export interface LiveStreamInfo {
+  opus: string;
+  mp3: string;
+  bitrateKbps: number;
+}
+
+export interface LiveUpNextItem {
+  title: string;
+  artist: string;
+  type: LiveTrackType;
+  coverUrl: string | null;
+}
+
+export interface LiveNowPayload {
+  station: { name: string; city: string; timezone: string };
+  onAir: { isLive: boolean; source: LiveSource };
+  track: LiveTrack | null;
+  host: LiveHost | null;
+  listeners: LiveListeners;
+  stream: LiveStreamInfo;
+  upNext: LiveUpNextItem[];
+  serverTime: number;
+}
+
+export interface LiveHistoryItem {
+  title: string;
+  artist: string;
+  album: string | null;
+  coverUrl: string | null;
+  duration: number;
+  playedAt: number; // epoch ms
+}
+
+export interface LiveScheduleSlot {
+  locutorId: number;
+  hostName: string;
+  voice: string;
+  personality: string;
+  dayOfWeek: number; // 0 = Sunday ... 6 = Saturday
+  start: string; // "HH:MM"
+  duration: number; // minutes
+  isDefault: boolean;
+}
+
+export interface LiveSchedulePayload {
+  timezone: string;
+  now: { dayOfWeek: number; minute: number };
+  slots: LiveScheduleSlot[];
+}

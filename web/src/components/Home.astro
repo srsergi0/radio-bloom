@@ -1,0 +1,21 @@
+---
+import Station from "./Station";
+import Feed from "./Feed";
+import Schedule from "./Schedule";
+import MiniPlayer from "./MiniPlayer";
+import HowItWorks from "./HowItWorks.astro";
+import Anywhere from "./Anywhere.astro";
+import type { Lang } from "../lib/i18n";
+
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+---
+
+<Station client:load lang={lang} />
+<div class="wrap">
+  <Feed client:only="react" lang={lang} />
+  <Schedule client:only="react" lang={lang} />
+  <HowItWorks lang={lang} />
+  <Anywhere lang={lang} />
+</div>
+<MiniPlayer client:idle lang={lang} />

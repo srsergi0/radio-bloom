@@ -1,0 +1,74 @@
+---
+import type { Lang } from "../lib/i18n";
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+const es = lang === "es";
+---
+
+<section class="anywhere" id="escuchala" aria-labelledby="h-anywhere">
+  <header class="section-head">
+    <p class="eyebrow">{es ? "Escúchala donde quieras" : "Listen anywhere"}</p>
+    <h2 id="h-anywhere" class="display">
+      {es ? <>Llévala <em>contigo</em></> : <>Take it <em>with you</em></>}
+    </h2>
+  </header>
+  <div class="anywhere__grid">
+    <article class="card">
+      <h3>{es ? "Instálala como app" : "Install it as an app"}</h3>
+      <p>
+        {es
+          ? "Añádela a tu pantalla de inicio: se abre al toque, sigue sonando con la pantalla bloqueada y responde a los controles de tus auriculares."
+          : "Add it to your home screen: opens instantly, keeps playing with the screen locked and responds to your headphone controls."}
+      </p>
+      <button type="button" class="btn" data-install hidden>{es ? "Instalar Bloom" : "Install Bloom"}</button>
+      <p class="card__hint" data-install-hint>
+        {es ? "En iPhone: Compartir → Añadir a pantalla de inicio." : "On iPhone: Share → Add to Home Screen."}
+      </p>
+    </article>
+    <article class="card">
+      <h3>{es ? "En tu reproductor" : "In your player"}</h3>
+      <p>{es ? "VLC, foobar2000, tu equipo de música o tu radio por internet: pega esta dirección." : "VLC, foobar2000, your hi-fi or internet radio: paste this address."}</p>
+      <div class="copy">
+        <code data-stream-url>/radiobloom.opus</code>
+        <button type="button" class="btn btn--ghost" data-copy data-done={es ? "Copiada ✓" : "Copied ✓"}>{es ? "Copiar" : "Copy"}</button>
+      </div>
+    </article>
+    <article class="card">
+      <h3>{es ? "Con el teclado" : "From the keyboard"}</h3>
+      <p>{es ? "Pulsa la barra espaciadora en cualquier parte de la página para encender o apagar la radio." : "Press the space bar anywhere on the page to turn the radio on or off."}</p>
+      <kbd class="kbd">{es ? "Espacio" : "Space"}</kbd>
+    </article>
+  </div>
+</section>
+
+<script>
+  const code = document.querySelector<HTMLElement>("[data-stream-url]");
+  if (code) code.textContent = new URL("/radiobloom.opus", location.href).href;
+  document.querySelector<HTMLButtonElement>("[data-copy]")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement;
+    const original = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(code?.textContent ?? "");
+      btn.textContent = btn.dataset.done ?? "✓";
+      setTimeout(() => (btn.textContent = original), 1800);
+    } catch {
+      /* portapapeles no disponible */
+    }
+  });
+
+  // Instalación PWA (Chrome/Edge/Android)
+  let deferred: (Event & { prompt: () => Promise<void> }) | null = null;
+  const install = document.querySelector<HTMLButtonElement>("[data-install]");
+  const hint = document.querySelector<HTMLElement>("[data-install-hint]");
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferred = e as typeof deferred;
+    if (install) install.hidden = false;
+    if (hint) hint.hidden = true;
+  });
+  install?.addEventListener("click", async () => {
+    await deferred?.prompt();
+    deferred = null;
+    install.hidden = true;
+  });
+</script>

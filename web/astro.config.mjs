@@ -1,24 +1,22 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
-import tailwindcss from '@tailwindcss/vite';
 import react from '@astrojs/react';
 
 // https://astro.build/config
 export default defineConfig({
   integrations: [react()],
   i18n: {
-    defaultLocale: 'en',
-    locales: ['en', 'es'],
+    defaultLocale: 'es',
+    locales: ['es', 'en'],
     routing: {
       prefixDefaultLocale: false
     }
   },
   vite: {
-    plugins: [tailwindcss()],
     server: {
       proxy: {
         '/api': 'http://127.0.0.1:9876',
-        '/admin/queues': 'http://127.0.0.1:9876',
+        '/radiobloom': 'http://127.0.0.1:9876',
       }
     }
   }

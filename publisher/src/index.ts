@@ -7,12 +7,15 @@ import { DatabaseConnection } from "./infrastructure/database";
 import { ConfigRepository } from "./repositories/sqlite/config.repo";
 import { LibraryRepository } from "./repositories/sqlite/library.repo";
 import { LocutorRepository } from "./repositories/sqlite/locutor.repo";
+import { PlayHistoryRepository } from "./repositories/sqlite/play-history.repo";
 import { PlaybackStateRepository } from "./repositories/sqlite/playback-state.repo";
 import { PlaylistRepository } from "./repositories/sqlite/playlist.repo";
 import { BuncasterService } from "./services/buncaster.service";
 import { BuncasterQueueService } from "./services/buncaster-queue.service";
 import { ConfigService } from "./services/config.service";
+import { CoverService } from "./services/cover.service";
 import { createLibraryService } from "./services/library.service";
+import { LiveService } from "./services/live.service";
 import { LocutorService } from "./services/locutor.service";
 import { OrchestratorService } from "./services/orchestrator.service";
 import { QueuePersistenceService } from "./services/queue-persistence.service";
@@ -65,6 +68,7 @@ const libraryRepo = new LibraryRepository(dbConnection);
 const playlistRepo = new PlaylistRepository(dbConnection);
 const playbackStateRepo = new PlaybackStateRepository(dbConnection);
 const locutorRepo = new LocutorRepository(dbConnection);
+const playHistoryRepo = new PlayHistoryRepository(dbConnection, 500);
 
 // ============================================================
 // 3. Services & Use Cases Instantiation
@@ -125,6 +129,30 @@ const queuePersistenceService = new QueuePersistenceService(
 );
 queuePersistenceService.start();
 
+// Public listener API (/api/live/*): one shared Buncaster poller + SSE fan-out.
+// Started after the stream broadcasters exist (it reads their client counts).
+const coverService = new CoverService(
+  MUSIC_DIR,
+  resolve(DATA_DIR, "covers"),
+  libraryRepo,
+  playHistoryRepo
+);
+const liveService = new LiveService({
+  buncasterClient,
+  libraryRepo,
+  locutorService,
+  historyRepo: playHistoryRepo,
+  coverService,
+  opusEnabled: OPUS_ENABLED,
+  mp3Enabled: MP3_ENABLED,
+  getLocalListeners: () => ({
+    opus: opusBroadcaster?.getClientCount() ?? 0,
+    mp3: mp3Broadcaster?.getClientCount() ?? 0,
+    opusUpstream: opusBroadcaster?.isUpstreamConnected() ?? false,
+    mp3Upstream: mp3Broadcaster?.isUpstreamConnected() ?? false,
+  }),
+});
+
 // ============================================================
 // 4. API & Static Router Instantiation
 // ============================================================
@@ -140,6 +168,7 @@ const apiRouter = createApiRouter({
   musicDir: MUSIC_DIR,
   distDir: DIST_DIR,
   ttsService,
+  live: { liveService, coverService },
 });
 
 // ============================================================
@@ -188,6 +217,7 @@ class StreamBroadcaster {
   private bufferBytes = 0;
   private clients: Set<ReadableStreamDefaultController> = new Set();
   private isStreaming = false;
+  private upstreamConnected = false;
   private static readonly MAX_CLIENTS = 500;
 
   // Cabeceras Ogg/Opus (OpusHead + OpusTags) que hay que anteponer a cada oyente nuevo
@@ -223,6 +253,7 @@ class StreamBroadcaster {
         }
 
         const reader = res.body.getReader();
+        this.upstreamConnected = true;
         console.log(`[Broadcaster:${this.label}] Connected to upstream successfully.`);
         while (true) {
           const { done, value } = await reader.read();
@@ -233,6 +264,7 @@ class StreamBroadcaster {
           this.pushData(value);
         }
       } catch (err: any) {
+        this.upstreamConnected = false;
         console.error(`[Broadcaster:${this.label}] Upstream connection failed:`, err.message);
         let silenceMs = 0;
         while (silenceMs < 30000 && this.clients.size > 0) {
@@ -242,6 +274,7 @@ class StreamBroadcaster {
         }
       }
 
+      this.upstreamConnected = false;
       this.buffer = [];
       this.bufferBytes = 0;
       await new Promise((r) => setTimeout(r, 1000));
@@ -305,11 +338,22 @@ class StreamBroadcaster {
   public unregisterClient(controller: ReadableStreamDefaultController) {
     this.clients.delete(controller);
   }
+
+  public getClientCount(): number {
+    return this.clients.size;
+  }
+
+  /** True while holding a connection to Buncaster (that connection counts as 1 Buncaster listener). */
+  public isUpstreamConnected(): boolean {
+    return this.upstreamConnected;
+  }
 }
 
 const mp3Broadcaster = MP3_ENABLED ? new StreamBroadcaster(MP3_URL, "mp3") : null;
 const opusBroadcaster = OPUS_ENABLED ? new StreamBroadcaster(OPUS_URL, "opus", true) : null;
 const broadcaster = USE_OPUS ? opusBroadcaster! : mp3Broadcaster!; // alias para compatibilidad
+
+liveService.start();
 
 // ============================================================
 // 6. HTTP Server (Bun.serve)
@@ -416,6 +460,7 @@ console.log(`[server] Queues: http://localhost:${PORT}/admin/queues`);
 process.on("SIGINT", async () => {
   console.log("[shutdown] SIGINT received, shutting down gracefully...");
   orchestratorService.stop();
+  liveService.stop();
   libraryService.shutdown();
   _server.stop();
   await torrentService.close().catch(() => {});
@@ -425,6 +470,7 @@ process.on("SIGINT", async () => {
 process.on("SIGTERM", async () => {
   console.log("[shutdown] SIGTERM received, shutting down gracefully...");
   orchestratorService.stop();
+  liveService.stop();
   libraryService.shutdown();
   _server.stop();
   await torrentService.close().catch(() => {});

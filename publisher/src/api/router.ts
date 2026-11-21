@@ -13,6 +13,7 @@ import type { BuncasterQueueService } from "../services/buncaster-queue.service"
 import type { LocutorService } from "../services/locutor.service";
 import type { TorrentService } from "../services/torrent.service";
 import type { TtsService } from "../services/tts.service";
+import { isRateLimitExempt, type LiveRouteDeps, registerLiveRoutes } from "./live.routes";
 
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024; // 200MB
 
@@ -118,6 +119,8 @@ export interface ApiDependencies {
   musicDir: string;
   distDir: string;
   ttsService: TtsService;
+  /** Public listener API (/api/live/*). Optional so tests can build the router without it. */
+  live?: LiveRouteDeps;
 }
 
 export function createApiRouter(deps: ApiDependencies): Hono {
@@ -131,6 +134,8 @@ export function createApiRouter(deps: ApiDependencies): Hono {
   );
 
   app.use("*", async (c: any, next: any) => {
+    // SSE + covers are exempt: behind nginx/Cloudflare many listeners share one IP header
+    if (isRateLimitExempt(c.req.path)) return next();
     const ip = c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown";
     if (!checkRateLimit(ip)) {
       return c.json({ ok: false, error: "Rate limit exceeded" }, 429);
@@ -916,6 +921,12 @@ export function createApiRouter(deps: ApiDependencies): Hono {
       return c.json({ ok: false, error: err.message }, 500);
     }
   });
+
+  // ============================================================
+  // LIVE — public read-only listener API (see live.routes.ts)
+  // ============================================================
+
+  if (deps.live) registerLiveRoutes(app, deps.live);
 
   // ============================================================
   // HEALTH

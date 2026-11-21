@@ -76,3 +76,15 @@ export const locutorSchedules = sqliteTable("locutor_schedules", {
   startHour: text("start_hour").notNull(), // "HH:MM"
   duration: integer("duration").notNull().default(60), // in minutes
 });
+
+// Listener-facing play history (/api/live/history). Only songs are recorded.
+export const playHistory = sqliteTable("play_history", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  trackKey: text("track_key").notNull(),
+  file: text("file"),
+  title: text("title").notNull(),
+  artist: text("artist").default(""),
+  album: text("album").default(""),
+  duration: real("duration").notNull().default(0),
+  playedAt: integer("played_at").notNull(), // epoch ms
+});

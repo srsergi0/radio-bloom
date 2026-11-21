@@ -109,14 +109,16 @@ radio/
 │   ├── package.json                      # Dependencias npm y scripts
 │   ├── drizzle.config.ts                 # Configuración de Drizzle ORM
 │   ├── test/
-│   │   ├── api.test.ts                   # Tests de endpoints de la API
+│   │   ├── api.test.ts                   # Tests de endpoints de la API (legacy: aún usa deps de Liquidsoap, falla)
+│   │   ├── live.test.ts                  # Tests de la Listener API: mapper puro (schedule, host, track, listeners) + play_history
 │   │   └── integration.test.ts
 │   └── src/
 │       ├── index.ts                      # Servidor principal (Bun.serve, DI)
 │       ├── env.ts                        # Valores por defecto de variables de entorno
 │       │
 │       ├── api/
-│       │   └── router.ts                 # Rutas REST (Hono): biblioteca, cola, playlists, subida de archivos
+│       │   ├── router.ts                 # Rutas REST (Hono): biblioteca, cola, playlists, subida de archivos
+│       │   └── live.routes.ts            # Listener API pública /api/live/* (now, history, schedule, events SSE, cover)
 │       │
 │       ├── domain/
 │       │   └── types.ts                  # Tipos TypeScript compartidos (Track, StreamStatus, etc.)
@@ -133,7 +135,8 @@ radio/
 │       │   ├── library.repo.ts           # CRUD de tracks en biblioteca
 │       │   ├── playback-state.repo.ts    # Estado de reproducción actual
 │       │   ├── playlist.repo.ts          # CRUD de playlists y tracks
-│       │   └── locutor.repo.ts           # CRUD de locutores de IA y horarios
+│       │   ├── locutor.repo.ts           # CRUD de locutores de IA y horarios
+│       │   └── play-history.repo.ts      # Historial público de reproducción (tabla play_history, máx 500 filas)
 │       │
 │       ├── services/                     # Lógica de Negocio
 │       │   ├── config.service.ts         # Gestión de configuración
@@ -143,6 +146,9 @@ radio/
 │       │   ├── torrent.service.ts        # Búsqueda PirateBay (apibay) + Cola de descargas BullMQ con aria2c
 │       │   ├── orchestrator.service.ts   # AI DJ & Programación automática (OpenRouter + Edge-TTS)
 │       │   ├── locutor.service.ts        # Lógica de guardarraíl de solapamiento y locutor activo
+│       │   ├── live.service.ts           # Listener API: poller único de Buncaster (2s) + estado en memoria + fan-out SSE
+│       │   ├── live.mapper.ts            # Funciones puras: payload now, expansión de horarios, host activo (Lima), keys
+│       │   ├── cover.service.ts          # Carátulas: extracción ffmpeg → /app/data/covers/<key>.jpg (+ .miss), fallback Spotify
 │       │   └── metadata-enrichment.service.ts  # Enriquecimiento desde Spotify
 │       │
 │       └── scripts/                      # Scripts de utilidad
@@ -150,58 +156,36 @@ radio/
 │           ├── test-youtube-premium.ts
 │           └── check_db.ts
 │
-└── web/                                  # Interfaz Frontend (Astro)
-    ├── package.json
-    ├── tsconfig.json
-    ├── astro.config.mjs
-    ├── Dockerfile                        # Dockerfile multi-stage (build + nginx)
-    ├── AGENTS.md
-    ├── public/                           # Archivos estáticos
+└── web/                                  # Web pública de escucha "Bloom 2.0" (Astro estático + islas React)
+    ├── package.json                      # astro, @astrojs/react, react, motion (sin Tailwind/shadcn)
+    ├── bun.lock                          # Lockfile propio de web (lo copia el Dockerfile)
+    ├── astro.config.mjs                  # i18n: es (default, /) + en (/en/); proxy dev /api y /radiobloom → :9876
+    ├── Dockerfile                        # build con bun + nginx
+    ├── nginx.conf                        # proxy /api/, /api/live/events (SSE sin buffer), /radiobloom* (streams)
+    ├── README.md                         # Arquitectura de la web
+    ├── public/                           # favicon.svg, manifest.webmanifest, sw.js (PWA), og.png, icons/
     └── src/
-        ├── layouts/
-        │   └── Layout.astro
-        ├── styles/
-        │   └── global.css
-    ├── pages/
-    │   ├── index.astro               # Landing Page (Inglés)
-    │   ├── admin.astro               # Admin SPA (React + shadcn/ui + dnd-kit) — Biblioteca, Playlists e Interludios
-    │   └── es/
-    │       └── index.astro           # Landing Page (Español)
-    ├── lib/
-    │   └── utils.ts                  # cn() helper para shadcn/ui (tailwind-merge + clsx)
-    └── components/
-        ├── EventBanner.astro
-        ├── Features.astro
-        ├── Footer.astro
-        ├── Header.astro
-        ├── Hero.astro
-        ├── LiveShow.astro
-        ├── ProgramList.astro
-        ├── Player.astro
-        ├── ui/
-        │   ├── Badge.astro
-        │   ├── Button.astro
-        │   └── Card.astro
-        └── admin/
-            ├── AdminApp.tsx          # Root SPA: BrowserRouter + layout (sidebar + main)
-            ├── SidebarTree.tsx        # Árbol de canciones y interludios (GET /api/library/tree), draggable
-            ├── PlaylistList.tsx       # Lista de playlists + crear nueva
-            ├── PlaylistDetail.tsx     # Detalle de playlist con cola drag & drop (DndContext)
-            ├── PlaylistTrackItem.tsx  # Item de cola (song/interludio), sortable, menú editar/eliminar
-            ├── InterludioEditor.tsx   # Dialog para crear/editar interludios de texto (script)
-            ├── lib/
-            │   ├── api.ts             # Cliente fetch tipado
-            │   └── types.ts           # Tipos TS: Track, Playlist, PlaylistTrack, FileTreeNode
-            └── ui/                    # Componentes shadcn/ui (React + Tailwind)
-                ├── badge.tsx
-                ├── button.tsx
-                ├── card.tsx
-                ├── dialog.tsx
-                ├── dropdown-menu.tsx
-                ├── input.tsx
-                ├── scroll-area.tsx
-                ├── separator.tsx
-                └── tooltip.tsx
+        ├── layouts/Layout.astro          # <head>: SEO, OG, JSON-LD RadioStation, manifest, registro SW
+        ├── styles/global.css             # Sistema visual (tokens, --accent animable con @property)
+        ├── pages/index.astro             # Español (default)
+        ├── pages/en/index.astro          # Inglés
+        ├── lib/
+        │   ├── types.ts                  # Contrato de /api/live/*
+        │   ├── store.ts                  # Store observable compartido entre islas (useSyncExternalStore)
+        │   ├── live.ts                   # SSE + polling, snapshots retrasados según el lag del audio, historial, parrilla
+        │   ├── player.ts                 # <audio> único: reconexión con backoff, fallback opus→mp3, medición de lag, AnalyserNode, Media Session
+        │   ├── color.ts                  # Color dominante de la portada → --accent
+        │   ├── format.ts                 # Hora de Lima, voces Edge-TTS → país, hashes
+        │   └── i18n.ts                   # Textos es/en
+        └── components/
+            ├── Home.astro                # Composición de la página
+            ├── Station.tsx               # Escenario: flor + portada + ahora suena + controles + en cabina (client:load)
+            ├── BloomVisualizer.tsx       # Canvas: pétalos que reaccionan a las frecuencias reales (idle sin audio)
+            ├── Feed.tsx                  # Lo que viene + historial (client:only)
+            ├── Schedule.tsx              # Parrilla semanal 24h por día (client:only)
+            ├── MiniPlayer.tsx            # Barra inferior fija + botón Escuchar de la cabecera
+            ├── Cover.tsx, Icons.tsx, Logo.astro
+            └── Header/Footer/HowItWorks/Anywhere.astro
 ```
 
 ---
@@ -254,6 +238,26 @@ El sistema garantiza que al reiniciar el servidor o los contenedores, la canció
 
 ---
 
+## 📻 Listener API pública (Bloom 2.0) — `/api/live/*`
+
+Pública, solo `GET`, formato `{ ok: true, data }`. Contrato para la web nueva. Todo sale del estado en memoria de `LiveService` (un único poller a Buncaster `/status` + `/api/queue` cada 2s); ningún request consulta Buncaster por su cuenta.
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/live/now` | `{ station, onAir{isLive,source}, track, host, listeners, stream, upNext[≤5], serverTime }`. Título/artista de Buncaster `nowPlaying`; álbum/spotifyUrl de la biblioteca (match por ruta `music/songs/..` → `songs/..`) |
+| `GET` | `/api/live/history?limit=20` | Últimas canciones (máx 50), más nuevas primero. Tabla `play_history` (se guardan solo `song`, no interludios/live) |
+| `GET` | `/api/live/schedule` | `{ timezone, now{dayOfWeek,minute}, slots[] }` — horarios diarios expandidos a 7 días, solo locutores activos |
+| `GET` | `/api/live/events` | SSE: `event: now` al conectar y al cambiar track/isLive/host/upNext/cover; `event: listeners` (throttle 5s); `: ping` cada 20s. **Exento del rate limiter** |
+| `GET` | `/api/live/cover/:key` | JPEG ≤600px de la carátula embebida (cache disco, `max-age=86400`) o 404. **Exento del rate limiter** |
+
+Notas:
+- `key` = sha1(ruta de biblioteca)[0..12] (live: hash de título+artista). `host.id`/`locutorId` = hash numérico FNV-1a del id string del locutor (estable).
+- **Oyentes reales** = clientes de los `StreamBroadcaster` del publisher + oyentes directos de Buncaster − la conexión upstream propia del publisher (Buncaster cuenta al publisher como 1 oyente opus). `peakToday` en memoria, reset a medianoche de Lima.
+- `source: "queue"` se infiere: Buncaster reporta cola y fallback igual (`type: "fallback"`), así que si el archivo estaba en el snapshot anterior de la cola → `queue`.
+- Carátulas: 316/323 canciones tienen arte embebido (mjpeg/png → se normaliza a JPEG). Misses → `<key>.miss` y `coverUrl: null`.
+
+---
+
 ## 🎙️ API de Locutores de IA y Horarios
 
 | Método | Ruta | Descripción |
@@ -297,6 +301,27 @@ Buncaster incluye las siguientes tools MCP:
 ---
 
 ## Cambios Recientes
+
+### Web 2.0 — Rediseño total de la web de escucha (Nov 2026, Bloom 2.0)
+
+- **Eliminado**: web "retro/brutalista" (Hero, LiveShow, ProgramList con horario inventado, Lottie, imágenes stock, shadcn/Tailwind) y sus dependencias.
+- **Nuevo**: escenario a pantalla completa con visualizador generativo "bloom" (Web Audio sobre el stream Opus real), color de escena extraído de la portada, locutor en cabina, oyentes, historial, lo que viene y parrilla semanal real — todo desde `/api/live/*`.
+- **Sincronía metadata↔audio**: el navegador mide su retraso (`buffered.end − currentTime`) y muestra el snapshot de metadatos correspondiente, para que el título cambie cuando la canción cambia en los auriculares del oyente (el prebuffer hace que el oyente vaya decenas de segundos por detrás).
+- **Idiomas**: español pasa a ser el default en `/`; inglés en `/en/` (antes inglés en `/` y español en `/es/`).
+- **nginx**: ahora hace proxy de los streams `/radiobloom*` (antes `/radiobloom` en :80 devolvía el HTML) y del SSE sin buffer.
+- **PWA** (manifest + service worker que nunca cachea audio/API), Media Session, atajo Espacio, OG image, JSON-LD.
+
+### Listener API pública `/api/live/*` (Nov 2026, Bloom 2.0)
+
+- Nuevos: `api/live.routes.ts`, `services/live.service.ts`, `services/live.mapper.ts`, `services/cover.service.ts`, `repositories/sqlite/play-history.repo.ts`, `test/live.test.ts`.
+- Nueva tabla `play_history` (Drizzle schema + migración idempotente en `database.ts`), poda a 500 filas.
+- `index.ts`: instancia `CoverService` + `LiveService`; `StreamBroadcaster` expone `getClientCount()` / `isUpstreamConnected()`.
+- `router.ts`: monta `/api/live/*` (dep opcional `live`) y exime `/api/live/events` y `/api/live/cover/*` del rate limit por IP.
+- `buncaster.client.ts`: `getStatusWithTimeout()` + tipos de `nowPlaying` / `listenersOpus` / `listenersMp3`.
+- `buncaster.service.ts`: `toDbPath` exportado; `queueList()` limita a 2s las llamadas BullMQ (si Redis no responde, `GET /api/stream/queue` devolvía nada y colgaba).
+- `spotifyUrl` solo se expone si es una URL real de `open.spotify.com` (la biblioteca tiene basura de tags, p. ej. `www.SongsLover.com`).
+- Re-seed de los 42 locutores con `scripts/seed_locutors.sh` (la DB estaba vacía).
+- ⚠️ **Redis**: expuesto en `0.0.0.0:6379` sin contraseña → atacado (oct 2026: `SLAVEOF` a master externo; luego alguien puso `requirepass`). Conexiones nuevas reciben `NOAUTH` y BullMQ (TTS/torrents) no funciona tras reiniciar el publisher. Pendiente decisión del dueño (bind interno + password + reiniciar Redis).
 
 ### Eliminación de cola manual (Julio 2026)
 

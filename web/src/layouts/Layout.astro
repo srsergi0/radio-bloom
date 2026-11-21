@@ -1,30 +1,70 @@
 ---
+import "../styles/global.css";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
-import "../styles/global.css";
-interface Props { title: string; description?: string; lang?: string; }
-const { title, description = "Bloom Radio - Retro grid", lang = "en" } = Astro.props;
+import type { Lang } from "../lib/i18n";
+
+interface Props {
+  title: string;
+  description: string;
+  lang: Lang;
+}
+const { title, description, lang } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site ?? "https://radio-bloom.taptapp.xyz");
+const alt = lang === "es" ? "/en/" : "/";
 ---
 
 <!doctype html>
 <html lang={lang}>
   <head>
     <meta charset="utf-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    <meta name="theme-color" content="#0b0b0c" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="canonical" href={canonical} />
+    <link rel="alternate" hreflang={lang === "es" ? "en" : "es"} href={alt} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Bloom Radio" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content="/og.png" />
+    <meta property="og:locale" content={lang === "es" ? "es_PE" : "en_US"} />
+    <meta name="twitter:card" content="summary_large_image" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=swap"
+    />
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "RadioStation",
+      name: "Bloom Radio",
+      description,
+      areaServed: "Worldwide",
+      address: { "@type": "PostalAddress", addressLocality: "Lima", addressCountry: "PE" },
+    })} />
   </head>
   <body>
-    <!-- Outer black border like Mac template -->
-    <div style="max-width:1100px;margin:12px auto;background:#fff;border:3px solid #000;box-shadow:0 0 0 8px #000;">
-      <Header isEn={lang === "en"} />
-      <main>
-        <slot />
-      </main>
-      <Footer isEn={lang === "en"} />
-    </div>
+    <div class="grain" aria-hidden="true"></div>
+    <div class="glow" aria-hidden="true"></div>
+    <a class="skip" href="#ahora">{lang === "es" ? "Ir al reproductor" : "Skip to player"}</a>
+    <Header lang={lang} />
+    <main>
+      <slot />
+    </main>
+    <Footer lang={lang} />
+    <script>
+      if ("serviceWorker" in navigator && location.protocol === "https:") {
+        window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+      }
+    </script>
   </body>
 </html>

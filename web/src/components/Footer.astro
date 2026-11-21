@@ -1,26 +1,26 @@
 ---
-interface Props { isEn?: boolean; }
-const { isEn = true } = Astro.props;
+import Logo from "./Logo.astro";
+import type { Lang } from "../lib/i18n";
+
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+const es = lang === "es";
+const year = new Date().getFullYear();
 ---
 
-<footer id="footer" style="border-top:2px solid #000;background:#d9d9d9;padding:16px 32px;">
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:center;">
-    <div>
-      <div style="font-family:'Space Mono',monospace;font-size:10px;font-weight:700;">[ NEWSLETTER ]</div>
-      <div style="font-family:'Archivo Black',sans-serif;font-size:16px;">{isEn ? "Join the movement" : "Únete al movimiento"}</div>
-    </div>
-    <form onsubmit="event.preventDefault(); alert('Subscribed!')" style="display:flex;gap:8px;">
-      <input type="email" placeholder="you@bloom.radio" required style="flex:1;padding:8px 10px;border:2px solid #000;font-family:'Space Mono',monospace;font-size:11px;" />
-      <button type="submit" style="background:#000;color:#fff;border:2px solid #000;padding:8px 12px;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;cursor:pointer;box-shadow:3px 3px 0 #000;">{isEn ? "PRE-REGISTER →" : "SUSCRIBIRSE →"}</button>
-    </form>
+<footer class="ftr">
+  <div class="ftr__big" aria-hidden="true">
+    <Logo size={64} />
+    <span>bloom<em>radio</em></span>
   </div>
-
-  <div style="margin-top:16px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px;font-family:'Space Mono',monospace;font-size:10px;border-top:2px solid #000;padding-top:12px;">
-    <div><b>bloom radio®</b></div>
-    <div><b>EXPLORE</b><br/><a href="#programs-section" style="color:#000;">Schedule</a><br/><a href="#events-section" style="color:#000;">Events</a><br/><a href="#live-section" style="color:#000;">Listen Live</a></div>
-  </div>
-
-  <div style="margin-top:12px;text-align:center;font-family:'Space Mono',monospace;font-size:9px;opacity:0.6;">
-    &copy; {new Date().getFullYear()} Bloom Radio. All rights reserved. — 800×600 — Best viewed with Netscape Navigator
+  <div class="ftr__row">
+    <p>{es ? "Hecha en Lima, para escucharse en cualquier parte." : "Made in Lima, for anywhere."}</p>
+    <nav aria-label={es ? "Pie de página" : "Footer"}>
+      <a href="#ahora">{es ? "Escuchar" : "Listen"}</a>
+      <a href="#programacion">{es ? "Programación" : "Schedule"}</a>
+      <a href="#escuchala">{es ? "Apps y enlaces" : "Apps & links"}</a>
+      <a href={es ? "/en/" : "/"}>{es ? "English" : "Español"}</a>
+    </nav>
+    <p class="ftr__legal">© {year} Bloom Radio</p>
   </div>
 </footer>

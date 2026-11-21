@@ -1,0 +1,42 @@
+---
+import type { Lang } from "../lib/i18n";
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+const es = lang === "es";
+
+const steps = es
+  ? [
+      ["01", "Curaduría", "Una biblioteca que crece sola. Cada canción se indexa, se enriquece con sus datos y entra en rotación priorizando lo que hace más tiempo no suena."],
+      ["02", "Locutores con IA", "Cada franja tiene su host: nombre, personalidad, acento y horario. Arman la playlist del bloque y hablan entre canciones con voz neural."],
+      ["03", "En directo", "Cuando alguien sale al aire desde OBS por SRT, la señal entra sin cortes. Cuando termina, la música retoma donde estaba."],
+    ]
+  : [
+      ["01", "Curation", "A library that grows on its own. Every song is indexed, enriched with metadata and rotated, favouring what hasn't played in a while."],
+      ["02", "AI hosts", "Every slot has its host: name, personality, accent and hours. They build the block's playlist and talk between songs with a neural voice."],
+      ["03", "Live", "When someone goes on air from OBS over SRT, the signal cuts in seamlessly. When they're done, the music picks up where it left off."],
+    ];
+---
+
+<section class="how" id="como-funciona" aria-labelledby="h-how">
+  <header class="section-head">
+    <p class="eyebrow">{es ? "Detrás de la señal" : "Behind the signal"}</p>
+    <h2 id="h-how" class="display">
+      {es ? <>Una radio que <em>nunca</em> duerme</> : <>A station that <em>never</em> sleeps</>}
+    </h2>
+  </header>
+  <ol class="how__steps">
+    {steps.map(([n, title, body]) => (
+      <li class="how__step">
+        <span class="how__num">{n}</span>
+        <h3>{title}</h3>
+        <p>{body}</p>
+      </li>
+    ))}
+  </ol>
+  <dl class="specs">
+    <div><dt>{es ? "Códec" : "Codec"}</dt><dd>Opus</dd></div>
+    <div><dt>{es ? "Calidad" : "Quality"}</dt><dd>192 kbps · 48 kHz</dd></div>
+    <div><dt>{es ? "Al aire" : "On air"}</dt><dd>24/7</dd></div>
+    <div><dt>{es ? "Desde" : "From"}</dt><dd>Lima, Perú</dd></div>
+  </dl>
+</section>

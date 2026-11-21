@@ -173,5 +173,25 @@ export class DatabaseConnection {
         FOREIGN KEY (locutor_id) REFERENCES locutors(id) ON DELETE CASCADE
       )
     `);
+
+    // Listener API play history (/api/live/history)
+    this.client.exec(`
+      CREATE TABLE IF NOT EXISTS play_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        track_key TEXT NOT NULL,
+        file TEXT,
+        title TEXT NOT NULL,
+        artist TEXT DEFAULT '',
+        album TEXT DEFAULT '',
+        duration REAL NOT NULL DEFAULT 0,
+        played_at INTEGER NOT NULL
+      )
+    `);
+    this.client.exec(
+      "CREATE INDEX IF NOT EXISTS idx_play_history_played_at ON play_history(played_at)"
+    );
+    this.client.exec(
+      "CREATE INDEX IF NOT EXISTS idx_play_history_track_key ON play_history(track_key)"
+    );
   }
 }

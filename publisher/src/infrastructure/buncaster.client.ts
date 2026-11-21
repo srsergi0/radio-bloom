@@ -24,6 +24,22 @@ export interface BuncasterStatus {
   opusTierEnabled?: boolean;
   opusTierBitrateKbps?: number;
   fallbackBitrateKbps?: number;
+  listenersOpus?: number;
+  listenersMp3?: number;
+  /** buncaster-cli: authoritative now-playing (title/artist from tags, real duration/startedAt). */
+  nowPlaying?: {
+    type: "fallback" | "live" | "silence" | string;
+    isLive: boolean;
+    display?: string;
+    title: string;
+    artist: string;
+    file: string | null;
+    duration: number;
+    elapsed: number;
+    remaining?: number;
+    progress?: number;
+    startedAt: number | null;
+  } | null;
 }
 
 export class BuncasterClient {
@@ -149,6 +165,11 @@ export class BuncasterClient {
 
   public async getStatus(): Promise<BuncasterStatus> {
     return this.request<BuncasterStatus>("/status");
+  }
+
+  /** /status with a hard timeout — used by the listener API poller (must never hang). */
+  public async getStatusWithTimeout(timeoutMs = 3000): Promise<BuncasterStatus> {
+    return this.request<BuncasterStatus>("/status", { signal: AbortSignal.timeout(timeoutMs) });
   }
 
   // ── Current Track ───────────────────────────────────────

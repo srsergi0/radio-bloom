@@ -53,6 +53,8 @@ export interface LiveServiceDeps {
   opusEnabled: boolean;
   mp3Enabled: boolean;
   getLocalListeners: () => LocalListenerProbe;
+  /** Live edge of the Opus stream (see LiveStreamInfo.livePosition). */
+  getLivePosition?: () => { seconds: number; at: number } | null;
   pollIntervalMs?: number;
   /** Listener requests: marks queued requests as played when their song starts. */
   requests?: {
@@ -173,7 +175,13 @@ export class LiveService {
     if (!this.state && this.firstTick) {
       await withTimeout(this.firstTick, REQUEST_TIMEOUT_MS + 1000).catch(() => {});
     }
-    return buildNowPayload(this.state ?? this.compose(Date.now()), Date.now());
+    return this.nowPayload(this.state ?? this.compose(Date.now()), Date.now());
+  }
+
+  private nowPayload(state: LiveStateSnapshot, now: number): LiveNowPayload {
+    const payload = buildNowPayload(state, now);
+    payload.stream.livePosition = this.deps.getLivePosition?.() ?? null;
+    return payload;
   }
 
   public getSchedule(now = Date.now()): LiveSchedulePayload {
@@ -473,7 +481,7 @@ export class LiveService {
     if (sig !== this.lastNowSig) {
       this.lastNowSig = sig;
       this.lastListenersSig = JSON.stringify(state.listeners);
-      if (this.subscribers.size > 0) this.fanOut(sseEvent("now", buildNowPayload(state, now)));
+      if (this.subscribers.size > 0) this.fanOut(sseEvent("now", this.nowPayload(state, now)));
       return;
     }
     this.maybeEmitListeners();

@@ -143,6 +143,12 @@ export interface LiveStreamInfo {
   opus: string;
   mp3: string;
   bitrateKbps: number;
+  /**
+   * Live edge of the Opus stream: position (s, from its Ogg granule) of the newest page the
+   * publisher received, and the server time it arrived. Clients compare it with the playback
+   * position of their <audio> to know exactly how far behind live they are.
+   */
+  livePosition?: { seconds: number; at: number } | null;
 }
 
 export interface LiveUpNextItem {

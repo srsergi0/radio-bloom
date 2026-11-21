@@ -36,7 +36,13 @@ export interface NowPayload {
   track: LiveTrack | null;
   host: LiveHost | null;
   listeners: Listeners;
-  stream: { opus: string; mp3: string; bitrateKbps: number };
+  stream: {
+    opus: string;
+    mp3: string;
+    bitrateKbps: number;
+    /** Borde en vivo del stream Opus: posición (s) de la última página Ogg y hora del servidor */
+    livePosition?: { seconds: number; at: number } | null;
+  };
   upNext: Array<{ title: string; artist: string; type: "song" | "interludio"; coverUrl: string | null }>;
   serverTime: number;
 }

@@ -16,6 +16,7 @@ interface PlayerState {
 
 const DEFAULT_STREAMS = { opus: "/radiobloom.opus", mp3: "/radiobloom.mp3" };
 const VOLUME_KEY = "bloom:volume";
+const MAX_LAG_MS = 180_000;
 
 function readVolume(): number {
   try {
@@ -45,6 +46,8 @@ let retryTimer: number | undefined;
 let stallTimer: number | undefined;
 let lagTimer: number | undefined;
 let wanted = false;
+/** Borde en vivo del stream Opus, con el desfase del reloj del servidor (serverTime - Date.now()) */
+let liveEdge: { seconds: number; at: number; offset: number } | null = null;
 
 const isIOS = () =>
   typeof navigator !== "undefined" &&
@@ -53,6 +56,22 @@ const isIOS = () =>
 
 export function setStreams(s: { opus?: string; mp3?: string }) {
   streams = { opus: s.opus || DEFAULT_STREAMS.opus, mp3: s.mp3 || DEFAULT_STREAMS.mp3 };
+}
+
+export function setLiveEdge(pos: { seconds: number; at: number } | null | undefined, offset: number) {
+  liveEdge = pos ? { ...pos, offset } : null;
+}
+
+/**
+ * Retraso exacto (ms): posición del directo menos la que suena. El navegador expone la
+ * posición del granule de Ogg en currentTime, así que cuenta también el audio que espera en
+ * la red, que `buffered` no ve. Null si el navegador numera el stream de otra forma.
+ */
+function exactLagMs(a: HTMLAudioElement): number | null {
+  if (!liveEdge || player.get().codec !== "opus") return null;
+  const edge = liveEdge.seconds + (Date.now() + liveEdge.offset - liveEdge.at) / 1000;
+  const lag = (edge - a.currentTime) * 1000;
+  return Number.isFinite(lag) && lag >= 0 && lag <= MAX_LAG_MS ? lag : null;
 }
 
 export function getAnalyser(): AnalyserNode | null {
@@ -119,9 +138,13 @@ function measureLag() {
   clearInterval(lagTimer);
   lagTimer = window.setInterval(() => {
     if (!audio || audio.paused || audio.buffered.length === 0) return;
-    const ahead = audio.buffered.end(audio.buffered.length - 1) - audio.currentTime;
-    if (!Number.isFinite(ahead) || ahead < 0) return;
-    const next = Math.min(ahead * 1000, 90_000);
+    let next = exactLagMs(audio);
+    if (next === null) {
+      // Aproximación: solo ve lo que el navegador ya descargó
+      const ahead = audio.buffered.end(audio.buffered.length - 1) - audio.currentTime;
+      if (!Number.isFinite(ahead) || ahead < 0) return;
+      next = Math.min(ahead * 1000, MAX_LAG_MS);
+    }
     const prev = player.get().lagMs;
     // Media móvil para que la UI no salte
     const smoothed = prev === 0 ? next : prev * 0.8 + next * 0.2;

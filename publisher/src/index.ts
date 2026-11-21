@@ -45,6 +45,12 @@ const MP3_ENABLED = STREAM_TIER !== "opus";
 // Upstreams hacia buncaster (overridables si el tier único se sirve en otra ruta)
 const MP3_URL = process.env.MP3_UPSTREAM_URL || `http://${BUNCASTER_HOST}:${BUNCASTER_PORT}/mp3`;
 const OPUS_URL = process.env.OPUS_UPSTREAM_URL || `http://${BUNCASTER_HOST}:${BUNCASTER_PORT}/opus`;
+// Audio que recibe de golpe cada oyente nuevo. Todo lo que se manda de más se queda atascado
+// en la red (TCP, nginx, Cloudflare) y retrasa al oyente sin que el navegador lo vea en su
+// búfer, así que la web no puede compensarlo: mantenerlo en unos pocos segundos.
+const STREAM_BURST_SECONDS = Math.max(1, Number(process.env.STREAM_BURST_SECONDS) || 4);
+const MP3_KBPS = Number(process.env.STREAM_BITRATE_KBPS) || 320;
+const OPUS_KBPS = Number(process.env.OPUS_TIER_BITRATE_KBPS) || 192;
 const STREAM_URL = MP3_URL; // legacy alias para broadcaster mp3
 const USE_OPUS = OPUS_ENABLED;
 
@@ -202,6 +208,7 @@ const liveService: LiveService = new LiveService({
     opusUpstream: opusBroadcaster?.isUpstreamConnected() ?? false,
     mp3Upstream: mp3Broadcaster?.isUpstreamConnected() ?? false,
   }),
+  getLivePosition: () => opusBroadcaster?.getLivePosition() ?? null,
 });
 
 const reachService = new ReachService(
@@ -277,9 +284,12 @@ function extractOggOpusHeaders(buf: Uint8Array): Uint8Array | null {
 }
 
 class StreamBroadcaster {
-  private buffer: Uint8Array[] = [];
-  private maxBufferBytes = 1.5 * 1024 * 1024;
+  private buffer: { at: number; chunk: Uint8Array }[] = [];
+  private readonly maxBufferBytes: number;
+  private readonly maxBufferMs = STREAM_BURST_SECONDS * 1000;
   private bufferBytes = 0;
+  /** Granule (48 kHz samples) of the newest complete Ogg page header seen, and when it arrived */
+  private liveGranule: { seconds: number; at: number } | null = null;
   private clients: Set<ReadableStreamDefaultController> = new Set();
   private isStreaming = false;
   private upstreamConnected = false;
@@ -295,7 +305,10 @@ class StreamBroadcaster {
     private readonly upstreamUrl: string,
     private readonly label: string,
     private readonly captureOggHeaders = false,
+    kbps = 320,
   ) {
+    // Tope en bytes además del de tiempo: al reconectar, Buncaster vuelca su prebuffer de golpe
+    this.maxBufferBytes = Math.ceil(STREAM_BURST_SECONDS * kbps * 125);
     this.startStreaming();
   }
 
@@ -340,6 +353,7 @@ class StreamBroadcaster {
       }
 
       this.upstreamConnected = false;
+      this.liveGranule = null;
       this.buffer = [];
       this.bufferBytes = 0;
       await new Promise((r) => setTimeout(r, 1000));
@@ -375,15 +389,35 @@ class StreamBroadcaster {
 
   private roll(value: Uint8Array) {
     if (value.length === 0) return;
-    this.buffer.push(value);
+    const now = Date.now();
+    if (this.captureOggHeaders) this.trackGranule(value, now);
+    this.buffer.push({ at: now, chunk: value });
     this.bufferBytes += value.length;
-    while (this.bufferBytes > this.maxBufferBytes) {
-      const removed = this.buffer.shift();
-      if (removed) this.bufferBytes -= removed.length;
+    while (
+      this.buffer.length > 1 &&
+      (this.bufferBytes > this.maxBufferBytes || now - this.buffer[0].at > this.maxBufferMs)
+    ) {
+      this.bufferBytes -= this.buffer.shift()!.chunk.length;
     }
     for (const client of this.clients) {
       try { client.enqueue(value); } catch { this.clients.delete(client); }
     }
+  }
+
+  private trackGranule(value: Uint8Array, now: number) {
+    // Header de página Ogg: "OggS", versión, tipo y granule de 8 bytes (little-endian) en +6
+    for (let i = value.length - 14; i >= 0; i--) {
+      if (value[i] !== 0x4f || value[i + 1] !== 0x67 || value[i + 2] !== 0x67 || value[i + 3] !== 0x53) continue;
+      const granule = new DataView(value.buffer, value.byteOffset + i + 6, 8).getBigInt64(0, true);
+      if (granule < 0n) continue; // -1: ningún paquete termina en esta página
+      this.liveGranule = { seconds: Number(granule) / 48000, at: now };
+      return;
+    }
+  }
+
+  /** Live edge of the stream (Ogg only). */
+  public getLivePosition(): { seconds: number; at: number } | null {
+    return this.liveGranule;
   }
 
   public registerClient(controller: ReadableStreamDefaultController) {
@@ -394,7 +428,7 @@ class StreamBroadcaster {
     if (this.headerBytes && this.headerBytes.length > 0) {
       try { controller.enqueue(this.headerBytes); } catch { return; }
     }
-    for (const chunk of this.buffer) {
+    for (const { chunk } of this.buffer) {
       try { controller.enqueue(chunk); } catch { return; }
     }
     this.clients.add(controller);
@@ -414,8 +448,8 @@ class StreamBroadcaster {
   }
 }
 
-const mp3Broadcaster = MP3_ENABLED ? new StreamBroadcaster(MP3_URL, "mp3") : null;
-const opusBroadcaster = OPUS_ENABLED ? new StreamBroadcaster(OPUS_URL, "opus", true) : null;
+const mp3Broadcaster = MP3_ENABLED ? new StreamBroadcaster(MP3_URL, "mp3", false, MP3_KBPS) : null;
+const opusBroadcaster = OPUS_ENABLED ? new StreamBroadcaster(OPUS_URL, "opus", true, OPUS_KBPS) : null;
 const broadcaster = USE_OPUS ? opusBroadcaster! : mp3Broadcaster!; // alias para compatibilidad
 
 liveService.start();

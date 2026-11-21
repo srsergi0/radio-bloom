@@ -22,6 +22,16 @@ Puertos críticos:
 - `21` + `30000-30100` — FTP
 - `3000` — Publisher interno
 
+## Sincronía audio ↔ metadatos de la web
+
+- El oyente HTTP va unos **5 s** por detrás del directo. Con ráfagas grandes (el antiguo
+  `PREBUFFER_BYTES=1.5 MB` ≈ 65 s) el retraso se queda en buffers de red que el navegador no ve
+  y la web muestra una canción distinta a la que suena. Mantener `PREBUFFER_SECONDS` y
+  `STREAM_BURST_SECONDS` en pocos segundos.
+- `/api/live/now` trae `stream.livePosition` (granule de la última página Ogg que recibió el
+  publisher). La web lo resta de `audio.currentTime` para saber el retraso exacto y cambia el
+  título en el `startedAt` real de cada pista.
+
 # Dominio: radio.tceoslabs.com
 
 - La radio (marca visible **Radio Tceos**) se publica en **https://radio.tceoslabs.com** con un túnel propio `bloom-radio` (id `a3e9e5f6-8352-4b00-bc00-7a5b96a0f446`, gestionado localmente), servicio `tunnel` de este compose → `http://web:80` (nginx). Sin puertos publicados.

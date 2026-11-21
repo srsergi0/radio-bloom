@@ -2,7 +2,7 @@
 // Los metadatos se muestran con el mismo retraso con el que el oyente escucha el audio,
 // así el título cambia cuando de verdad cambia la canción en sus auriculares.
 import { useEffect, useState } from "react";
-import { player, setStreams } from "./player";
+import { player, setLiveEdge, setStreams } from "./player";
 import { createStore, useStore } from "./store";
 import type { HistoryItem, Listeners, NowPayload, RequestItem, SchedulePayload, SearchResult } from "./types";
 
@@ -46,6 +46,8 @@ function readMyHearts(): Record<string, true> {
   }
 }
 
+const SNAPSHOT_WINDOW_MS = 240_000;
+
 let started = false;
 let es: EventSource | null = null;
 let pollTimer: number | undefined;
@@ -63,18 +65,29 @@ async function getJSON<T>(url: string): Promise<T | null> {
 }
 
 function pushNow(data: NowPayload) {
-  const at = Date.now();
+  const received = Date.now();
   setStreams(data.stream);
+  if (data.serverTime) setLiveEdge(data.stream.livePosition, data.serverTime - received);
   live.set((s) => {
     const last = s.snapshots[s.snapshots.length - 1];
     const changed = !last || last.data.track?.key !== data.track?.key;
-    // Guardamos ~2 min de snapshots para poder "retrasar" lo que se muestra
-    const snapshots = [...s.snapshots, { at, data }].filter((x, i, arr) => i === arr.length - 1 || at - x.at < 120_000);
+    // El aviso llega hasta ~2 s después del cambio real (el publisher consulta el motor cada 2 s):
+    // si cambió la pista, el snapshot vale desde su startedAt, pasado al reloj del cliente
+    let at = received;
+    if (changed && data.track?.startedAt && data.serverTime) {
+      at = Math.min(received, data.track.startedAt - (data.serverTime - received));
+      if (last) at = Math.max(at, last.at + 1);
+    }
+    // ~4 min de snapshots para poder "retrasar" lo que se muestra. El SSE solo avisa de cambios,
+    // así que se conserva también el snapshot vigente al principio de la ventana (el de la
+    // canción que aún suena con retraso), aunque llegara hace más tiempo.
+    const since = received - SNAPSHOT_WINDOW_MS;
+    const snapshots = [...s.snapshots, { at, data }].filter((_, i, arr) => i === arr.length - 1 || arr[i + 1].at > since);
     if (changed) scheduleHistoryRefresh();
     return {
       snapshots,
       listeners: data.listeners,
-      offset: data.serverTime ? data.serverTime - at : s.offset,
+      offset: data.serverTime ? data.serverTime - received : s.offset,
     };
   });
 }
